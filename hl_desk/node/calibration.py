@@ -21,6 +21,13 @@ HERE = Path(__file__).resolve().parent / "calibration"
 CALIBRATION_FILE = HERE / "burst-calibration-2026-11-08.json"
 
 
+def _why(exc: Exception) -> str:
+    """A load error without any file path (a reason is shown to users and the agent)."""
+    if isinstance(exc, OSError):
+        return exc.strerror or type(exc).__name__
+    return f"{type(exc).__name__}: {exc}"
+
+
 class Calibration:
     """The loaded calibration (thresholds) and, separately, its reference (ranks). Either can be missing: then the
     automatic threshold, or the rank, is unavailable with the reason, never estimated."""
@@ -36,7 +43,7 @@ class Calibration:
             if not isinstance(self.data.get("markets"), dict):
                 raise ValueError("no markets in the calibration file")
         except (OSError, ValueError) as exc:
-            self.data, self.error = None, f"the burst calibration file isn't loaded ({path.name}: {exc})"
+            self.data, self.error = None, f"the burst calibration file isn't loaded ({path.name}: {_why(exc)})"
             self.reference_error = self.error
             return
         ref = path.parent / self.data.get("reference_file", "")
@@ -49,7 +56,7 @@ class Calibration:
             self.reference = {m: {"buying": x["buying_sums_usd_sorted"], "selling": x["selling_sums_usd_sorted"]}
                               for m, x in r["markets"].items()}
         except (OSError, ValueError, KeyError, TypeError, EOFError) as exc:
-            self.reference, self.reference_error = None, f"the burst reference file isn't loaded ({ref.name}: {exc})"
+            self.reference, self.reference_error = None, f"the burst reference file isn't loaded ({ref.name}: {_why(exc)})"
 
     # --- labels -------------------------------------------------------------------
     @property

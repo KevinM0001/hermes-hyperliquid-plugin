@@ -200,11 +200,13 @@ def test_rank_is_unavailable_when_the_file_isnt_loaded(tmp_path):
     for c in (_tiny(tmp_path / "a", ref=False), _tiny(tmp_path / "b", sha="0" * 64)):
         r = c.rank("BTC", "buying", 2.0)
         assert r["available"] is False and "isn't loaded" in r["reason"] and "upper_tail" not in r
+        assert str(tmp_path) not in r["reason"] and "/" not in r["reason"]           # no file path in a reason
         assert c.threshold("BTC", {})["usd"] == 3e7                  # the thresholds still load
     gone = cal_mod.Calibration(tmp_path / "missing.json")
     assert gone.rank("BTC", "buying", 2.0)["available"] is False
     th = gone.threshold("BTC", {})
     assert th["usd"] is None and th["source"] == "unavailable" and "isn't loaded" in th["reason"]
+    assert th["reason"] == "the burst calibration file isn't loaded (missing.json: No such file or directory)"
     assert gone.threshold("BTC", {"BTC": 2e6})["usd"] == 2e6           # a manual threshold needs no file
 
 
