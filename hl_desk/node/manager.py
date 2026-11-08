@@ -12,7 +12,9 @@ from __future__ import annotations
 import asyncio
 import time
 
+from . import calibration as calibration_mod
 from . import panels
+from .bursts import NodeBurstRule
 from .client import FeedClient
 from .replay import Recording, ReplayPlayer
 from .transport import parse_source, run_feed
@@ -31,6 +33,7 @@ class NodeManager:
         self.live: FeedClient | None = FeedClient(cfg.node_feed, "LIVE") if src else None
         if self.live is not None:
             self.live.listeners.append(lambda ev: panels.on_client_event(ev, self.opts))
+            self.attach_bursts(self.live)
         self.replay_client: FeedClient | None = None
         self.player: ReplayPlayer | None = None
         self.replay_error: str | None = None
@@ -38,6 +41,22 @@ class NodeManager:
         self._stop: asyncio.Event | None = None
         self._tasks: list = []
         self.loop: asyncio.AbstractEventLoop | None = None
+
+    def attach_bursts(self, client: FeedClient) -> FeedClient:
+        """Node-mode bursts for every market of this client: the calibration's rule, with each market's manual
+        threshold (node_burst_min_usd) or its automatic one, ranked against the calibration's reference. The
+        calibration is loaded here, on first use by a node source; public mode never loads it."""
+        cal, cfg = calibration_mod.load(), self.cfg
+
+        def factory(market, c):
+            return NodeBurstRule(market, cal.threshold(market, cfg.node_burst_min_usd), ranker=cal.rank,
+                                 provenance=lambda: panels.provenance(c, market),
+                                 target_pct=cfg.wallet_target_share_pct, cap=cfg.wallet_cap)
+        client.burst_rule_factory = factory
+        for m, mf in client.markets.items():
+            if mf.flow.bursts is None:
+                mf.flow.bursts = factory(m, client)
+        return client
 
     # --- lifecycle (on the collector loop) ---------------------------------------
     def tasks(self, stop: asyncio.Event) -> list:
@@ -88,6 +107,7 @@ class NodeManager:
                 return {"ok": False, "error": f"can't read the recording: {exc}"}
             self.replay_client = FeedClient(f"recording:{rec.header.get('recording_id')}", "REPLAY")
             self.replay_client.listeners.append(lambda ev: panels.on_client_event(ev, self.opts))
+            self.attach_bursts(self.replay_client)
             self.player = ReplayPlayer(rec, self.replay_client)
             self.replay_error = None
             self.player.start()
@@ -146,7 +166,22 @@ class NodeManager:
                 "replay": None if self.player is None else self.player.status() | {"error": self.replay_error},
                 "configured": {"node_feed": self.cfg.node_feed or None,
                                "node_replay_file": self.cfg.node_replay_file or None,
-                               "key": self._key_state()}}
+                               "key": self._key_state()},
+                "bursts": self.burst_config()}
+
+    def burst_config(self) -> dict:
+        """Node-mode burst thresholds per market (manual or automatic) and the calibration they come from."""
+        if self.live is None and self.replay_client is None:
+            return {"mode": "public", "note": "bursts come from public trades (burst_min_usd); node-mode bursts and "
+                                              "their calibration are used only with a node feed or a replay"}
+        cal = calibration_mod.load()
+        return {"mode": "node", "calibration": None if cal.data is None else {
+                    "version": cal.data["version"], "dated": cal.data["dated"], "measured": cal.measured,
+                    "measured_utc": cal.data["measured_utc"], "target_per_day": cal.data["target_per_day"],
+                    "file": cal.path.name, "reference_loaded": cal.reference is not None},
+                "calibration_error": cal.error, "reference_error": cal.reference_error,
+                "thresholds": {m: cal.threshold(m, self.cfg.node_burst_min_usd) for m in self.markets},
+                "manual_setting": "node_burst_min_usd"}
 
     def _read_key(self) -> str | None:
         try:

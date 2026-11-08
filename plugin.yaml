@@ -28,7 +28,12 @@ config_schema:
     type: dict
     default: {"BTC": 10000000, "HYPE": 2000000, "xyz:SP500": 1000000, "xyz:XYZ100": 1000000}
     label: Burst alert threshold (USD per 60 s)
-    description: Aggressive buying or selling at or above this notional within 60 s raises a burst alert, per market.
+    description: Public mode. Aggressive buying or selling at or above this notional within 60 s raises a burst alert, per market. Node mode uses node_burst_min_usd instead.
+  node_burst_min_usd:
+    type: dict
+    default: {}
+    label: Node-mode burst threshold (USD per 60 s, manual override)
+    description: Node mode. A manual burst threshold per market in USD, for example BTC 25000000. A market not listed, or listed as auto, uses the automatic threshold from the dated burst calibration (about 10 a day, measured Nov 3 to 7).
   large_print_usd:
     type: dict
     default: {"BTC": 250000, "HYPE": 100000, "xyz:SP500": 50000, "xyz:XYZ100": 50000}

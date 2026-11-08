@@ -2403,7 +2403,12 @@
           h("span", { className: cx("hd-bursttag", e.side === "selling" ? "hd-bg-ask" : "hd-bg-bid") }, "BURST"),
           " aggressive " + e.side + " ", h("b", { className: "hd-num" }, isNum(e.aggressive_notional_usd) ? usd(e.aggressive_notional_usd) : "?"),
           " within 60 s \u00b7 threshold " + (isNum(e.threshold_usd) ? usd(e.threshold_usd) : "?") +
-          (isNum(e.executions) ? " \u00b7 " + intf(e.executions) + " executions" : "")),
+          (isNum(e.executions) ? " \u00b7 " + intf(e.executions) + " executions" : ""),
+          e.stream === "node fills" ? h("div", { className: "hd-small" },
+            h(Badge, { kind: "node", title: e.rule || "node fills" }, "NODE \u00b7 node fills"), " ",
+            h("span", { className: "hd-dim" }, (e.threshold && e.threshold.label) || "threshold label not in snapshot"), " \u00b7 ",
+            e.rank && e.rank.available ? h("b", { title: e.rank.reference || "" }, e.rank.label)
+              : h("span", null, "rank ", h(Unavailable, { reason: (e.rank && e.rank.reason) || "not in snapshot" }))) : null),
         h("span", { className: "hd-ev-held" }),
         h("div", { className: "hd-ev-wallets" },
           (w.listed || []).length ? h("ol", null, w.listed.map(function (x) {
@@ -2437,6 +2442,16 @@
     return h("li", { className: "hd-ev" }, t, mk, h("span", { className: "hd-ev-body" }, e.text || e.type));
   }
 
+  // Which burst rule a market uses and its threshold: node fills (node mode, automatic from the dated calibration or
+  // manual from node_burst_min_usd) or public trades (public mode, burst_min_usd).
+  function burstRuleText(b) {
+    if (!b) return "(rule not in snapshot)";
+    if (b.mode === "public") return "public trades, " + (isNum(b.threshold_usd) ? usd(b.threshold_usd) : "?") + " (burst_min_usd)";
+    if (b.available === false) return "node fills: unavailable (" + (b.reason || "no reason given") + ")";
+    const th = b.threshold || {};
+    return "node fills, " + (isNum(th.usd) ? usd(th.usd) : "no threshold") + " (" + (th.label || "?") + ")";
+  }
+
   function DeckPanel(props) {
     const r = props.resp;
     const deck = r.deck || {};
@@ -2458,6 +2473,7 @@
     }) : h("div", { className: "hd-empty" }, "No Flow Deck cards in this snapshot.")),
     h("div", { className: "hd-events" },
       h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " newest first \u00b7 no regime or burst spans a gap \u00b7 UTC")),
+      h("div", { className: "hd-dim hd-small" }, "Burst rule: " + names.map(function (n) { return n + " " + burstRuleText(deck[n].bursts); }).join(" \u00b7 ")),
       events.length ? h("ul", null, events.slice(0, 40).map(function (e, i) {
         return h(EventRow, { key: e.type + ":" + e.market + ":" + e.at_ms + ":" + (e.side || "") + ":" + i, e: e, nodeSrc: nodeSrc });
       })) : h("div", { className: "hd-empty" }, "No events in the current coverage yet.")));

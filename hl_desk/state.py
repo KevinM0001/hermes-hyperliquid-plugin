@@ -158,7 +158,8 @@ class MarketState:
             self.trackers["trades"].on_no_progress(mono_ns)
         if new:
             self.deck.advance(self.store, new_trades=new)
-            self.deck.check_burst(self.store, new)
+            if not getattr(self, "node_bursts", False):     # node mode: bursts come from node fills instead
+                self.deck.check_burst(self.store, new)
 
     def on_unattributed_trades(self, data: list, reason: str, mono_ns: int, wall_ms: int) -> None:
         """A trades message that may belong to this market but can't be attributed to it: coverage can't be
@@ -304,6 +305,7 @@ class MarketState:
         now = (built_ms, now_ns)          # node fills are judged at this snapshot's build time, as the node views are
         deck["card"]["activity_buckets"] = self._node_card_buckets(deck["card"], node_client, now)
         deck["events"] = self._node_events(deck["events"], node_client, node_view.get("live"), now)
+        deck["bursts"] = self._burst_info(node_client)
         wallet_panels = {}
         for n in WALLET_WINDOWS_MIN:
             wallet_panels[f"{n}m"] = self._wallet_panel(n, r_tr)
@@ -349,38 +351,60 @@ class MarketState:
         return _bucket_metrics(b, "the card's 90 s window") | {"hook": base.get("hook")}
 
     def _node_events(self, events: list, client, live_view: dict | None, now=(None, None)) -> list:
-        from .node.panels import deck_buckets, flow_meta, stream_key
-        # Published events are shared with earlier snapshots, so they're never edited: each is copied with its
-        # node buckets. Available buckets are cached per event and input stream (source, mode, epoch, session) and
-        # served with the node fills' freshness as of this build; while the node fills aren't usable, or a result
-        # is unavailable, it is recomputed at every build (so it recovers once the node fills cover the window).
-        cache = self.__dict__.setdefault("_burst_node_cache", {})
-        meta = flow_meta(client, self.market, *now) if client is not None else None
-        usable = meta is not None and meta["freshness"].get("state") in ("LIVE", "REPLAY")
+        """The Flow Deck's events. In node mode, bursts come only from node fills (the burst calibration's rule,
+        once per node block; hl_desk/node/bursts.py) and public-trades bursts aren't shown; in public mode, bursts
+        are the public-trades rule's, with node buckets marked as needing node mode. Published events are shared with
+        earlier snapshots, so they're never edited: each is copied."""
+        from .node.panels import _jsonable, flow_meta
+        node_mode = getattr(self, "node_bursts", False)
         out = []
         for ev in events:
             if ev.get("type") == "burst":
-                key = (ev.get("at_ms"), ev.get("side"), stream_key(client))
-                m = cache.get(key) if usable else None
-                if m is not None:
-                    m = dict(m) | meta
-                else:
-                    if client is None:
-                        m = {"available": False, "reason": "needs node mode: no node feed configured"}
-                    else:
-                        b = deck_buckets(client, self.market, ev["window_start_ms_exclusive"], ev["window_end_ms"], *now)
-                        side = "buying" if ev.get("side") == "buying" else "selling"
-                        m = _bucket_metrics(b, "the burst's 60 s window", only=side)
-                        if b.get("available"):
-                            cache[key] = m
-                            if len(cache) > 200:
-                                cache.pop(next(iter(cache)))
-                ev = dict(ev) | {"node_activity": m}
+                if node_mode:
+                    continue
+                ev = dict(ev) | {"node_activity": {"available": False, "reason": "needs node mode: no node feed configured"}}
             out.append(ev)
+        mf = client.markets.get(self.market) if (node_mode and client is not None) else None
+        rule = mf.flow.bursts if mf is not None else None
+        if rule is not None:
+            # Each burst's own-side buckets, from exactly its window's node fills, with the node fills' freshness as
+            # of this build; withheld with the reason while the node fills aren't usable.
+            meta = flow_meta(client, self.market, *now)
+            fresh = meta["freshness"]
+            usable = fresh.get("state") in ("LIVE", "REPLAY")
+            for ev in rule.events:
+                if usable:
+                    # A node burst fires only on a complete window of valid executions, so its buckets are exact.
+                    b = {"available": True, "stream": "node fills",
+                         "window": {"start_ms": ev["window_start_ms_exclusive"], "end_ms": ev["window_end_ms"]},
+                         "coverage": {"covers": True, "executions": ev["executions"],
+                                      "note": "the burst's own window: complete, every execution valid"},
+                         **_jsonable(ev["activity"])}
+                    m = _bucket_metrics(b, "the burst's 60 s window", only=ev["side"]) | meta
+                else:
+                    m = {"stream": "node fills", "available": False,
+                         "reason": f"node fills {fresh.get('state')}: {fresh.get('reason')}"} | meta
+                out.append(_jsonable({k: v for k, v in ev.items() if k != "activity"}) | {"node_activity": m})
         for le in (live_view or {}).get("liquidation_events") or []:
             out.append(dict(le) | {"at": iso_ms(le["at_ms"]), "source": "node fills"})
         out.sort(key=lambda e: e.get("at_ms") or 0, reverse=True)
         return out
+
+    def _burst_info(self, client) -> dict:
+        """Which burst rule this market uses, and its threshold (shown with the Flow Deck)."""
+        if not getattr(self, "node_bursts", False):
+            return {"mode": "public", "stream": "public trades",
+                    "rule": schema.load()["alerts"]["burst"]["formula"],
+                    "threshold_usd": self.deck.burst_threshold, "setting": "burst_min_usd"}
+        mf = client.markets.get(self.market) if client is not None else None
+        rule = mf.flow.bursts if mf is not None else None
+        if rule is None:
+            why = ("no node fills for this market yet" if client is not None else
+                   "the configured node feed isn't a live source (a replay is never live)")
+            return {"mode": "node", "stream": "node fills", "available": False, "reason": why}
+        from .node.panels import _jsonable
+        return {"mode": "node", "stream": "node fills", "available": True, "setting": "node_burst_min_usd"} | _jsonable(
+            rule.status())
 
     def _node_wallet_splits(self, panel: dict, client, now=(None, None)) -> None:
         if not panel.get("window"):
@@ -554,6 +578,8 @@ class DeskState:
         for m, s in self.markets.items():
             s.node_view = node_views.get(m)
             s.node_client = self.node.live_client() if self.node is not None else None
+            # Node mode (a node feed is configured): bursts come from node fills, never public trades.
+            s.node_bursts = self.node is not None and getattr(self.node, "live", None) is not None
         return {
             "snapshot_id": sid,
             "built_at_ms": wall_ms,

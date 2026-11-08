@@ -1,0 +1,80 @@
+{
+ "kind": "hyperliquid-desk node-mode burst calibration",
+ "version": "2026-11-08.1",
+ "dated": "2026-11-08",
+ "measured_utc": [
+  "2026-11-03T00:00:00.000Z",
+  "2026-11-08T00:00:00.000Z"
+ ],
+ "measured_label": "Nov 3 to 7",
+ "target_per_day": 10,
+ "near_tolerance": 0.25,
+ "evaluation_unit": "one evaluation per node block carrying the market's trades, the node feed's own executions-message unit (one message per block per market)",
+ "burst_window_s": 60,
+ "grid_usd": [
+  100000.0,
+  150000.0,
+  200000.0,
+  300000.0,
+  500000.0,
+  750000.0,
+  1000000.0,
+  1500000.0,
+  2000000.0,
+  3000000.0,
+  5000000.0,
+  7500000.0,
+  10000000.0,
+  15000000.0,
+  20000000.0,
+  30000000.0,
+  50000000.0,
+  75000000.0,
+  100000000.0
+ ],
+ "selection": "for the target, the grid threshold whose achieved rate (bursts per covered day, buying and selling together) is nearest it; ties go to the higher threshold; 'near' means within 25% of the target",
+ "relative_error": "unsigned, as in the source: |achieved_per_day / target_per_day - 1|",
+ "source": {
+  "history": {
+   "file": "history-20261108T100453Z.json",
+   "sha256": "a9240ecbc86f61f03eb7786654a072e39477a6f5ef9790ad7a544436d714f8dc",
+   "generated_utc": "2026-11-08T10:04:53.701Z"
+  },
+  "reference": {
+   "file": "burst-reference-20261108T100453Z.json",
+   "sha256": "d19d67aa0be588370352206f8128071c6e11710631f803b4970b28f4902bf27b",
+   "generated_utc": "2026-11-08T10:04:53.701Z"
+  }
+ },
+ "reference_file": "burst-reference-20261108T100453Z.json.gz",
+ "markets": {
+  "BTC": {
+   "threshold_usd": 30000000.0,
+   "achieved_per_day": 10.6018,
+   "relative_error": 0.0602,
+   "near_target": true,
+   "covered_hours": 119.9792
+  },
+  "HYPE": {
+   "threshold_usd": 5000000.0,
+   "achieved_per_day": 14.6025,
+   "relative_error": 0.4603,
+   "near_target": false,
+   "covered_hours": 119.9792
+  },
+  "xyz:SP500": {
+   "threshold_usd": 5000000.0,
+   "achieved_per_day": 7.2013,
+   "relative_error": 0.2799,
+   "near_target": false,
+   "covered_hours": 119.9792
+  },
+  "xyz:XYZ100": {
+   "threshold_usd": 5000000.0,
+   "achieved_per_day": 11.0019,
+   "relative_error": 0.1002,
+   "near_target": true,
+   "covered_hours": 119.9792
+  }
+ }
+}

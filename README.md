@@ -56,9 +56,11 @@ Open the dashboard (`hermes dashboard`) and choose the **Hyperliquid Desk** tab.
   - The top wallet's share keeps hl_deck's population, and the card adds its net aggressive notional (aggressive bought minus aggressive sold).
   - The opening and closing activity buckets (new long, cover, new short, exit) need node mode. The schema defines them per position effect, flips split.
   - hl_deck's whale alerts (GONE, BACK, FLIPPED, CONVICTION, SELLING DONE) aren't ported in v1.
-- **Burst alerts** (handoff definition): aggressive buying or selling of at least $10M within 60 s for BTC; HYPE $2M, xyz markets $1M by default, all configurable. They name the aggressive wallets behind the burst. No regime, alert or window ever spans a gap.
+- **Burst alerts.** Aggressive buying or selling over a threshold within 60 s. They name the aggressive wallets behind the burst. No regime, alert or window ever spans a gap.
+  - **Public mode** (handoff definition): from public trades; at least $10M for BTC, HYPE $2M, xyz markets $1M by default, set per market in `burst_min_usd`.
+  - **Node mode** (a `node_feed` is set): from node fills, evaluated once per node block, with the rule the thresholds were measured with. A window containing a rejected or unreadable record is incomplete: it never fires, re-arms or disarms. Public-trades bursts aren't shown in node mode. Each market's threshold is automatic by default: a dated, versioned calibration measured on node fills from Nov 3 to 7, targeting about 10 bursts a day. BTC is $30M and xyz:XYZ100 $5M ("automatic: about 10 a day, measured Nov 3 to 7"). HYPE and xyz:SP500 are $5M, and their labels state the achieved rate, 14.6 and 7.2 a day, because no threshold came within 25% of 10. Each burst is ranked against that week's minutes: "a top x% minute, Nov 3 to 7", or unavailable when the reference file isn't loaded. See "Burst thresholds in node mode" below to set a market's threshold by hand.
 - **Wallets.** Addresses are public on-chain identifiers; the plugin never guesses who owns one. Bought plus sold is participation, not volume, and net bought is not a position change or PnL. An opened wallet's account state is fetched from the info endpoint for the market's dex only and is shown only when the answer's own time is recent when served (within 10 s under the clock bound, counting the time both requests took); otherwise every value is unavailable with the reason. Open orders have no response timestamp, so they're never shown as current. The tab keeps aging the account state from the moment it asked for it, so delivery time and every second the window stays open count. Once it passes 10 s, including on arrival, it is marked expired and its values are withheld until **Fetch account again** gets a new answer.
-- **Node mode** (optional, setting `node_feed`): the node ladder, waiting stops, wall watch, heatmap history, node tape with flags, Flow Deck activity buckets, wallet activity splits, liquidation bursts and the liquidity-thinning panel come from the engine's own feed; see "Node mode (optional)" below. Without a node feed those panels say "needs node mode".
+- **Node mode** (optional, setting `node_feed`): the node ladder, waiting stops, wall watch, heatmap history, node tape with flags, burst alerts with their rank, Flow Deck activity buckets, wallet activity splits, liquidation bursts and the liquidity-thinning panel come from the engine's own feed; see "Node mode (optional)" below. Without a node feed those panels say "needs node mode".
 
 ## Node mode (optional)
 
@@ -100,19 +102,46 @@ With a node feed, the tab's node panels and the `node_status`, `node_book` and `
 | What | Details |
 | --- | --- |
 | Network destinations | `https://api.hyperliquid.xyz/info` (POST: `perpDexs`, `meta`, `l2Book`, `clearinghouseState`, `frontendOpenOrders`) and `wss://api.hyperliquid.xyz/ws` (subscriptions `l2Book`, `trades`, `bbo`, `activeAssetCtx`, plus `ping`). Nothing else. Each endpoint and its doc link are in [docs/ENDPOINTS.md](docs/ENDPOINTS.md). No telemetry. Optional, only when you set `node_feed`: that local Unix socket or relay WebSocket URL, nothing else; the plugin writes one handshake line there and only reads. |
-| Background worker | One worker thread, `hyperliquid-desk-collector`, created with Hermes's documented `spawn_context_thread` so it keeps its profile's context, running its own asyncio loop: one Hyperliquid websocket connection (plus, only when `node_feed` is set, one node feed connection to that socket or URL), an info poll every 5 s per market for depth books, and a snapshot every second. Blocking HTTP requests run in that loop's short-lived executor threads, never on the gateway's event loop. Snapshots stay in memory; nothing is written per snapshot. It starts only on `/hl start` or the tab's Start button, never on install, import, registration, `plugins doctor` or `plugins validate`. Stop it with `/hl stop`; `/hl restart` restarts it. Reconnects back off from 1 s to 30 s, and the disconnected state is shown. Bounded memory: 16 minutes of trades per market and the last 180 snapshots. With a node feed (or a replay), per market and source: the current order book and waiting trigger orders (sized by the market itself), 15 minutes of book changes and heatmap samples, 16 minutes of node fills, and a bounded buffer of events during a snapshot (`buffer_messages`, 50,000); node views are kept in the newest 60 snapshots only. |
+| Background worker | One worker thread, `hyperliquid-desk-collector`, created with Hermes's documented `spawn_context_thread` so it keeps its profile's context, running its own asyncio loop: one Hyperliquid websocket connection (plus, only when `node_feed` is set, one node feed connection to that socket or URL), an info poll every 5 s per market for depth books, and a snapshot every second. Blocking HTTP requests run in that loop's short-lived executor threads, never on the gateway's event loop. Snapshots stay in memory; nothing is written per snapshot. It starts only on `/hl start` or the tab's Start button, never on install, import, registration, `plugins doctor` or `plugins validate`. Stop it with `/hl stop`; `/hl restart` restarts it. Reconnects back off from 1 s to 30 s, and the disconnected state is shown. Bounded memory: 16 minutes of trades per market and the last 180 snapshots. With a node feed (or a replay), per market and source: the current order book and waiting trigger orders (sized by the market itself), 15 minutes of book changes and heatmap samples, 16 minutes of node fills (and of execution identities for the burst rule), the burst reference (about 230,000 sorted 60 s sums across the four markets, loaded once), and a bounded buffer of events during a snapshot (`buffer_messages`, 50,000); node views are kept in the newest 60 snapshots only. |
 | Storage | `<HERMES_HOME>/plugin-data/hyperliquid-desk/`: `collector.lock` (marks the profile's single collector owner) and, while the collector runs, `owner.sock`, a Unix socket with mode 0600 (removed on stop). If that path is too long for a Unix socket, the socket goes in a private per-user directory under the system temp folder instead (`hl-desk-<uid>/`, mode 0700). Snapshots stay in the owner's memory: the last 180, each with the exact trades its panels used. Nothing else is written, and nothing is written outside it. Inside Hermes this profile directory is always used; the `HL_DESK_DATA_DIR` environment variable, used by the tests, is honored only where Hermes's plugin storage isn't available (outside Hermes). |
 | Local IPC | The process that owns the collector answers the profile's other Hermes processes (for example the dashboard process and a plugin host) on `owner.sock`. It serves snapshots by ID, a wallet's executions from a retained snapshot, status, stop and restart. Only the same OS user can connect, and there is no network listener. |
 | Commands | `/hl [status|start|stop|restart|help]`; `/hl replay start [file]|pause|resume|seek <time>|speed <x>|restart|stop` |
 | Tools | `hl_market`, `hl_flow`, `hl_context`, `hl_status`, `hl_alerts`, `hl_wallets`: all read-only; `hl_wallets` with an `address` makes two info requests. `node_status`, `node_book`, `node_stops`: read-only, from the same snapshot as the tab's node panels. |
 | Dashboard routes | `/api/plugins/hyperliquid-desk/`: `snapshot`, `status`, `wallets`, `tool/<name>` (GET); `collector/start|stop|restart` (POST); `node/replay/<start|pause|resume|seek|speed|restart|stop>` (POST). |
 | Credentials | One optional setting: `node_key`, a Hermes secret (`HL_DESK_NODE_KEY`), read only through Hermes's secret scope and sent only to a relay WebSocket URL as an `Authorization: Bearer` header. Not needed for a local socket or a relay without keys; never in `requires_env`, so the plugin loads and public mode works without it. No other secret is read or stored. |
-| Shell commands, reads outside its data | None. The clock error bound is read with a read-only `adjtimex` system call through the C library already loaded in the process; no external command is run to find it. The one file it reads outside its data is a recording you name in `node_replay_file` (or pass to `/hl replay start`), and only when you start a replay. |
+| Shell commands, reads outside its data | None. The clock error bound is read with a read-only `adjtimex` system call through the C library already loaded in the process; no external command is run to find it. The one file it reads outside its data is a recording you name in `node_replay_file` (or pass to `/hl replay start`), and only when you start a replay. Inside the plugin it also reads its packaged burst calibration (`hl_desk/node/calibration`, about 1.7 MB compressed) once, when a node source first starts; public mode never reads it. |
 | Bundled JavaScript | TradingView Lightweight Charts 5.2.1, readable development build, Apache-2.0. License, notice and on-chart attribution are kept; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). No remote code or fonts are loaded. |
 
 ## Settings
 
-Set these in `config.yaml` under `plugins.entries.hyperliquid-desk.settings`, or in the Desktop plugin settings form: `markets`, `burst_min_usd` (per market), `large_print_usd` (per market), `wallet_target_share_pct`, and `clock_error_bound_ms`. That last one is needed only where the OS can't report its clock error bound (for example macOS, or an unsynchronized clock); without a bound, nothing source-timestamped can be fresh. Formulas never change at runtime.
+Set these in `config.yaml` under `plugins.entries.hyperliquid-desk.settings`, or in the Desktop plugin settings form: `markets`, `burst_min_usd` (per market, public mode), `node_burst_min_usd` (per market, node mode, manual override), `large_print_usd` (per market), `wallet_target_share_pct`, and `clock_error_bound_ms`. That last one is needed only where the OS can't report its clock error bound (for example macOS, or an unsynchronized clock); without a bound, nothing source-timestamped can be fresh. Formulas never change at runtime.
+
+### Burst thresholds in node mode
+
+Each market starts on automatic: the threshold from the shipped calibration (`hl_desk/node/calibration/burst-calibration-2026-11-08.json`, version 2026-11-08.1, measured Nov 3 to 7). To set one market's threshold by hand, in USD per 60 s:
+
+```bash
+hermes config set plugins.entries.hyperliquid-desk.settings.node_burst_min_usd.BTC 25000000
+```
+
+Then run `/hl restart`, since settings are read when the collector starts. The Flow Deck's burst rule line and `node_status` show "manual: $25,000,000 (setting node_burst_min_usd)". To switch that market back to automatic, remove it and restart:
+
+```bash
+hermes config unset plugins.entries.hyperliquid-desk.settings.node_burst_min_usd.BTC
+```
+
+Setting it to `auto` instead (`hermes config set ….node_burst_min_usd.BTC auto`) does the same. Other markets are unaffected; xyz markets use their full name, for example `node_burst_min_usd.xyz:SP500`. In `config.yaml` it reads:
+
+```yaml
+plugins:
+  entries:
+    hyperliquid-desk:
+      settings:
+        node_burst_min_usd:
+          BTC: 25000000
+```
+
+A manual threshold has no calibrated rate, so its label says manual. The rank is still against the Nov 3 to 7 reference. In public mode `node_burst_min_usd` isn't used; `burst_min_usd` is.
 
 ## Development
 
@@ -122,7 +151,7 @@ python scripts/build_dashboard.py .           # rebuilds dashboard/dist/index.js
 python scripts/record_fixtures.py --out <dir> # re-records public fixtures (needs network)
 ```
 
-The tests cover every tool's JSON shape; each data rule (a band the levels don't reach, an empty side, a duplicate trade, stale data, a frozen source behind a live connection, a quiet market, a reconnect gap, clock skew); every Flow Deck regime at its thresholds; bursts below, at and above threshold and across a gap; wallet ranks and shares against independent calculations; the metadata check per market; and the real collector against a local stand-in server, including its reconnect.
+The tests cover every tool's JSON shape; each data rule (a band the levels don't reach, an empty side, a duplicate trade, stale data, a frozen source behind a live connection, a quiet market, a reconnect gap, clock skew); every Flow Deck regime at its thresholds; bursts below, at and above threshold and across a gap; node-mode bursts on PLAN.md's rule cases (warm-up, same-timestamp blocks, gaps, incomplete windows and every rejection) and on a recorded window of node fills against an independent computation, with ranks counted from the reference; wallet ranks and shares against independent calculations; the metadata check per market; and the real collector against a local stand-in server, including its reconnect.
 
 The node-mode tests (`tests/test_node_*.py`) feed recorded node feed lines (`tests/fixtures/node`, provenance in its `MANIFEST.json`) through the plugin and read every intermediate tool and tab result. Two optional checks need local reference files and are skipped without them: `HL_DECK_SOURCE` (the terminal Flow Deck's `hl_deck.py`, for the bucket definitions) and `HL_DECK_LIVE_LOG` (its frames, a vocabulary check only).
 

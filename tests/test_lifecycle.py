@@ -6,6 +6,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -101,6 +102,22 @@ def _manifest_tools():
             else:
                 break
     return out
+
+
+def test_the_manifest_is_valid_yaml():
+    """Hermes discovery skips a manifest it can't parse. With a YAML parser it parses; without one (the test
+    environments have none), no unquoted value holds what a plain YAML scalar can't (": " or " #")."""
+    text = (ROOT / "plugin.yaml").read_text()
+    try:
+        import yaml
+    except ImportError:
+        yaml = None
+    if yaml is not None:
+        assert isinstance(yaml.safe_load(text), dict)
+    for n, ln in enumerate(text.splitlines(), 1):
+        m = re.match(r"^\s*(?:- )?[A-Za-z_][\w-]*: (.+)$", ln)
+        if m and m.group(1)[0] not in "\"'[{|>":
+            assert ": " not in m.group(1) and " #" not in m.group(1), f"plugin.yaml line {n}: {ln.strip()}"
 
 
 def test_provides_tools_matches_registered():

@@ -38,7 +38,8 @@ A metric is `{"value": <number|string>, "unit": "USD"}` or, when unavailable, `{
 | `flow.tape[]` | trade `{time, px, sz, notional_usd, side (B/A), aggressor, buyer, seller, tid, hash, counted}`; `counted: false` = from the subscription snapshot, before coverage; `segment`: `current` or `before a gap (an earlier coverage segment)` |
 | `context` | `mark, oracle, mid, funding (fraction per 1h), funding_pct_per_hour, open_interest (coin), open_interest_usd, day_notional_volume, prev_day_px` + `units_note` |
 | `deck.card` | see below |
-| `deck.events[]` | `{type: regime_change | regime_change_withdrawn | regime_ended_by_gap | burst, market, at, at_ms, text, …}` (`regime_change_withdrawn`: a late trade changed the ticks a change was confirmed on; schema `deck.late_trades`); regime change has `from, to, held_s`; burst has `side, aggressive_notional_usd, threshold_usd, executions, wallets: <ranked list>` |
+| `deck.events[]` | `{type: regime_change | regime_change_withdrawn | regime_ended_by_gap | burst, market, at, at_ms, text, …}` (`regime_change_withdrawn`: a late trade changed the ticks a change was confirmed on; schema `deck.late_trades`); regime change has `from, to, held_s`; burst has `side, aggressive_notional_usd, threshold_usd, executions, wallets: <ranked list>`. In node mode bursts come only from node fills (schema `alerts.burst.node_mode`) and add `stream: "node fills", block, threshold: {usd, source: automatic/manual/unavailable, label, version, dated, measured_utc, target_per_day, achieved_per_day, near_target}, rank: {available, upper_tail, top_pct, at_or_above, reference_count, label: "a top x% minute, Nov 3 to 7"} or {available: false, reason}, provenance, rule, node_activity` |
+| `deck.bursts` | the market's burst rule: `{mode: "public", stream: "public trades", threshold_usd, setting: "burst_min_usd"}`, or `{mode: "node", stream: "node fills", available, threshold, segment_start_ms, armed, counters: {evaluations, incomplete_windows, fired, gaps, rejected: {reason: count}}, setting: "node_burst_min_usd"}` |
 | `wallets["1m" | "5m" | "15m"]` | `{window: {requested_min, start, end, length_s, complete, completeness}, unique_execution_notional_usd, executions, buyers: <ranked list>, sellers: <ranked list>, wallets: {address: row}, notes[]}` or `{window_min, reason}` |
 | `chart` | `{candle_s: 15, candles: [{time (unix s), open, high, low, close, volume_usd}], price_lines: [{price, label, kind}], gaps[]}` |
 | `node` | `{panels, live, replay, separation}`: see "Node mode" below; without a node feed `live` is `{available: false, reason: "needs node mode: ..."}` |
@@ -70,7 +71,7 @@ and replay are separate partitions and are never mixed. A view is:
 | `walls`, `history`, `thinning`, `tape` | wall watch; the 15-minute heatmap samples (partial until covered); the liquidity-thinning bands with the sharpest drop and its note; the node tape with flags and its coverage |
 | `liquidation_events` | liquidation bursts (also merged into `deck.events`) |
 
-Flow Deck cards carry `activity_buckets` from node fills (`stream: "node fills"`), burst events `node_activity` (their side only), and
+Each market's view also has `bursts` (the node burst rule's status, as in `deck.bursts`). Flow Deck cards carry `activity_buckets` from node fills (`stream: "node fills"`), node burst events `node_activity` (their side only, from exactly the burst's executions), and
 wallet panels `node_activity_split`; each is unavailable with a reason when the node fills don't cover its window. Top level:
 `node_status` (live connection, configured settings, replay status).
 

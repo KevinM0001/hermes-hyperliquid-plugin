@@ -8,6 +8,7 @@ formulas never change at runtime.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from . import schema
@@ -31,6 +32,9 @@ class DeskConfig:
     info_url: str = INFO_URL
     node_feed: str = ""                    # a Unix socket path or a ws(s):// relay URL; "" = public mode only
     node_replay_file: str = ""             # a recording, played only when a replay is started explicitly
+    # Node mode: a manual burst threshold per market (USD per 60 s); a market not listed (or listed as "auto") uses the
+    # automatic threshold from the dated burst calibration (hl_desk/node/calibration).
+    node_burst_min_usd: dict[str, float] = field(default_factory=dict)
     liq_burst_count: int = 2
     liq_burst_usd: float = 1_000_000.0
 
@@ -88,6 +92,20 @@ def from_settings(get) -> DeskConfig:
         v = get(key, None)
         if isinstance(v, str):
             setattr(cfg, key, v.strip())
+    nb = get("node_burst_min_usd", None)
+    if isinstance(nb, dict):
+        # A finite positive number (or numeric text) is a manual threshold; "auto", a missing market or anything
+        # else leaves that market on its automatic threshold.
+        manual = {}
+        for k, x in nb.items():
+            if isinstance(x, str):
+                try:
+                    x = float(x)
+                except ValueError:
+                    continue
+            if isinstance(x, (int, float)) and not isinstance(x, bool) and math.isfinite(x) and x > 0:
+                manual[str(k)] = float(x)
+        cfg.node_burst_min_usd = manual
     n = get("liq_burst_count", None)
     if isinstance(n, int) and not isinstance(n, bool) and n > 0:
         cfg.liq_burst_count = n

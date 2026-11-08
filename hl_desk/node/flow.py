@@ -95,9 +95,10 @@ class NodeFlow:
         self.unreadable: deque[int] = deque(maxlen=1000)    # block times of executions that couldn't be read
         self.liq_events: deque[dict] = deque(maxlen=200)
         self.liq_armed = True
+        self.bursts = None                 # node-mode burst rule (bursts.NodeBurstRule), attached by the plugin
 
     # --- boundaries ------------------------------------------------------------
-    def boundary(self, reason: str) -> None:
+    def boundary(self, reason: str, burst_gap: bool = True) -> None:
         if not self.restart_pending and self.since_block is not None:
             self.windows.append({"since_block": self.since_block, "since_ms": self.since_ms,
                                  "until_block": self.last_block, "until_ms": self.last_block_time_ms,
@@ -109,16 +110,26 @@ class NodeFlow:
         self.restart_reason = reason
         self.since_block = self.since_ms = None
         self.liq_armed = True
+        if self.bursts is not None and burst_gap:
+            self.bursts.boundary(reason)
 
     def on_watermark(self, block: int, block_time_ms: int | None) -> None:
         if self.restart_pending:
             self.restart_pending = False
             self.since_block, self.since_ms = block, block_time_ms
+            if self.bursts is not None and block_time_ms is not None and self.bursts.segment_start_ms is None:
+                self.bursts.start(block_time_ms)
         self.last_block, self.last_block_time_ms = block, block_time_ms
 
     def on_execs(self, body: dict, block: int, block_time_ms: int | None) -> list[Execution]:
-        if body.get("fills_known") is False:
-            self.boundary(f"executions unknown at block {block} (fills record not read)")
+        known = body.get("fills_known") is not False
+        if self.bursts is not None:
+            # Node-mode bursts: one evaluation per block, under the burst calibration's rule. A block whose fills
+            # weren't read is an unreadable record for them (its windows incomplete), not a gap.
+            self.bursts.on_block(block, block_time_ms, body.get("execs") or [], fills_known=known)
+        if not known:
+            # For the flow's own window, unknown executions are a boundary (PROTOCOL.md 6.7).
+            self.boundary(f"executions unknown at block {block} (fills record not read)", burst_gap=False)
             return []
         if self.restart_pending or (self.since_block is not None and block <= self.since_block):
             self.counters["before_window"] += len(body.get("execs") or [])

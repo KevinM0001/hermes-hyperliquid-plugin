@@ -164,7 +164,6 @@ class Surfaces:
         from fastapi.testclient import TestClient
 
         from hl_desk import runtime as rt_mod
-        from hl_desk.config import DeskConfig
         from hl_desk.node.manager import NodeManager
         from hl_desk.store import SnapshotStore
 
@@ -181,18 +180,19 @@ class Surfaces:
         self.http = TestClient(app)
         self.markets = list(markets)
         self.desk = make_desk(markets=tuple(markets), **desk_cfg)
-        self.mgr = NodeManager(DeskConfig(markets=list(markets)))
+        self.mgr = NodeManager(self.desk.cfg)
         self.desk.node = self.mgr
         self.reads = 0
         self.last: dict = {}
 
     def attach(self, c: FeedClient) -> FeedClient:
-        """Make c the plugin's live feed (a LIVE client) or its running replay (a REPLAY client); both can run."""
+        """Make c the plugin's live feed (a LIVE client) or its running replay (a REPLAY client); both can run.
+        Either gets node-mode bursts, as the plugin attaches them (NodeManager.attach_bursts)."""
         if c.mode == "REPLAY":
             self.mgr.replay_client = c
         else:
             self.mgr.live = c
-        return c
+        return self.mgr.attach_bursts(c)
 
     def close(self):
         self.rt_mod._slot.reset()

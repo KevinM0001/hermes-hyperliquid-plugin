@@ -210,7 +210,7 @@ def hl_alerts(snap: dict, args: dict, rt=None) -> dict:
         if err:
             raise LookupError(err)
         cards[name] = {"provenance": ms["provenance"], "status": _status_line(ms, ["trades"]),
-                       "card": ms["deck"]["card"]}
+                       "card": ms["deck"]["card"], "bursts": ms["deck"].get("bursts")}
         events.extend(ms["deck"]["events"])
     events.sort(key=lambda e: e["at_ms"], reverse=True)
     reg = schema.load()["regimes"]
@@ -219,6 +219,9 @@ def hl_alerts(snap: dict, args: dict, rt=None) -> dict:
             "definitions": {"regime_order": [r["state"] + ": " + r["when"] for r in reg["rules"]],
                             "latch": reg["latch"], "gap_rule": reg["gap_rule"],
                             "burst": schema.load()["alerts"]["burst"]["formula"],
+                            "node_burst": {k: schema.load()["alerts"]["burst"]["node_mode"][k]
+                                           for k in ("applies", "rule", "incomplete_windows", "rejected_records",
+                                                     "threshold", "rank")},
                             "source": "schema/metrics.v1.json regimes and alerts (ported from hl_deck.py)"},
             "schema": snap["schema"], "disclaimer": DISCLAIMER}
 
@@ -463,7 +466,8 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
             continue
         markets[name] = {"families": view.get("families"), "provenance": view.get("provenance"),
                          "book": view.get("book"), "replay": view.get("replay"), "counters": view.get("counters"),
-                         "recent_events": view.get("recent_events")}
+                         "recent_events": view.get("recent_events"),
+                         "bursts": view.get("bursts")}
     if wanted and not markets:
         raise LookupError(f"unknown market {wanted!r}")
     return {"tool": "node_status", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],

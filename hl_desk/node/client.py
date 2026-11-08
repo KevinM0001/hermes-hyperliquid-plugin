@@ -122,6 +122,7 @@ class FeedClient:
                          "malformed": 0, "sessions": 0, "replay_sessions": 0, "unknown_market": 0,
                          "dropped": 0, "replay_unavailable": 0, "errors": 0}
         self.listeners: list = []               # callables(event: dict) for panels (bursts, alerts)
+        self.burst_rule_factory = None          # (market, client) -> bursts.NodeBurstRule, for node-mode bursts
 
     # --- partition -------------------------------------------------------------
     def stream_label(self) -> str:
@@ -143,6 +144,8 @@ class FeedClient:
         mf = self.markets.get(name)
         if mf is None:
             mf = self.markets[name] = MarketFeed(name, self.stream_label())
+            if self.burst_rule_factory is not None:
+                mf.flow.bursts = self.burst_rule_factory(name, self)
         return mf
 
     # --- connection --------------------------------------------------------------

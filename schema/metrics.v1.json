@@ -1,6 +1,6 @@
 {
   "schema_id": "hyperliquid-desk.metrics",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Every metric, freshness rule, regime and alert rule the plugin computes, defined once. Tools, the dashboard tab and the commentary skill read these definitions; code in hl_desk/ implements them and tests in tests/ check each one against independently calculated values.",
   "sources": {
     "hyperliquid_docs": "See docs/ENDPOINTS.md for every endpoint and the doc link that confirms it.",
@@ -1250,7 +1250,17 @@
       "reset_rule": "After a side fires it is disarmed. It re-arms when that side's 60 s sum, evaluated just before the trades of a new message are added (the minimum since the last evaluation, because the sum only falls between messages), is below the threshold; a gap also re-arms it and starts a new segment. One burst episode fires once.",
       "completeness_rule": "Evaluated only when W - 60 s is at or after the segment start, so a burst never spans a gap.",
       "wallets": "The aggressive participants (takers) of the burst's own executions, each with its aggressive notional on that side, ranked against the burst's total with the wallets.ranked_list rules (target 50%, cap 50, ties by address). Shares use the burst total as the denominator.",
-      "config": "per-market threshold in plugin settings burst_min_usd (BTC default $10M from the handoff; other defaults are plugin choices)"
+      "config": "per-market threshold in plugin settings burst_min_usd (BTC default $10M from the handoff; other defaults are plugin choices)",
+      "node_mode": {
+        "source": "Kevin, Nov 8: burst calibration option A (analysis PLAN.md 'The burst rule', 'Validation', 'The reference for ranks', 'The default for the first release')",
+        "applies": "node mode only (a node feed is configured): bursts come from node fills and public-trades bursts aren't shown; public mode keeps alerts.burst above and burst_min_usd",
+        "rule": "For each side, the taker notional (px*sz) of the market's node executions in (W - 60 s, W], evaluated once per node block (W = the block time of each node executions message). A disarmed side re-arms when its sum before this block's executions are added is below the threshold; then, if armed and the sum has reached the threshold, it fires once and disarms. A gap (a sequence gap, a new producer or replay session) re-arms both sides and starts a new segment at the node fills' next window start; no burst spans a gap.",
+        "incomplete_windows": "A window that starts before the segment start, or that contains a rejected or unreadable record, keeps its executions but never fires, re-arms or disarms.",
+        "rejected_records": "An execution that can't be read (tid, price, size or time); complete false or conflict; not exactly one taker and one maker, one buyer and one seller, each with an address; a fill time other than the block time; an identity already seen in an earlier block; a block whose fills weren't read (fills_known false); a block time running backwards. Rejected executions are never counted.",
+        "threshold": "Per market: automatic, from the dated, versioned calibration hl_desk/node/calibration/burst-calibration-2026-11-08.json (target 10 bursts a covered day, measured Nov 3 to 7 on node fills: the grid threshold whose achieved rate is nearest the target), labelled 'automatic: about 10 a day, measured Nov 3 to 7', or with the achieved rate when no threshold is within 25% of the target; or manual, from the setting node_burst_min_usd (a market listed with a number). Removing the market from node_burst_min_usd, or setting it to \"auto\", restores the automatic threshold. Without either, node bursts are unavailable for that market, with the reason.",
+        "rank": "Each node burst's rank against the calibration's reference (every eligible 60 s sum of the same market and side, sampled every 15 s, Nov 3 to 7): count(reference sums >= burst sum) / reference count, ties counted as at or above, shown as 'a top x% minute, Nov 3 to 7'. When the reference file isn't loaded the rank is unavailable, never estimated.",
+        "event": "type burst, stream 'node fills', with side, at_ms, block, the window, aggressive_notional_usd, threshold {usd, source, label, version, achieved_per_day, ...}, rank {upper_tail, top_pct, at_or_above, reference_count, label} or {available false, reason}, wallets (the aggressive takers, wallets.ranked_list rules) and node_activity (the side's buckets from exactly these executions)"
+      }
     },
     "regime_change": {
       "source": "hl_deck",
@@ -1269,6 +1279,7 @@
     }
   },
   "changes": [
-    "1.1.0 (Handoff 1c Part B): node.* metrics from the l4-livefeed protocol v2, additive; no public-data metric changed"
+    "1.1.0 (Handoff 1c Part B): node.* metrics from the l4-livefeed protocol v2, additive; no public-data metric changed",
+    "1.2.0 (burst calibration, Kevin's choice A): node-mode bursts on node fills with the calibration's rule (alerts.burst.node_mode), automatic thresholds from a dated calibration with a manual override, and a rank against the calibration's reference; the public-trades burst rule is unchanged and is public mode's"
   ]
 }

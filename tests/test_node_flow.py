@@ -122,43 +122,80 @@ def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000,
     return plugin, reads[-1]
 
 
-def test_burst_node_buckets_through_the_plugin(surfaces):
-    """A public burst (aggressive buying over burst_min_usd in 60 s) carries node buckets for its own side only,
-    each over that side's aggressive notional from node fills in the burst's window, with provenance and
-    freshness. Until the fills are processed through the window's end they are unavailable, then they appear;
-    after a producer restart the earlier result isn't reused."""
+def _ref_upper_tail(market, side, total):
+    """Counted here from the shipped reference file: count(sums >= total) / count."""
+    import gzip
+    from hl_desk.node import calibration
+    ref = json.loads(gzip.decompress((calibration.HERE / calibration.load().data["reference_file"]).read_bytes()))
+    sums = ref["markets"][market][f"{side}_sums_usd_sorted"]
+    return sum(1 for x in sums if x >= total) / len(sums)
+
+
+def test_node_burst_through_the_plugin(surfaces):
+    """Node mode (Kevin's choice A): the burst comes from node fills, one evaluation per node block, at the manual
+    threshold; it carries its threshold's label, its rank against the reference and its own side's buckets, with
+    provenance and freshness, the same through chat and the tab. Public-trades bursts aren't shown in node mode,
+    although W's public buying (about $4,080 a minute) is over its burst_min_usd here. The buckets are withheld
+    while the node fills aren't fresh at the build; after a producer restart the earlier stream's burst is gone."""
     buy_flip = _flip_buy()
     sell = _exec(31, "100", "2", 0, "A", [_p(A, "A", "taker", {"exit": "2", "new_short": "0"}),
                                           _p(B, "B", "maker", {"cover": "0", "new_long": "2"})])
     hist = []
     plugin, _ = _plugin_run(surfaces, [{"execs": [buy_flip]}, {"execs": [sell]}],
-                            desk_cfg={"burst_min_usd": {SP: 4_000.0}}, t_first=T0 + 30_000, history=hist)
-    seen_available = False
+                            desk_cfg={"node_burst_min_usd": {SP: 400.0}, "burst_min_usd": {SP: 1_000.0}}, history=hist)
+    fired = False
     for m, last in hist:
         bursts = [e for e in last["events"] if e.get("type") == "burst"]
         tab = [e for e in last["tab"]["deck"]["events"] if e.get("type") == "burst"]
-        assert len(bursts) == 1 and bursts == tab
-        b = bursts[0]
-        assert b["side"] == "buying" and b["at_ms"] == T0 + 60_000
+        assert bursts == tab and all(b["stream"] == "node fills" for b in bursts)
+        info = last["tab"]["deck"]["bursts"]
+        assert info["mode"] == "node" and info["threshold"]["source"] == "manual" and info["threshold"]["usd"] == 400
+        if m["seq"] < 2:                                    # the burst's block hasn't arrived yet
+            assert bursts == []
+            continue
+        (b,) = bursts
+        fired = True
+        assert b["side"] == "buying" and b["at_ms"] == T0 + 60_000 and b["aggressive_notional_usd"] == 400
+        assert b["threshold"] == {"source": "manual", "label": "manual: $400 (setting node_burst_min_usd)", "usd": 400.0}
+        r = b["rank"]
+        assert r["available"] and r["upper_tail"] == _ref_upper_tail(SP, "buying", 400.0)
+        assert r["label"].endswith("minute, Nov 3 to 7") and r["label"].startswith("a top ")
+        assert [x["address"] for x in b["wallets"]["listed"]] == [A]
         na = b["node_activity"]
         assert na["stream"] == "node fills" and na["provenance"]["source"] == "test-socket"
         assert na["freshness"]["family"] == "flow"
         assert not {"new_short", "exit", "new_short_pct", "exit_pct"} & set(na)       # its own side only
-        if m["block_time_ms"] < T0 + 60_000:
-            assert na["available"] is False and "not processed through" in na["reason"]
-            assert na["new_long"]["value"] is None and na["cover"]["value"] is None
-        else:
+        if na["freshness"]["state"] == "LIVE":
             assert na["available"] is True
-            seen_available = True
             assert _v(na["cover"]) == 300 and _v(na["new_long"]) == 100
             assert _v(na["cover_pct"]) == 75 and _v(na["buying_aggressive_usd"]) == 400
-    assert seen_available
+        else:
+            assert na["available"] is False and "node fills" in na["reason"] and na["new_long"]["value"] is None
+    assert fired and hist[-1][1]["events"][0]["node_activity"]["available"] is True
     c = plugin.mgr.live                                  # a producer restart: a new epoch, nothing carried over
     c.on_line({"v": 2, "control": "hello", "epoch": 8, "session": "0" * 31 + "2", "started_ms": NOW, "pub_ms": NOW,
                "mode": "LIVE", "markets": {SP: {"start_seq": 1, "snapshot": "pending"}}}, NOW, (NOW - T0) * 10 ** 6)
     plugin.read(SP, NOW, (NOW - T0) * 10 ** 6)
-    (b,) = [e for e in plugin.last["events"] if e.get("type") == "burst"]
-    assert b["node_activity"]["available"] is False and b["node_activity"]["provenance"]["epoch"] == 8
+    assert [e for e in plugin.last["events"] if e.get("type") == "burst"] == []
+
+
+def test_public_mode_keeps_its_public_trades_bursts(surfaces):
+    """Without a node feed the public-trades rule is unchanged: W's buying crosses burst_min_usd and the burst says
+    its node buckets need node mode; no node calibration is used."""
+    from helpers import NS, open_segment, trade
+    plugin = surfaces([SP], burst_min_usd={SP: 4_000.0}, node_burst_min_usd={SP: 1.0})
+    ms = plugin.desk.markets[SP]
+    open_segment(ms, T0)
+    for k in range(1, 112):
+        t = T0 + k * 1000
+        ms.on_trades([trade(SP, t, 6800.0, 0.01, "B", W, B, k)], k * NS, t)
+    snap = plugin.desk.build_snapshot(112 * NS, T0 + 112_000)
+    deck = snap["markets"][SP]["deck"]
+    bursts = [e for e in deck["events"] if e.get("type") == "burst"]
+    assert bursts and all("stream" not in e and "rank" not in e for e in bursts)
+    assert bursts[-1]["threshold_usd"] == 4_000.0
+    assert bursts[-1]["node_activity"] == {"available": False, "reason": "needs node mode: no node feed configured"}
+    assert deck["bursts"]["mode"] == "public" and deck["bursts"]["threshold_usd"] == 4_000.0
 
 
 def test_latest_reads_withhold_node_fill_results_once_their_flow_lapses(surfaces, monkeypatch):
@@ -246,14 +283,17 @@ def test_an_incomplete_execution_never_gives_a_split(surfaces):
     e = dict(_exec(91, "100", "4", 0, "A", [_p(W, "B", "maker", {"cover": "0", "new_long": "4"}),
                                             _p(B, "A", "taker", {"exit": "2", "new_short": "8"})]), complete=False)
     hist = []
-    _, (card, wal) = _plugin_run(surfaces, [{"execs": [e]}], desk_cfg={"burst_min_usd": {SP: 4_000.0}},
-                                 history=hist)
+    plugin, (card, wal) = _plugin_run(surfaces, [{"execs": [e]}], desk_cfg={"node_burst_min_usd": {SP: 400.0}},
+                                      history=hist)
     assert card["available"] is False and "incomplete or conflicting" in card["reason"]
     assert _v(card["unclassified_usd"]) == 400
     assert all(card[k]["value"] is None for k in ("new_long", "cover", "new_short", "exit"))
     assert not any(k.endswith("_pct") for k in card)
-    burst = next(ev for ev in hist[-1][1]["events"] if ev.get("type") == "burst")
-    assert burst["node_activity"]["available"] is False and "incomplete or conflicting" in burst["node_activity"]["reason"]
+    # Its $400 meets the node burst threshold, but a rejected record makes the window incomplete: no burst.
+    assert not [ev for ev in hist[-1][1]["events"] if ev.get("type") == "burst"]
+    counters = hist[-1][1]["node_status"]["markets"][SP]["bursts"]["counters"]
+    assert counters["fired"] == 0 and counters["incomplete_windows"] >= 1
+    assert counters["rejected"] == {"an execution whose participants' records are missing or disagree (complete false)": 1}
     assert wal["wallets"][W]["full"]["available"] is False
     conflicting = dict(_exec(92, "100", "4", 0, "B", [_p(A, "B", "taker", {"cover": "0", "new_long": "4"}),
                                                       _p(B, "A", "maker", {"exit": "4", "new_short": "0"})]), conflict=True)

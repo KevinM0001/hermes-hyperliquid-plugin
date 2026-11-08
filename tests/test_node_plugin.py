@@ -448,6 +448,7 @@ def test_replay_paused_seeked_restarted_and_ended_beside_live(surfaces):
     age = {"stale_after_ms": 10 ** 12, "max_source_age_ms": 10 ** 15}
     live = plugin.attach(FeedClient("unix:/run/feed.sock", "LIVE", age))
     ref = FeedClient("unix:/run/feed.sock", "LIVE", age)                   # the same live lines, never a replay
+    plugin.mgr.attach_bursts(ref)                                         # with the plugin's node-mode bursts
     for c in (live, ref):
         c.listeners.append(lambda ev: panels.on_client_event(ev, OPTS))
         c.on_line(hello_from(h), 0, 0)

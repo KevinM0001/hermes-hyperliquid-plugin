@@ -498,6 +498,9 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
         base["stops"] = stop_bands(mf, client)
     else:
         base["stops"] = {"available": False, "reason": f"triggers {tst['state']}: {tst.get('reason')}"}
+    rule = mf.flow.bursts
+    base["bursts"] = ({"available": True, **_jsonable(rule.status())} if rule is not None else
+                      {"available": False, "reason": "node-mode bursts aren't attached to this source"})
     fst = fam["flow"]
     if fst["state"] in ("LIVE", "REPLAY"):
         base["tape"] = {"rows": tape(mf), "coverage": mf.flow.coverage()}
@@ -522,14 +525,6 @@ def flow_meta(client, market: str, now_wall_ms=None, now_mono_ns=None) -> dict:
     """Provenance and the flow family's freshness (judged at the snapshot's build time when given), for any result
     built from node fills."""
     return {"provenance": provenance(client, market), "freshness": _flow_ok(client, market, now_wall_ms, now_mono_ns)[1]}
-
-
-def stream_key(client) -> tuple | None:
-    """The input stream a result was computed from: a cached result never outlives it."""
-    if client is None:
-        return None
-    return (client.source, client.mode, client.epoch, client.session,
-            client.replay_session if client.mode == "REPLAY" else None)
 
 
 def deck_buckets(client, market: str, start_ms: int, end_ms: int, now_wall_ms=None, now_mono_ns=None) -> dict:
