@@ -2683,6 +2683,255 @@
   }
   // </pure:snapshotValidity>
 
+  // How old a served snapshot is now: its age when served plus all the time since the tab asked for it.
+  function shownAge(data, requestedPerf) {
+    const served = (data && data.served) || {};
+    if (typeof served.age_s !== "number" || typeof requestedPerf !== "number") return null;
+    return served.age_s + Math.max(0, performance.now() - requestedPerf) / 1000;
+  }
+  // The statuses an aged view shows (public fields, node families, deck trades), to re-render only on a change.
+  function agedKey(view) {
+    const m = (view && view.market) || {};
+    const parts = [];
+    Object.keys(m.freshness || {}).forEach(function (k) { parts.push(k + ":" + (m.freshness[k] || {}).status); });
+    const fams = (m.node && m.node.live && m.node.live.families) || {};
+    Object.keys(fams).forEach(function (k) { parts.push("node." + k + ":" + (fams[k] || {}).state); });
+    Object.keys((view && view.deck) || {}).forEach(function (k) { parts.push("deck." + k + ":" + ((view.deck[k] || {}).trades_freshness || {}).status); });
+    return parts.join("|");
+  }
+
+  // <pure:ageShown> The snapshot on screen, aged to `ageS` seconds after it was built (Codex h1 review 1, B2): the
+  // same rules the backend applies when it serves a latest snapshot (hl_desk/serving_public.py for public fields,
+  // hl_desk/node/serving.py for node results). A public field fresh at build time that has lapsed by now reads stale
+  // (no progress) or delayed (old source time), and every value built on it is withheld with the reason, in the shape
+  // the build uses; a node family LIVE at build time whose delay bound has passed its limit reads DELAYED or STALE,
+  // with the node values built on it withheld. The page keeps its layout: values turn "unavailable" in place.
+  function ageShown(data, ageS) {
+    if (!data || typeof ageS !== "number" || !(ageS >= 0)) return data;
+    const when = "while on screen (the snapshot is about " + ageS.toFixed(1) + " s old)";
+    const NUM = function (x) { return typeof x === "number" && isFinite(x); };
+    const NA = function (reason, unit) { const o = { value: null, reason: reason }; if (unit !== undefined) o.unit = unit; return o; };
+    const withhold = function (block, reason) {
+      const o = {};
+      Object.keys(block || {}).forEach(function (k) {
+        const v = block[k];
+        o[k] = v && typeof v === "object" && !Array.isArray(v) && "value" in v ? NA(reason, v.unit) : v;
+      });
+      return o;
+    };
+    function lapse(f) {
+      if (!f || f.status !== "fresh") return null;
+      if (NUM(f.progress_age_s) && NUM(f.max_age_s) && f.progress_age_s + ageS > f.max_age_s) {
+        return ["stale", "no progress for " + (f.progress_age_s + ageS).toFixed(1) + " s (max " + f.max_age_s + " s)"];
+      }
+      const b = NUM(f.clock_bound_s) ? f.clock_bound_s : 0;
+      if (NUM(f.source_age_s) && NUM(f.source_max_age_s) && f.source_age_s + ageS + b > f.source_max_age_s) {
+        return ["delayed", "source time " + (f.source_age_s + ageS).toFixed(1) + " s old (max " + f.source_max_age_s +
+          " s with a " + b + " s clock bound)"];
+      }
+      return null;
+    }
+    function agedFresh(f, l) {
+      const o = Object.assign({}, f, { status: l[0], reason: l[1] + ", " + when, aged_by_s: Math.round(ageS * 1000) / 1000 });
+      ["progress_age_s", "source_age_s", "last_message_age_s"].forEach(function (a) {
+        if (NUM(f[a])) o[a] = Math.round((f[a] + ageS) * 1000) / 1000;
+      });
+      return o;
+    }
+    function withheldCard(card, r) {
+      const o = {};
+      ["market", "window_s", "tick_s", "last_complete_tick_ms", "activity_buckets"].forEach(function (k) { if (k in card) o[k] = card[k]; });
+      o.regime = NA(r); o.confirmed_regime = null; o.live_classification = null; o.pending = null;
+      o.numbers = {};
+      ["move_bps", "net_flow_usd", "volume_usd", "impact", "pressure", "trades", "accounts", "top_wallet"].forEach(function (k) { o.numbers[k] = NA(r); });
+      if (card.confirmed_regime) o.last_confirmed = { regime: card.confirmed_regime, as_of_tick_ms: card.last_complete_tick_ms,
+        note: "historical: the confirmed regime when the snapshot was built" };
+      else if (card.last_confirmed) o.last_confirmed = card.last_confirmed;
+      return o;
+    }
+    // --- node (as hl_desk/node/serving.py): a LIVE family whose delay bound has passed a limit
+    const USABLE = { LIVE: true, REPLAY: true };
+    function nodeState(st) {
+      if (!st || st.state !== "LIVE") return st;
+      const out = Object.assign({}, st, { aged_by_ms: Math.round(ageS * 1000) });
+      if (!NUM(st.delay_ms) || !NUM(st.delayed_after_ms) || !NUM(st.stale_after_ms)) {
+        return Object.assign(out, { state: "STALE", reason: "its delay or limit isn't known, so it can't be shown as current" });
+      }
+      ["watermark_age_ms", "source_age_ms", "delay_ms"].forEach(function (k) { if (NUM(st[k])) out[k] = Math.round(st[k] + ageS * 1000); });
+      const win = (st.delay_window_ms || 5000) / 1000;
+      if (out.delay_ms > st.stale_after_ms) return Object.assign(out, { state: "STALE", reason: "the node feed's delay is up to " +
+        (out.delay_ms / 1000).toFixed(1) + " s (" + win + " s average; stale above " + st.stale_after_ms / 1000 + " s), " + when });
+      if (out.delay_ms > st.delayed_after_ms) return Object.assign(out, { state: "BEHIND", reason: "the node feed's delay is up to " +
+        (out.delay_ms / 1000).toFixed(1) + " s (" + win + " s average; delayed above " + st.delayed_after_ms / 1000 + " s), " + when });
+      return out;
+    }
+    function fillResult(res) {
+      if (!res || !res.available || !res.freshness) return res;
+      const st = nodeState(res.freshness);
+      if (st === res.freshness || USABLE[st.state]) return Object.assign({}, res, { freshness: st });
+      const why = "node fills " + st.state + ": " + st.reason;
+      const out = { available: false, reason: why, freshness: st };
+      ["stream", "window_label", "provenance", "coverage", "window"].forEach(function (k) { if (k in res) out[k] = res[k]; });
+      ["new_long", "cover", "new_short", "exit"].forEach(function (k) { if (k in res) out[k] = { value: null, reason: why, unit: "USD" }; });
+      return out;
+    }
+    function nodeView(view) {
+      if (!view || !view.families) return view;
+      const fams = {};
+      let changed = false;
+      Object.keys(view.families).forEach(function (k) { fams[k] = nodeState(view.families[k]); if (fams[k] !== view.families[k]) changed = true; });
+      if (!changed) return view;
+      const out = Object.assign({}, view, { families: fams });
+      if (view.delay && view.delay.available && view.delay.state === "LIVE") {
+        const d = nodeState(Object.assign({}, view.delay, { state: "LIVE", delay_window_ms: view.delay.window_ms }));
+        out.delay = Object.assign({}, view.delay, { delay_ms: d.delay_ms, state: d.state, reason: d.state === "LIVE" ? null : d.reason });
+      }
+      const was = view.families;
+      const lapsed = function (k) { return fams[k] && !USABLE[fams[k].state] && was[k] && USABLE[was[k].state]; };
+      const why = function (k) { return k + " " + fams[k].state + ": " + fams[k].reason; };
+      if (lapsed("book") && out.book) {
+        out.book = Object.assign({}, out.book, { valid: false, reason: why("book") });
+        out.ladder = { available: false, reason: why("book") };
+        out.walls = { available: false, reason: why("book") };
+        out.thinning = { available: false, reason: why("book"), note: (view.thinning || {}).note };
+      }
+      if (lapsed("triggers") && out.stops) out.stops = { available: false, reason: why("triggers") };
+      if (lapsed("flow") && out.tape) out.tape = { available: false, reason: "node fills " + fams.flow.state + ": " + fams.flow.reason,
+        coverage: (view.tape || {}).coverage };
+      return out;
+    }
+    function deckNode(deck) {
+      if (!deck) return deck;
+      const out = Object.assign({}, deck);
+      if (deck.card) out.card = Object.assign({}, deck.card, { activity_buckets: fillResult(deck.card.activity_buckets) });
+      out.events = (deck.events || []).map(function (ev) {
+        if (ev && ev.type === "burst" && ev.node_activity) return Object.assign({}, ev, { node_activity: fillResult(ev.node_activity) });
+        if (ev && ev.type === "liquidation_burst" && ev.freshness) return Object.assign({}, ev, { freshness: nodeState(ev.freshness) });
+        return ev;
+      });
+      return out;
+    }
+    // --- public (as hl_desk/serving_public.py)
+    const BOOK_LABEL = { book_full: "full precision", book_sf4: "nSigFigs=4", book_sf3: "nSigFigs=3" };
+    function ageBand(band, lapsedBooks) {
+      const out = Object.assign({}, band);
+      [["exact", "notional_usd"], ["approximate", "approx_usd"]].forEach(function (pv) {
+        const sides = band[pv[0]];
+        if (!sides) return;
+        const nw = Object.assign({}, sides);
+        let why = null;
+        ["bid", "ask"].forEach(function (side) {
+          const s = sides[side] || {};
+          if (lapsedBooks[s.book] && (s.status === "covered" || s.status === "approximate")) {
+            why = lapsedBooks[s.book];
+            const v = { status: "unavailable", reason: why };
+            v[pv[1]] = NA(why, "USD");
+            nw[side] = v;
+          }
+        });
+        if (why) { nw.imbalance = NA(why, "ratio"); out[pv[0]] = nw; }
+      });
+      return out;
+    }
+    function ageMarket(ms) {
+      const fr0 = ms.freshness || {};
+      const why = {};
+      const fr = Object.assign({}, fr0);
+      Object.keys(fr0).forEach(function (k) {
+        const l = lapse(fr0[k]);
+        if (!l) return;
+        fr[k] = agedFresh(fr0[k], l);
+        why[k] = fr[k].field + " " + fr[k].status + ": " + fr[k].reason;
+      });
+      const keys = Object.keys(why);
+      if (!keys.length) return ms;
+      const out = Object.assign({}, ms, { freshness: fr });
+      out.unavailable = (ms.unavailable || []).concat(keys.map(function (k) { return { field: fr[k].field, status: fr[k].status, reason: fr[k].reason }; }));
+      const drop = {};
+      const book = Object.assign({}, ms.book || {});
+      if (why.book_fast) {
+        const top = Object.assign({}, book.top || {});
+        delete top.book_time_ms;
+        book.top = withhold(top, why.book_fast);
+        drop.best_bid = drop.best_ask = why.book_fast;
+      }
+      if (why.book_full) {
+        book.ladder = { bids: [], asks: [], reason: why.book_full, api_count_note: (book.ladder || {}).api_count_note };
+        drop.largest_bid_level = drop.largest_ask_level = why.book_full;
+      }
+      const lapsedBooks = {};
+      Object.keys(BOOK_LABEL).forEach(function (k) { if (why[k]) lapsedBooks[BOOK_LABEL[k]] = why[k]; });
+      if (Object.keys(lapsedBooks).length && book.depth) {
+        const depth = Object.assign({}, book.depth);
+        const obs = Object.assign({}, depth.observed || {});
+        Object.keys(lapsedBooks).forEach(function (label) { if (label in obs) obs[label] = { reason: lapsedBooks[label] }; });
+        depth.observed = obs;
+        depth.bands = (depth.bands || []).map(function (b) { return ageBand(b, lapsedBooks); });
+        book.depth = depth;
+      }
+      out.book = book;
+      if (why.ctx) {
+        out.context = withhold(ms.context || {}, why.ctx);
+        drop.mark = drop.oracle = why.ctx;
+      }
+      if (Object.keys(drop).length && ms.chart) {
+        const lines = ms.chart.price_lines || [];
+        out.chart = Object.assign({}, ms.chart, { price_lines: lines.filter(function (ln) { return !drop[ln.kind]; }) });
+        const gone = lines.filter(function (ln) { return drop[ln.kind]; }).map(function (ln) { return { kind: ln.kind, reason: drop[ln.kind] }; });
+        if (gone.length) out.chart.price_lines_withheld = gone;
+      }
+      if (why.trades) {
+        const r = why.trades;
+        const fl = Object.assign({}, ms.flow || {});
+        fl.values = withhold(fl.values || {}, r);
+        const cvd = Object.assign({}, fl.cvd || {}, { reason: r, cumulative_from_ms: null, cumulative_from: null });
+        cvd.buckets = ((fl.cvd || {}).buckets || []).map(function (b) {
+          return Object.assign({}, b, { buy_usd: null, sell_usd: null, delta_usd: null, cumulative_usd: null, reason: r });
+        });
+        fl.cvd = cvd;
+        fl.large_prints = Object.assign({}, fl.large_prints || {}, { count: null, reason: r });
+        out.flow = fl;
+        if (ms.deck && ms.deck.card) out.deck = Object.assign({}, ms.deck, { card: withheldCard(ms.deck.card, r) });
+        const w = {};
+        Object.keys(ms.wallets || {}).forEach(function (k) {
+          w[k] = { window_min: parseInt(k, 10) || null, reason: r, buyers: null, sellers: null };
+        });
+        out.wallets = w;
+      }
+      return out;
+    }
+    const out = Object.assign({}, data);
+    if (data.market) {
+      const m = Object.assign({}, data.market);
+      if (m.node && m.node.live) m.node = Object.assign({}, m.node, { live: nodeView(m.node.live) });
+      if (m.deck) m.deck = deckNode(m.deck);
+      if (m.wallets) {
+        const w = {};
+        Object.keys(m.wallets).forEach(function (k) {
+          const p = m.wallets[k];
+          w[k] = p && p.node_activity_split ? Object.assign({}, p, { node_activity_split: fillResult(p.node_activity_split) }) : p;
+        });
+        m.wallets = w;
+      }
+      out.market = ageMarket(m);
+    }
+    if (data.deck) {
+      const d = {};
+      Object.keys(data.deck).forEach(function (k) {
+        let x = deckNode(data.deck[k]);
+        const l = lapse(x.trades_freshness);
+        if (l) {
+          const tf = agedFresh(x.trades_freshness, l);
+          x = Object.assign({}, x, { trades_freshness: tf, card: x.card ? withheldCard(x.card, tf.field + " " + tf.status + ": " + tf.reason) : x.card });
+        }
+        d[k] = x;
+      });
+      out.deck = d;
+    }
+    return out;
+  }
+  // </pure:ageShown>
+
   // <pure:liveAccountState> An opened wallet's account answer keeps aging, from the moment the tab asked for it.
   // Its age is the source age the backend assessed plus all the time since the request was sent: that covers
   // delivery to the browser and every second the window stays open, and over-counts only the backend's own
@@ -2918,12 +3167,14 @@
           const prev = newest.current[name];
           if (isNum(prev) && isNum(data.built_at_ms) && data.built_at_ms < prev) return; // an older answer arriving late
           newest.current[name] = data.built_at_ms;
-          // An answer that arrives already aged (a slow delivery) is still shown, in place, with the delay bar
-          // saying why it isn't current: a delay never blanks the page (Kevin, Nov 8).
+          // An answer that arrives already aged (a slow delivery) is shown aged to now (ageShown): whatever has
+          // lapsed is withheld in place with its reason, and the delay bar says why the snapshot isn't current. The
+          // page is never blanked for a delay (Kevin, Nov 8; Codex h1 review 1, B2).
           const v = snapshotValidity(data, requestedPerf, performance.now(), LATEST_MAX_S);
           setAged(v.ok ? null : v.reason);
-          shown.current = { data: data, requestedPerf: requestedPerf };
-          setResp(data);
+          const view = ageShown(data, shownAge(data, requestedPerf));
+          shown.current = { data: data, requestedPerf: requestedPerf, key: agedKey(view) };
+          setResp(view);
           setNoSnap(null);
           setPollErr(null);
           setLastOkAt(Date.now());
@@ -2955,6 +3206,13 @@
         if (s === null) return;
         const v = snapshotValidity(s.data, s.requestedPerf, performance.now(), LATEST_MAX_S);
         setAged(v.ok ? null : v.reason);
+        // Re-age what is on screen; re-render only when a status actually changes (nothing moves otherwise).
+        const view = ageShown(s.data, shownAge(s.data, s.requestedPerf));
+        const key = agedKey(view);
+        if (key !== s.key) {
+          s.key = key;
+          setResp(view);
+        }
       }, 1000);
       return function () { clearInterval(id); };
     }, []);

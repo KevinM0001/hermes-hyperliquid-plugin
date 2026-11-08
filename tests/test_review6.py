@@ -59,7 +59,7 @@ def test_tab_checks_validity_on_arrival_and_while_shown():
     src = (ROOT / "dashboard" / "src" / "app.js").read_text()
     poll = src[src.index("    const poll = useCallback(function (force) {"):src.index("    }, []);", src.index("    const poll = useCallback"))]
     assert poll.index("const requestedPerf = performance.now();") < poll.index("SDK.fetchJSON(url)")
-    assert poll.index("snapshotValidity(data, requestedPerf, performance.now(), LATEST_MAX_S)") < poll.index("setResp(data)")
+    assert poll.index("snapshotValidity(data, requestedPerf, performance.now(), LATEST_MAX_S)") < poll.index("setResp(view)")
     assert "snapshotValidity(s.data, s.requestedPerf, performance.now(), LATEST_MAX_S)" in src
     assert "STALE_MS" not in src and "advancedAt" not in src
 
