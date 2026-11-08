@@ -226,6 +226,10 @@ def node_delay(client, market: str, now_mono_ns=None) -> dict:
         return {"available": False, "reason": "a replay runs on its own clock: no live delay"}
     d = client.delay(market, now_mono_ns)
     state, reason = delay_state(d.get("delay_ms"), d | {"delay_window_ms": d["window_ms"]})
+    if client.skew["bad"]:
+        # As for the families: this machine's clock is behind the producer's, so the delay can't be bounded.
+        state, reason = "UNKNOWN", (f"clock skew: this machine's clock is up to {-client.skew['worst_offset_ms']} ms "
+                                    "behind the producer's, so the delay can't be bounded")
     return {"available": d.get("delay_ms") is not None, "state": state, "reason": reason or d.get("reason")} | d
 
 

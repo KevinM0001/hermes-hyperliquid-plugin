@@ -49,7 +49,9 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
         return view
     fams = {k: aged_status(v, age_ms) for k, v in view["families"].items()}
     dl = view.get("delay")
-    if isinstance(dl, dict) and dl.get("available") and age_ms is not None:
+    if isinstance(dl, dict) and dl.get("available") and dl.get("state") == "LIVE" and age_ms is None:
+        dl = dict(dl, state="STALE", reason="the snapshot's age when served isn't known, so it can't be shown as current")
+    elif isinstance(dl, dict) and dl.get("available") and dl.get("state") != "UNKNOWN" and age_ms is not None:
         dl = dict(dl, delay_ms=round(dl["delay_ms"] + age_ms), current_ms=round(dl["current_ms"] + age_ms),
                   aged_by_ms=round(age_ms))
         state, reason = delay_state(dl["delay_ms"], dl | {"delay_window_ms": dl["window_ms"]})

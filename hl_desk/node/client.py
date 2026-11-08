@@ -642,6 +642,7 @@ class FeedClient:
         mf.buffer.clear()
         mf.crossed = None
         mf.panels = None          # history, walls and burst state never bridge a gap
+        mf.wm_hist.clear()        # nor does the node feed's averaged delay: it restarts at the next timed watermark
         mf.flow.boundary(reason)
         mf.note("invalidated", reason=reason)
 
@@ -696,7 +697,8 @@ class FeedClient:
                 "stale_after_ms": self.cfg["stale_after_ms"]}
         allh = list(mf.wm_hist) if mf is not None else []
         if not allh:
-            return base | {"delay_ms": None, "current_ms": None, "reason": "no timed watermark from this source yet"}
+            return base | {"delay_ms": None, "current_ms": None,
+                           "reason": "no timed watermark from this source yet (since the start or the last gap)"}
         hist = [h for h in allh if h[0] <= now_mono_ns]
         if not hist:
             # Judged at a moment before the first watermark's receipt (another clock): its age is its receipt delay.

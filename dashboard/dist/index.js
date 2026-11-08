@@ -17354,10 +17354,12 @@
           : (state === "disconnected" ? "No connection to Hyperliquid; values turn unavailable as their freshness runs out. " : "Not connected yet. "),
         bits.join(" \u00b7 ")));
     }
-    if (props.pollErr) {
+    // A failed poll while a snapshot is on screen is said in the delay bar's fixed note (nothing moves); only with
+    // no snapshot at all does it get a banner.
+    if (props.pollErr && !resp) {
       out.push(h("div", { key: "poll", className: "hd-banner hd-banner-warn", role: "status" },
         h("b", null, "Last poll failed"), " at " + localClock(props.pollErr.at) + " (local): " + props.pollErr.message + ". ",
-        resp ? "Showing the last good snapshot " + resp.snapshot_id + " (built " + dateTime(resp.built_at) + ", received " + localClock(props.lastOkAt) + " local)." : "No snapshot received yet."));
+        "No snapshot received yet."));
     }
     if (props.hidden) {
       out.push(h("div", { key: "hidden", className: "hd-banner hd-banner-info" }, "Polling paused while this tab is hidden."));
@@ -17913,7 +17915,7 @@
     });
     return h("div", { className: cx("hd-fresh-notes", props.pad && "hd-pad hd-pad-tight") }, groups.map(function (gr) {
       return h("div", { key: gr.key, className: "hd-tone-text-" + famTone(gr.state) },
-        h("b", null, gr.names.join(", ") + " " + gr.state + ": "), gr.reason);
+        h("b", null, gr.names.join(", ") + " " + famLabel(gr.state) + ": "), gr.reason);
     }));
   }
 
@@ -17943,7 +17945,7 @@
     if (!b) return h(Unavailable, { reason: "the node book's validity isn't in this snapshot", block: true });
     if (b.valid === true) return null;
     const st = g(v, "families", "book", "state");
-    const tag = b.crossed || !st || st === "LIVE" || st === "REPLAY" ? "INVALID" : st;
+    const tag = b.crossed || !st || st === "LIVE" || st === "REPLAY" ? "INVALID" : famLabel(st);
     return h("div", { className: "hd-invalid", role: "status" },
       h("span", { className: "hd-invalid-tag" }, tag), " ",
       b.reason || "the node book isn't valid, and no reason was given",
@@ -17988,7 +17990,9 @@
         ? "latest watermark's age, " + (d.window_ms / 1000) + " s average \u00b7 now " + (d.current_ms / 1000).toFixed(1) +
           " s \u00b7 delayed above " + (d.delayed_after_ms / 1000) + " s, stale above " + (d.stale_after_ms / 1000) + " s"
         : why),
-      h("span", { className: cx("hd-delaybar-note", props.aged && "hd-tone-text-warn"), title: props.aged || "" },
+      h("span", { className: cx("hd-delaybar-note", (props.aged || props.pollNote) && "hd-tone-text-warn"),
+        title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
+        props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "",
         props.aged ? "Snapshot on screen: " + props.aged : ""));
   }
 
@@ -20067,7 +20071,11 @@
         resp: resp, noSnap: noSnap, selected: market, onMarket: chooseMarket,
         busy: busy, action: action, onControl: control
       }),
-      h(DelayBar, { delay: nlive && nlive.delay, nodeOn: nodeOn(nlive), aged: aged }),
+      h(DelayBar, {
+        delay: nlive && nlive.delay, nodeOn: nodeOn(nlive), aged: aged,
+        pollNote: pollErr && resp ? "Last poll failed at " + localClock(pollErr.at) + " (local): " + pollErr.message +
+          "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null
+      }),
       m ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market }) : null,
       m ? h(Fragment, null,
         h("div", { className: "hd-row hd-row-a" },
