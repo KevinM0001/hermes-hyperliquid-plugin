@@ -357,3 +357,18 @@ def test_a_block_without_a_time_makes_the_windows_around_it_incomplete():
     assert r.armed == {"buying": True, "selling": True}            # incomplete windows never disarm
     r.on_block(103, T + 190_500, [ex(4, 150_000, T + 190_500)])    # both marks have left (130.5 s, 190.5 s]
     assert [e["aggressive_notional_usd"] for e in r.events] == [150_000.0]
+
+
+def test_the_schema_carries_the_calibrations_version_dates_and_achieved_rates():
+    """PLAN.md: alerts.burst.config and the threshold metadata carry the version, dates and achieved rate."""
+    from hl_desk import schema
+    b = schema.load()["alerts"]["burst"]
+    d = cal_mod.load().data
+    sc = b["node_mode"]["calibration"]
+    assert (sc["version"], sc["dated"], sc["measured_utc"], sc["target_per_day"]) == (
+        d["version"], d["dated"], d["measured_utc"], d["target_per_day"])
+    assert sc["file"].endswith(cal_mod.CALIBRATION_FILE.name)
+    for m, x in d["markets"].items():
+        assert sc["markets"][m] == {k: x[k] for k in ("threshold_usd", "achieved_per_day", "near_target")}
+        assert f"{x['achieved_per_day']:.1f} a day" in b["config"] and m in b["config"]
+    assert d["version"] in b["config"] and d["dated"] in b["config"] and "node_burst_min_usd" in b["config"]
