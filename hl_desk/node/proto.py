@@ -72,6 +72,14 @@ DEPTH_AVAILABLE_FIELDS = {"bids", "asks"}
 BAND_ROW_FIELDS = {"lo", "hi", "kind", "side", "orders", "sz", "position_tpsl_orders"}
 BAND_OUTSIDE_FIELDS = {"below", "above"}
 BAND_OUTSIDE_ROW_FIELDS = {"kind", "side", "orders", "sz", "position_tpsl_orders"}
+# Nested control values (PROTOCOL.md section 11, revision 2.2: checked by value as well as by name).
+HELLO_MARKET_FIELDS = {"next_seq", "start_seq", "oldest_seq", "snapshot"}
+LIMIT_FIELDS = {"watermark_interval_ms", "heartbeat_interval_ms", "depth_interval_ms", "depth_levels",
+                "bands_interval_ms", "band_range_bps", "bands_width", "snapshot_interval_ms",
+                "snapshot_chunk_max_bytes", "snapshot_max_chunks", "ring_messages", "ring_bytes", "subscriber_buffer"}
+LABEL_FIELDS = {"depth.largest_order_sz", "depth.largest_order_time_ms", "depth.oldest_order_time_ms", "bands", "time_ms"}
+REPLAY_STATUS_FIELDS = {"state", "speed", "position_ms", "recording_start_ms", "recording_end_ms", "partial_history",
+                        "recording_id"}
 # Node fields the feed never carries, wherever they would appear (the protocol's "never" list).
 NEVER_FIELDS = {"closedPnl", "closed_pnl", "fee", "feeToken", "builderFee", "builder", "deployerFee", "priorityGas",
                 "cloid", "hash", "startPosition", "start_position", "dir", "reduceOnly", "tif", "children",
@@ -108,7 +116,7 @@ def fixture_violations(line: dict) -> list[str]:
         if allowed is None:
             return [f"control:{line.get('control')}"]
         out += [f"control.{k}" for k in line if k not in allowed]
-        return out
+        return out + control_value_violations(line)
     out += [f"envelope.{k}" for k in line if k not in ENVELOPE_FIELDS]
     kind = line.get("kind")
     body = line.get("body") if isinstance(line.get("body"), dict) else {}
@@ -160,6 +168,75 @@ def fixture_violations(line: dict) -> list[str]:
                 if isinstance(p.get("effect"), dict):
                     out += [f"execs.effect.{k}" for k in p["effect"] if k not in EFFECT_FIELDS]
     return out
+
+
+def _uint_or_str(v) -> bool:
+    return (isinstance(v, int) and not isinstance(v, bool) and v >= 0) or isinstance(v, str)
+
+
+def _map(where: str, v, fields, value_ok=_uint_or_str) -> list[str]:
+    """A nested map: only listed keys (any key when fields is None), each value of its one shape."""
+    if not isinstance(v, dict):
+        return [f"{where}: not a map"]
+    out = []
+    for k, x in v.items():
+        if fields is not None and k not in fields:
+            out.append(f"{where}.{k}: not listed")
+        elif not value_ok(x):
+            out.append(f"{where}.{k}: wrong shape")
+    return out
+
+
+def limits_violations(where: str, v) -> list[str]:
+    if not isinstance(v, dict):
+        return [f"{where}: not a map"]
+    out = _map(where, {k: x for k, x in v.items() if k != "bands_width"}, LIMIT_FIELDS - {"bands_width"})
+    if "bands_width" in v:
+        out += _map(f"{where}.bands_width", v["bands_width"], None, lambda x: isinstance(x, str))
+    return out
+
+
+def control_value_violations(line: dict) -> list[str]:
+    """Each control field's value in its one shape: an unsigned integer or a string, except the maps (markets,
+    limits, limits.bands_width, labels, last_sent, replay), the lists of one scalar shape (unknown_markets,
+    supported), and the replay status's speed (a number) and partial_history (a boolean). A nested object under
+    a scalar field, or an unlisted key in a nested map, is a violation."""
+    out = []
+    for k, v in line.items():
+        where = f"control.{line.get('control')}.{k}"
+        if k == "markets":
+            if not isinstance(v, dict):
+                out.append(f"{where}: not a map")
+                continue
+            for mk, mv in v.items():
+                out += _map(f"{where}.{mk}", mv, HELLO_MARKET_FIELDS)
+        elif k == "limits":
+            out += limits_violations(where, v)
+        elif k == "labels":
+            out += _map(where, v, LABEL_FIELDS, lambda x: isinstance(x, str))
+        elif k == "replay":
+            out += replay_status_violations(where, v)
+        elif k == "last_sent":
+            out += _map(where, v, None)
+        elif k in ("unknown_markets", "supported"):
+            if not isinstance(v, list) or len({type(x) for x in v}) > 1 or not all(_uint_or_str(x) for x in v):
+                out.append(f"{where}: not a list of one scalar shape")
+        elif not _uint_or_str(v):
+            out.append(f"{where}: wrong shape")
+    return out
+
+
+def replay_status_violations(where: str, v) -> list[str]:
+    def ok(k, x):
+        if k == "speed":
+            return isinstance(x, (int, float)) and not isinstance(x, bool)
+        if k == "partial_history":
+            return isinstance(x, bool)
+        return _uint_or_str(x)
+    if not isinstance(v, dict):
+        return [f"{where}: not a map"]
+    return [f"{where}.{k}: " + ("not listed" if k not in REPLAY_STATUS_FIELDS else "wrong shape")
+            for k, x in v.items() if k not in REPLAY_STATUS_FIELDS or not ok(k, x)]
 
 
 def _keys(o):

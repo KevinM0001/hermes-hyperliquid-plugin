@@ -423,6 +423,7 @@ def test_lost_final_event(surfaces):
     _start(c, h)
     for rx, m in ms[:-1]:                                     # the final watermark never arrives
         c.on_line(m, rx, rx * 10 ** 6)
+        plugin.read(XY, rx)
     rx = ms[-1][0] + 3000
     assert plugin.read(XY, rx)["families"]["book"]["state"] == "STALE"
     plugin = surfaces([XY])
@@ -482,9 +483,57 @@ def test_clock_skew_reads_unknown(surfaces):
     assert plugin.last["node_book"]["ladder"]["available"] is False
 
 
+# The recorder's own lines (header, trailer) as Part A's recorder writes them. PROTOCOL.md section 11 lists their
+# names only in the engine's tooling, so these are pinned from the recordings: an added field fails the scan.
+RECORDING_HEADER = {"protocol", "recording_id", "partial_history", "partial_history_note", "markets", "recorded_wall_ms",
+                    "span_block_ms", "producer", "limits", "labels", "allowlist_version"}
+PRODUCER = {"epoch", "session", "started_ms", "mode"}
+RECORDING_TRAILER = {"reason", "messages", "gaps", "cut", "first_block_time_ms", "last_block_time_ms",
+                     "markets_recording", "allowlist_violations"}
+
+
+def _recorder_line_violations(o: dict) -> list[str]:
+    from hl_desk.node.proto import LABEL_FIELDS, _map, _uint_or_str, limits_violations
+    out = []
+    if "recording" in o:
+        h = o["recording"]
+        out += [f"recording.{k}: not listed" for k in h if k not in RECORDING_HEADER]
+        for k, v in h.items():
+            if k == "producer":
+                out += _map("recording.producer", v, PRODUCER)
+            elif k == "limits":
+                out += limits_violations("recording.limits", v)
+            elif k == "labels":
+                out += _map("recording.labels", v, LABEL_FIELDS, lambda x: isinstance(x, str))
+            elif k == "markets":
+                out += [] if isinstance(v, list) and all(isinstance(x, str) for x in v) else ["recording.markets"]
+            elif k == "partial_history":
+                out += [] if isinstance(v, bool) else ["recording.partial_history"]
+            elif not _uint_or_str(v):
+                out.append(f"recording.{k}: wrong shape")
+    elif "recording_end" in o:
+        t = o["recording_end"]
+        out += [f"recording_end.{k}: not listed" for k in t if k not in RECORDING_TRAILER]
+        for k, v in t.items():
+            if k in ("first_block_time_ms", "last_block_time_ms"):
+                out += _map(f"recording_end.{k}", v, None)
+            elif k == "markets_recording":
+                out += [] if isinstance(v, list) and all(isinstance(x, str) for x in v) else [f"recording_end.{k}"]
+            elif k == "gaps":
+                out += [] if v == [] else ["recording_end.gaps: gap markers aren't in these fixtures"]
+            elif k == "cut":
+                out += [] if isinstance(v, dict) and all(_uint_or_str(x) for x in v.values()) else ["recording_end.cut"]
+            elif not _uint_or_str(v):
+                out.append(f"recording_end.{k}: wrong shape")
+    else:
+        out.append(f"unexpected recorder line {sorted(o)}")
+    return out
+
+
 def test_every_fixture_line_is_on_the_v2_allowlist_and_matches_its_manifest():
-    """The shipped fixtures carry only fields protocol v2 lists (never a dir, fee, hash or other node field), and
-    each is byte for byte the file its manifest describes."""
+    """The shipped fixtures carry only what protocol v2 allows: every data line's fields at every depth (never a
+    dir, fee, hash or other node field), every control line's fields by name and by value (section 11, revision
+    2.2), and the recorder's own header and trailer. Each file is byte for byte the one its manifest describes."""
     import gzip
     import hashlib
     import json
@@ -494,7 +543,7 @@ def test_every_fixture_line_is_on_the_v2_allowlist_and_matches_its_manifest():
 
     root = Path(__file__).parent / "fixtures" / "node"
     manifest = json.loads((root / "MANIFEST.json").read_text())
-    checked = 0
+    checked = {"data": 0, "control": 0, "recorder": 0}
     for fx in manifest["fixtures"]:
         raw = gzip.decompress((root / fx["file"]).read_bytes())
         assert hashlib.sha256(raw).hexdigest() == fx["sha256_uncompressed"], fx["file"]
@@ -502,14 +551,19 @@ def test_every_fixture_line_is_on_the_v2_allowlist_and_matches_its_manifest():
         assert len(lines) == fx["lines_kept"], fx["file"]
         for n, text in enumerate(lines, 1):
             o = json.loads(text)
-            if "recording" in o or "recording_end" in o or "gap" in o:
-                continue                                  # the recorder's own header, trailer and gap lines
-            msg = o["msg"] if "msg" in o else o
-            bad = fixture_violations(msg)
+            if "msg" not in o and "control" not in o and "kind" not in o:
+                bad = _recorder_line_violations(o)
+                checked["recorder"] += 1
+            else:
+                if "msg" in o:
+                    assert set(o) == {"msg", "rx_ms"} and isinstance(o["rx_ms"], int), f"{fx['file']} line {n}"
+                msg = o.get("msg", o)
+                bad = fixture_violations(msg)
+                checked["control" if "control" in msg else "data"] += 1
             assert not bad, f"{fx['file']} line {n}: {bad}"
-            checked += 1
-    assert checked > 3500
-    # the check isn't vacuous: an extra field, a forbidden node field or an unknown kind is reported
+    assert checked == {"data": 3714, "control": 4, "recorder": 3}       # 2 hellos and 2 heartbeats; 2 headers, 1 trailer
+    # The check isn't vacuous: an extra field, a forbidden node field, an unknown kind, a nested object under a
+    # scalar control field, an unlisted key in a nested map, or an unlisted recorder field is reported.
     line = next(m for m in (json.loads(t).get("msg") for t in
                             gzip.decompress((root / "execs-4markets-120s.jsonl.gz").read_bytes()).splitlines())
                 if m and m.get("kind") == "execs" and m["body"].get("execs"))
@@ -519,3 +573,19 @@ def test_every_fixture_line_is_on_the_v2_allowlist_and_matches_its_manifest():
     tampered["note"] = "x"
     assert set(fixture_violations(tampered)) >= {"never:dir", "execs.participant.dir", "envelope.note"}
     assert fixture_violations({"v": 2, "kind": "orders"}) == ["kind:orders"]
+    hello = next(o for o in (json.loads(t) for t in gzip.decompress((root / "restart-xyz-XYZ100.ndjson.gz").read_bytes()).splitlines())
+                 if o.get("control") == "hello")
+    assert fixture_violations(hello) == []
+    for path, value in ((("session",), {"id": "x"}), (("markets", "BTC", "host"), "h"), (("limits", "path"), "/x"),
+                        (("labels", "time_ms"), {"a": 1}), (("unknown_markets",), [{"m": 1}]), (("epoch",), -1)):
+        bad = json.loads(json.dumps(hello))
+        node = bad
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] = value
+        assert fixture_violations(bad), path
+    hb = {"v": 2, "control": "heartbeat", "epoch": 1, "session": "s", "pub_ms": 1,
+          "replay": {"state": "playing", "speed": 2.0, "position_ms": 5, "partial_history": True}}
+    assert fixture_violations(hb) == []
+    assert fixture_violations(hb | {"replay": hb["replay"] | {"file": "x.jsonl"}})
+    assert _recorder_line_violations({"recording": {"protocol": 2, "host": "h"}}) == ["recording.host: not listed"]

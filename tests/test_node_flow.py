@@ -67,14 +67,14 @@ NOW = T0 + 111_200                           # snapshots are built here: card wi
 SESSION = "0" * 31 + "1"
 
 
-def _plugin_run(surfaces, bodies, drop=None):
+def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000, history=None):
     """Feed exec bodies to the plugin's live node client as protocol v2 lines (each followed by a watermark), next
     to a complete public Flow Deck card and a wallet panel listing W over the same span. After every line, read
     the card's activity buckets (hl_alerts) and the wallet panel's node split (hl_wallets), through chat and the
     tab. Until the fills are processed through the window's end both stay unavailable with a reason, never
     partial. drop: the index of a body whose execs line is lost (a real sequence gap). Returns the final reads."""
     from helpers import NS, open_segment, trade
-    plugin = surfaces([SP])
+    plugin = surfaces([SP], **(desk_cfg or {}))
     ms = plugin.desk.markets[SP]
     open_segment(ms, T0)
     for k in range(1, 112):                  # public trades: W buys every second (so the wallet panel lists W)
@@ -93,7 +93,7 @@ def _plugin_run(surfaces, bodies, drop=None):
                 "block_time_ms": bt, "pub_ms": bt + 10, "body": body}
     lines.append(line("watermark", {"through_seq": 0}, 1, T0 - 5_000))
     for i, body in enumerate(bodies):
-        bt = T0 + 60_000 + i * 1_000
+        bt = t_first + i * 1_000
         b = copy.deepcopy(body)
         for e in b["execs"]:
             e["time_ms"] = times.setdefault(e["tid"], bt)       # a retried execution keeps its own time
@@ -109,6 +109,8 @@ def _plugin_run(surfaces, bodies, drop=None):
         plugin.read(SP, NOW, (NOW - T0) * 10 ** 6)
         card, wal = plugin.last["card_buckets"], plugin.last["wallet_split"]
         reads.append((card, wal))
+        if history is not None:
+            history.append((m, plugin.last))
         if m is not lines[-1]:
             assert card["available"] is False and card["reason"], card
             assert all(card[k]["value"] is None and card[k]["reason"] for k in ("new_long", "cover", "new_short", "exit"))
@@ -116,6 +118,45 @@ def _plugin_run(surfaces, bodies, drop=None):
         assert card["stream"] == "node fills" and card["provenance"]["source"] == "test-socket"
         assert card["freshness"]["family"] == "flow"
     return plugin, reads[-1]
+
+
+def test_burst_node_buckets_through_the_plugin(surfaces):
+    """A public burst (aggressive buying over burst_min_usd in 60 s) carries node buckets for its own side only,
+    each over that side's aggressive notional from node fills in the burst's window, with provenance and
+    freshness. Until the fills are processed through the window's end they are unavailable, then they appear;
+    after a producer restart the earlier result isn't reused."""
+    buy_flip = _flip_buy()
+    sell = _exec(31, "100", "2", 0, "A", [_p(A, "A", "taker", {"exit": "2", "new_short": "0"}),
+                                          _p(B, "B", "maker", {"cover": "0", "new_long": "2"})])
+    hist = []
+    plugin, _ = _plugin_run(surfaces, [{"execs": [buy_flip]}, {"execs": [sell]}],
+                            desk_cfg={"burst_min_usd": {SP: 4_000.0}}, t_first=T0 + 30_000, history=hist)
+    seen_available = False
+    for m, last in hist:
+        bursts = [e for e in last["events"] if e.get("type") == "burst"]
+        tab = [e for e in last["tab"]["deck"]["events"] if e.get("type") == "burst"]
+        assert len(bursts) == 1 and bursts == tab
+        b = bursts[0]
+        assert b["side"] == "buying" and b["at_ms"] == T0 + 60_000
+        na = b["node_activity"]
+        assert na["stream"] == "node fills" and na["provenance"]["source"] == "test-socket"
+        assert na["freshness"]["family"] == "flow"
+        assert not {"new_short", "exit", "new_short_pct", "exit_pct"} & set(na)       # its own side only
+        if m["block_time_ms"] < T0 + 60_000:
+            assert na["available"] is False and "not processed through" in na["reason"]
+            assert na["new_long"]["value"] is None and na["cover"]["value"] is None
+        else:
+            assert na["available"] is True
+            seen_available = True
+            assert _v(na["cover"]) == 300 and _v(na["new_long"]) == 100
+            assert _v(na["cover_pct"]) == 75 and _v(na["buying_aggressive_usd"]) == 400
+    assert seen_available
+    c = plugin.mgr.live                                  # a producer restart: a new epoch, nothing carried over
+    c.on_line({"v": 2, "control": "hello", "epoch": 8, "session": "0" * 31 + "2", "started_ms": NOW, "pub_ms": NOW,
+               "mode": "LIVE", "markets": {SP: {"start_seq": 1, "snapshot": "pending"}}}, NOW, (NOW - T0) * 10 ** 6)
+    plugin.read(SP, NOW, (NOW - T0) * 10 ** 6)
+    (b,) = [e for e in plugin.last["events"] if e.get("type") == "burst"]
+    assert b["node_activity"]["available"] is False and b["node_activity"]["provenance"]["epoch"] == 8
 
 
 def _v(metric):
@@ -272,6 +313,21 @@ def test_wallet_with_only_maker_buys_has_no_aggressive_percentage():
     s = wallet_splits(_flow_with({"execs": [maker_buy]}).window(1_000_000, 1_000_010)[0], {W})[W]
     assert s["full"]["pct"]["new_long"] == 100
     assert s["aggressive"]["pct"]["new_long"] is None and "percentage unavailable" in s["aggressive"]["pct_reason"]["buying"]
+
+
+def test_wallet_split_is_unavailable_while_an_execution_misses_a_record_or_address(surfaces):
+    """Step 14: a missing identity makes the split unavailable. The second execution has only the taker's record
+    (complete: false), so the maker could have been W: W's split isn't shown from the fills it can see."""
+    buy = _exec(40, "10", "5", 0, "B", [_p(W, "B", "taker", {"cover": "0", "new_long": "5"}),
+                                         _p(B, "A", "maker", {"exit": "5", "new_short": "0"})])
+    partial = dict(_exec(41, "10", "3", 0, "B", [_p(A, "B", "taker", {"cover": "0", "new_long": "3"})]), complete=False)
+    _, (_, wal) = _plugin_run(surfaces, [{"execs": [buy]}, {"execs": [partial]}])
+    s = wal["wallets"][W]
+    for part in ("full", "aggressive"):
+        assert s[part]["available"] is False and "missing a participant's record or address" in s[part]["reason"]
+        assert "pct" not in s[part]
+    _, (_, wal) = _plugin_run(surfaces, [{"execs": [buy]}])          # without it, the same wallet's split is shown
+    assert wal["wallets"][W]["full"]["available"] is True
 
 
 def test_one_address_on_both_sides_is_two_participants():

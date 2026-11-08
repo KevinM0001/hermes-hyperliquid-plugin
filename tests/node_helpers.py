@@ -159,7 +159,7 @@ class Surfaces:
     events and the wallet panels). Every read checks that all of them show the same thing and that the node
     results hold check_view's invariants, then returns the node view the tests assert on."""
 
-    def __init__(self, tmp_path, monkeypatch, markets):
+    def __init__(self, tmp_path, monkeypatch, markets, **desk_cfg):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
 
@@ -180,7 +180,7 @@ class Surfaces:
         app.include_router(load_plugin_api().router, prefix="/api/plugins/hyperliquid-desk")
         self.http = TestClient(app)
         self.markets = list(markets)
-        self.desk = make_desk(markets=tuple(markets))
+        self.desk = make_desk(markets=tuple(markets), **desk_cfg)
         self.mgr = NodeManager(DeskConfig(markets=list(markets)))
         self.desk.node = self.mgr
         self.reads = 0
@@ -247,6 +247,17 @@ class Surfaces:
             wal = json.loads(tools.run_tool("hl_wallets", {"market": market, "snapshot_id": sid, "window_min": 5}, self.rt))
             assert wal["ok"] and strip(wal) == strip(self._get("wallets", market=market, snapshot_id=sid, window_min=5))
             out["wallet_split"] = wal["panel"].get("node_activity_split")
+            # every node-fill result names its source and the flow family's freshness, available or not
+            cb = out["card_buckets"]
+            assert cb["stream"] == "node fills" and cb["provenance"]["source"] == c.source, cb
+            assert cb["freshness"].get("family") == "flow" or cb["freshness"].get("state") == "INVALID", cb
+            for ev in out["events"]:
+                if ev.get("type") == "burst":
+                    assert ev["node_activity"]["provenance"]["source"] == c.source and "freshness" in ev["node_activity"]
+                elif ev.get("type") == "liquidation_burst":
+                    assert ev["provenance"]["source"] == c.source and ev["freshness"]["family"] == "flow"
+            if out["wallet_split"] is not None:
+                assert out["wallet_split"]["provenance"]["source"] == c.source and "freshness" in out["wallet_split"]
         self.reads += 1
         self.last = out
         return view
@@ -257,10 +268,10 @@ def surfaces(tmp_path, monkeypatch):
     """surfaces(markets) -> a Surfaces for those markets; torn down after the test."""
     made = []
 
-    def make(markets):
+    def make(markets, **desk_cfg):
         d = tmp_path / f"plugin{len(made)}"
         d.mkdir()
-        made.append(Surfaces(d, monkeypatch, markets))
+        made.append(Surfaces(d, monkeypatch, markets, **desk_cfg))
         return made[-1]
     yield make
     for s in made:

@@ -2,7 +2,7 @@
 
 Only these documented request types are used: perpDexs, meta, l2Book,
 clearinghouseState, frontendOpenOrders (see docs/ENDPOINTS.md). There is no
-exchange endpoint, no signing and no key anywhere in this plugin. Calls are
+exchange endpoint, no signing and no trading or wallet key anywhere in this plugin. Calls are
 blocking (urllib) and are made only from the collector thread or a tool's
 worker thread; dashboard routes wrap them in asyncio.to_thread.
 """

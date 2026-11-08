@@ -245,7 +245,11 @@ def wallet_split(execs: list[Execution], user: str) -> dict:
 def wallet_splits(execs: list[Execution], users: set) -> dict:
     """Each wallet's own participant effects, in one pass: the full split (maker and taker fills) over its
     total bought / sold notional, and the aggressive split (taker fills only) over its aggressive bought /
-    sold notional. A missing effect, side or role makes that split unavailable, never scaled to 100%."""
+    sold notional. A missing effect, side or role makes that split unavailable, never scaled to 100%. So does
+    a missing identity: an execution missing a participant's record or address could be any listed wallet's, so
+    while one is in the window every split is unavailable."""
+    unidentified = sum((e.notional for e in execs
+                        if not e.complete or len(e.participants) < 2 or any(not p.user for p in e.participants)), ZERO)
     acc = {u: {"full": {"new_long": ZERO, "cover": ZERO, "new_short": ZERO, "exit": ZERO},
                "aggr": {"new_long": ZERO, "cover": ZERO, "new_short": ZERO, "exit": ZERO},
                "tot": {"bought": ZERO, "sold": ZERO, "aggr_bought": ZERO, "aggr_sold": ZERO},
@@ -286,6 +290,10 @@ def wallet_splits(execs: list[Execution], users: set) -> dict:
         return v / d * 100 if d > 0 else None
 
     def split(b: dict, bought: Decimal, sold: Decimal, unc: Decimal, label: str, reasons: set) -> dict:
+        if unidentified > 0:
+            return {"label": label, "available": False, "unidentified_usd": unidentified,
+                    "reason": "an execution in this window is missing a participant's record or address, so this "
+                              "wallet's fills may be incomplete", "bought_usd": bought, "sold_usd": sold}
         if unc > 0:
             return {"label": label, "available": False, "unclassified_usd": unc,
                     "reason": "position effect missing for part of this wallet's fills: " + "; ".join(sorted(reasons)),

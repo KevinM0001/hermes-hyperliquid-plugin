@@ -44,7 +44,7 @@ Then, next to each figure or group of figures, give its freshness from the resul
 Each result has an `unavailable` list. Mention what matters for the question, for example:
 
 - Depth bands that the returned levels don't reach: say "band not covered by returned levels" and give the observed depth within returned levels instead.
-- The activity buckets (new long, cover, new short, exit), waiting stops, wall tracking and tape flags: "needs node mode". PRESSURE is available on public data (see the Flow Deck below).
+- The activity buckets (new long, cover, new short, exit), waiting stops, wall tracking and tape flags without a node feed: "needs node mode" (with one, see section 8). PRESSURE is available on public data (see the Flow Deck below).
 - A Flow Deck card whose window is incomplete after a gap or at startup: say the window is incomplete.
 - A card with `revised`: say it was re-evaluated after late trades. A `regime_change_withdrawn` event: say that regime change was withdrawn, not that it happened.
 - `bbo` is always "freshness unverified": its values are never quoted; best bid and ask come from the book.

@@ -247,3 +247,39 @@ def test_heatmap_history_and_walls_never_bridge_a_book_only_invalidation(surface
             assert revalid_at is not None and hist["since_ms"] >= revalid_at
             assert all(t >= revalid_at for t, *_ in hist["samples"])
     assert revalid_at is not None and v["history"]["samples"]
+
+
+def test_heatmap_history_and_walls_restart_after_a_delta_that_doesnt_fit(surfaces):
+    """The other book-only invalidation: a book event that doesn't fit the book (a real remove pointed at an order
+    that isn't resting). The book family goes invalid, its history and walls are dropped, the other families stay
+    up, and both start again only after the in-stream 60 s snapshot makes the book valid again."""
+    plugin = surfaces([XY])
+    h, msgs, c = _setup(plugin)
+    ms = by_market(msgs, XY)
+    snap60 = next(i for i, (_, m) in enumerate(ms) if m["kind"] == "book_snapshot" and m["seq"] > 10)
+    k = next(i for i, (_, m) in enumerate(ms) if 100 < i < snap60 and m["kind"] == "book_delta"
+             and any(ch["op"] == "remove" for ch in m["body"]["changes"]))
+    _fed(c, plugin, ms[:k], XY)
+    assert plugin.last["tab"]["node"]["live"]["history"]["samples"]
+    rx, m = ms[k]
+    changes = [dict(ch) for ch in m["body"]["changes"]]
+    bad = next(ch for ch in changes if ch["op"] == "remove")
+    bad["oid"] = 1                                           # not a resting order
+    assert 1 not in c.markets[XY].book.orders
+    c.on_line(mutate(m, body={"changes": changes}), rx, rx * 10 ** 6)
+    v = plugin.read(XY, rx)
+    assert v["families"]["book"]["state"] == "INVALID" and "didn't fit" in v["families"]["book"]["reason"]
+    assert v["families"]["flow"]["state"] == "LIVE" and c.markets[XY].counters["delta_errors"] == 1
+    ps = c.markets[XY].panels
+    assert v["history"]["available"] is False and not ps.history and ps.history_since_ms is None and not ps.walls
+    revalid_at = None
+    for rx, m in ms[k + 1:]:
+        c.on_line(m, rx, rx * 10 ** 6)
+        v = plugin.read(XY, rx)
+        if revalid_at is None and v["families"]["book"]["state"] == "LIVE":
+            revalid_at = m["block_time_ms"]
+        hist = v["history"]
+        if hist.get("since_ms") is not None:
+            assert revalid_at is not None and hist["since_ms"] >= revalid_at
+            assert all(t >= revalid_at for t, *_ in hist["samples"])
+    assert revalid_at is not None and v["history"]["samples"] and ms[snap60][1]["block_time_ms"] <= revalid_at

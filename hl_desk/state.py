@@ -339,35 +339,36 @@ class MarketState:
             return base | ({"reason": "needs node mode: no node feed configured (setting node_feed)"}
                            if card.get("complete") else {})
         if not card.get("complete"):
+            from .node.panels import flow_meta
             why = (card.get("regime") or {}).get("reason") or "the card's 90 s window isn't complete yet"
             return {k: na(why, "USD") for k in ("new_long", "cover", "new_short", "exit")} | {
-                "stream": "node fills", "available": False, "reason": why}
+                "stream": "node fills", "available": False, "reason": why} | flow_meta(client, self.market)
         # The card's window is [start, end]; node fills are counted over the same block-time span.
         b = deck_buckets(client, self.market, card["window_start_ms"] - 1, card["window_end_ms"])
         return _bucket_metrics(b, "the card's 90 s window") | {"hook": base.get("hook")}
 
     def _node_events(self, events: list, client, live_view: dict | None) -> list:
-        from .node.panels import deck_buckets
+        from .node.panels import deck_buckets, stream_key
         # Published events are shared with earlier snapshots, so they're never edited: each is copied with its
-        # node buckets, which are cached here per event (and recomputed while the node fills haven't caught up).
+        # node buckets. Available buckets are cached per event and input stream (source, mode, epoch, session); an
+        # unavailable result is recomputed at every build, so it recovers once the node fills cover the window.
         cache = self.__dict__.setdefault("_burst_node_cache", {})
         out = []
         for ev in events:
             if ev.get("type") == "burst":
-                key = (ev.get("at_ms"), ev.get("side"))
+                key = (ev.get("at_ms"), ev.get("side"), stream_key(client))
                 m = cache.get(key)
-                if m is None or m.get("retry"):
+                if m is None:
                     if client is None:
                         m = {"available": False, "reason": "needs node mode: no node feed configured"}
                     else:
                         b = deck_buckets(client, self.market, ev["window_start_ms_exclusive"], ev["window_end_ms"])
                         side = "buying" if ev.get("side") == "buying" else "selling"
                         m = _bucket_metrics(b, "the burst's 60 s window", only=side)
-                        # Not processed through the window's end yet: try again at the next build.
-                        m["retry"] = (not b.get("available")) and "not processed through" in str(b.get("reason"))
-                    cache[key] = m
-                    if len(cache) > 200:
-                        cache.pop(next(iter(cache)))
+                        if b.get("available"):
+                            cache[key] = m
+                            if len(cache) > 200:
+                                cache.pop(next(iter(cache)))
                 ev = dict(ev) | {"node_activity": m}
             out.append(ev)
         for le in (live_view or {}).get("liquidation_events") or []:

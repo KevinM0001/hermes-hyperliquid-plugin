@@ -4,6 +4,7 @@ and replay beside live data (Handoff 1c Part B steps 11-13). Every intermediate 
 from __future__ import annotations
 
 import asyncio
+import itertools
 import json
 import sys
 import time
@@ -110,9 +111,14 @@ def _lines_for_server():
     return lines[hellos[1]:]                       # one producer session: hello, snapshots, events, heartbeats
 
 
-def test_unix_socket_transport_reads_the_real_stream(tmp_path):
+def test_unix_socket_transport_reads_the_real_stream(tmp_path, monkeypatch):
     lines = _lines_for_server()
+    # AF_UNIX paths are limited to 107 bytes and a temp folder can be deeper than that: the socket is bound by a short
+    # name in the test's folder, and reached by its full path when that fits, else by a short path to the same file.
+    monkeypatch.chdir(tmp_path)
     path = str(tmp_path / "feed.sock")
+    if len(path.encode()) > 100:
+        path = "/proc/self/cwd/feed.sock"
     got = {}
 
     async def main():
@@ -124,7 +130,7 @@ def test_unix_socket_transport_reads_the_real_stream(tmp_path):
             await asyncio.sleep(0.3)
             writer.close()
 
-        server = await asyncio.start_unix_server(serve, path=path)
+        server = await asyncio.start_unix_server(serve, path="feed.sock")
         c = FeedClient("unix:" + path, "LIVE")
         stop = asyncio.Event()
         task = asyncio.create_task(run_feed(c, path, [XY], stop))
@@ -295,19 +301,33 @@ def test_deck_card_buckets_count_node_fills_only(harness):
 # --- step 12: replay paused, seeked, restarted and ended beside live data -----------------------
 
 def test_replay_paused_seeked_restarted_and_ended_beside_live(surfaces):
-    """A replay beside a live feed, both in the plugin: after every replay step, node_status, node_book and
-    node_stops with source=replay (chat and tab) show REPLAY with the replay's own status, and the live results
-    never change."""
+    """A replay beside a live feed, both in the plugin, while the live feed keeps receiving lines: after every
+    replay step, node_status, node_book and node_stops with source=replay (chat and tab) show REPLAY with the
+    replay's own status, and the live results equal those of a reference client fed the same live lines with no
+    replay at all."""
     h, msgs = read_recording(XYZ)
     plugin = surfaces([SP, XY])
-    live = plugin.attach(FeedClient("unix:/run/feed.sock", "LIVE", {"stale_after_ms": 10 ** 12, "max_source_age_ms": 10 ** 15}))
-    live.on_line(hello_from(h), 0, 0)
-    for rx, m in msgs[:600]:
-        live.on_line(m, rx, rx * 10 ** 6)
+    age = {"stale_after_ms": 10 ** 12, "max_source_age_ms": 10 ** 15}
+    live = plugin.attach(FeedClient("unix:/run/feed.sock", "LIVE", age))
+    ref = FeedClient("unix:/run/feed.sock", "LIVE", age)                   # the same live lines, never a replay
+    for c in (live, ref):
+        c.listeners.append(lambda ev: panels.on_client_event(ev, OPTS))
+        c.on_line(hello_from(h), 0, 0)
+        for rx, m in msgs[:600]:
+            c.on_line(m, rx, rx * 10 ** 6)
     now = msgs[599][0]
     plugin.read(XY, now, slot="live")
-    live_before = plugin.last["tab"]["node"]["live"]
-    assert live_before["families"]["book"]["state"] == "LIVE"
+    assert plugin.last["tab"]["node"]["live"]["families"]["book"]["state"] == "LIVE"
+    live_lines = iter(msgs[600:])
+    live_fed = 0
+
+    def live_step(n=3):
+        nonlocal now, live_fed
+        for rx, m in itertools.islice(live_lines, n):
+            for c in (live, ref):
+                c.on_line(m, rx, rx * 10 ** 6)
+            now = rx
+            live_fed += 1
 
     rc = plugin.attach(FeedClient("recording:x", "REPLAY"))
     rc.listeners.append(lambda ev: panels.on_client_event(ev, OPTS))
@@ -316,13 +336,16 @@ def test_replay_paused_seeked_restarted_and_ended_beside_live(surfaces):
     pl = ReplayPlayer(rec, rc, speed=2.0, clock=lambda: clock[0])
 
     def read_replay():
+        live_step()
         v = plugin.read(XY, now, slot="replay")
         for name in ("node_status", "node_book", "node_stops"):
             r = plugin.last[name]
             assert r["source"] == "replay"
             if name != "node_status":
                 assert r["mode"] == "REPLAY" and r["replay"] == jsonable(v.get("replay"))
-        assert plugin.last["tab"]["node"]["live"] == live_before                    # live never touched
+        plugin.read(XY, now, slot="live")                                         # live: as if no replay ran
+        assert plugin.last["tab"]["node"]["live"] == jsonable(panels.market_view(ref, XY, OPTS, now, now * 10 ** 6))
+        assert plugin.last["node_book"]["mode"] == "LIVE"
         return v
 
     pl.start()
@@ -361,10 +384,9 @@ def test_replay_paused_seeked_restarted_and_ended_beside_live(surfaces):
     v = read_replay()
     assert v["replay"]["state"] == "ended"
     assert all(f["state"] in ("REPLAY", "INVALID") for f in v["families"].values())     # the end stays REPLAY
-    assert v["provenance"]["mode"] == "REPLAY" and plugin.last["node_book"]["mode"] == "REPLAY"
-    # Live state never changed while the replay ran: separate partitions (checked at every read above).
-    plugin.read(XY, now, slot="live")
-    assert plugin.last["tab"]["node"]["live"] == live_before
+    assert v["provenance"]["mode"] == "REPLAY"                 # node_book's mode REPLAY is checked in read_replay
+    # The live feed kept moving beside the replay, and matched the reference at every read above.
+    assert live_fed > 250 and live.markets[XY].last_seq == ref.markets[XY].last_seq > msgs[599][1]["seq"]
 
 
 def test_replay_commands_through_the_manager():

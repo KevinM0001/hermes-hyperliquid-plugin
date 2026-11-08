@@ -512,11 +512,24 @@ def _flow_ok(client, market):
     return st["state"] in ("LIVE", "REPLAY"), st
 
 
+def flow_meta(client, market: str) -> dict:
+    """Provenance and the flow family's freshness, for any result built from node fills."""
+    return {"provenance": provenance(client, market), "freshness": _flow_ok(client, market)[1]}
+
+
+def stream_key(client) -> tuple | None:
+    """The input stream a result was computed from: a cached result never outlives it."""
+    if client is None:
+        return None
+    return (client.source, client.mode, client.epoch, client.session,
+            client.replay_session if client.mode == "REPLAY" else None)
+
+
 def deck_buckets(client, market: str, start_ms: int, end_ms: int) -> dict:
     """Flow Deck activity buckets over (start_ms, end_ms], from node fills only."""
     mf = client.markets.get(market) if client else None
     if mf is None:
-        return {"available": False, "reason": "no node feed for this market"}
+        return {"available": False, "reason": "no node feed for this market"} | (flow_meta(client, market) if client else {})
     ok, st = _flow_ok(client, market)
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:
@@ -533,7 +546,7 @@ def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int) -> di
     """Each listed wallet's own split over (start_ms, end_ms], from node fills only."""
     mf = client.markets.get(market) if client else None
     if mf is None:
-        return {"available": False, "reason": "no node feed for this market"}
+        return {"available": False, "reason": "no node feed for this market"} | (flow_meta(client, market) if client else {})
     ok, st = _flow_ok(client, market)
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:

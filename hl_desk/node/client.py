@@ -383,7 +383,7 @@ class FeedClient:
         sid = body.get("snapshot_id")
         if not all(isinstance(x, int) for x in (part, parts, through)) or not isinstance(sid, str):
             self._discard_assembly(mf, "malformed snapshot part")
-            mf.fam[fam].invalidate("malformed snapshot part")
+            self._family_lost(mf, fam, "malformed snapshot part")
             return
         rows_key = "orders" if fam == "book" else "triggers"
         rows = body.get(rows_key) or []
@@ -393,7 +393,7 @@ class FeedClient:
             if a is not None:
                 self._discard_assembly(mf, f"a new snapshot started at seq {seq}")
             if seq != through + 1:
-                mf.fam[fam].invalidate("snapshot part 1 out of place")
+                self._family_lost(mf, fam, "snapshot part 1 out of place")
                 return
             mf.assembly = a = Assembly(fam, kind, sid, parts, through, 1, mono_ns, body.get("coverage"),
                                        block=block, block_time_ms=bt)
@@ -466,11 +466,11 @@ class FeedClient:
         try:
             state = self._build(a.family, a.rows, a.coverage, a.excluded)
         except (BookError, TriggerError, ValueError, IndexError, TypeError) as exc:
-            mf.fam[a.family].invalidate(f"snapshot unusable ({exc})")
+            self._family_lost(mf, a.family, f"snapshot unusable ({exc})")
             mf.counters["snapshots_rejected"] += 1
             return
         if a.total is not None and len(state.orders) != a.total:
-            mf.fam[a.family].invalidate(f"snapshot holds {len(state.orders)} rows, total says {a.total}")
+            self._family_lost(mf, a.family, f"snapshot holds {len(state.orders)} rows, total says {a.total}")
             mf.counters["snapshots_rejected"] += 1
             return
         self._offer(mf, a.family, a.through_seq, state, in_stream_last_seq=mf.last_seq)
