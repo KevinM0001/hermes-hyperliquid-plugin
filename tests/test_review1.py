@@ -136,13 +136,15 @@ def test_latest_older_than_the_limit_is_refused_and_ids_are_labeled_historical(t
     desk = make_desk()
     desk.collector = {"state": "connected"}
     open_segment(desk.markets["BTC"], T0)
-    old = desk.build_snapshot(1, int(time.time() * 1000) - int((LATEST_MAX_AGE_S + 0.5) * 1000))
+    # Snapshots are stamped as the live collector stamps them: the owner's monotonic clock (their served age).
+    late = int((LATEST_MAX_AGE_S + 0.5) * 1e9)
+    old = desk.build_snapshot(time.monotonic_ns() - late, int(time.time() * 1000) - late // 10 ** 6)
     rt.store.publish(old, frozen=desk.frozen_last)
     snap, err = rt.snapshot(None)
     assert snap is None and "isn't publishing" in err
     snap, err = rt.snapshot(old["snapshot_id"])
     assert err is None and snap["served"]["latest"] is False and snap["served"]["age_s"] > LATEST_MAX_AGE_S
-    fresh = desk.build_snapshot(2, int(time.time() * 1000))
+    fresh = desk.build_snapshot(time.monotonic_ns(), int(time.time() * 1000))
     rt.store.publish(fresh, frozen=desk.frozen_last)
     snap, err = rt.snapshot(None)
     assert err is None and snap["served"]["latest"] is True

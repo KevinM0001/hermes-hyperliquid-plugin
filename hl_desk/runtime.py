@@ -263,22 +263,28 @@ class Runtime:
         if self.store is None:
             return None, "no snapshot yet: the collector isn't running (start it with /hl start)"
         now_ms = int(time.time() * 1000)
+        now_mono = time.monotonic_ns()
         if snapshot_id:
             snap = self.store.get(snapshot_id)
             if snap is None:
                 return None, f"snapshot {snapshot_id} is no longer retained (the last {self.store.keep} are kept)"
-            return _served(snap, now_ms, latest=False), None
+            return _served(snap, now_ms, latest=False, age_s=_mono_age_s(snap, now_mono)), None
         snap = self.store.latest()
         if snap is None:
             return None, "no snapshot yet: the collector is starting"
         state = (snap.get("collector") or {}).get("state")
         if state == "stopped":
             return None, "the collector is stopped (start it with /hl start)"
-        age = (now_ms - snap["built_at_ms"]) / 1000
+        # How old the latest snapshot is, on the owner's monotonic clock: the same clock the collector stamped it
+        # with, so a wall-clock step can't make it look younger than it is.
+        age = _mono_age_s(snap, now_mono)
+        if age is None:
+            return None, ("the latest snapshot's age can't be established on this process's monotonic clock, "
+                          "so it isn't shown as current")
         if age > LATEST_MAX_AGE_S:
             return None, (f"the latest snapshot is {age:.1f} s old: the collector isn't publishing, "
                           "so it isn't shown as current")
-        return _served(snap, now_ms, latest=True), None
+        return _served(snap, now_ms, latest=True, age_s=age), None
 
     def snapshot(self, snapshot_id: str | None = None) -> tuple[dict | None, str | None]:
         """Return (snapshot, error): from memory in the owner process, otherwise from the owner."""
@@ -327,9 +333,19 @@ class Runtime:
 LATEST_MAX_AGE_S = 5.0
 
 
-def _served(snap: dict, now_ms: int, latest: bool) -> dict:
-    """A shallow copy labeled with how old it is when served, so a historical snapshot is never taken as current."""
-    age = round((now_ms - snap["built_at_ms"]) / 1000, 3)
+def _mono_age_s(snap: dict, now_mono_ns: int) -> float | None:
+    """Seconds since the snapshot was built, on the monotonic clock it was stamped with; None when that can't be
+    established (no monotonic stamp, or one ahead of now)."""
+    built = snap.get("built_mono_ns")
+    if not isinstance(built, int) or isinstance(built, bool) or built > now_mono_ns:
+        return None
+    return (now_mono_ns - built) / 1e9
+
+
+def _served(snap: dict, now_ms: int, latest: bool, age_s: float | None = None) -> dict:
+    """A shallow copy labeled with how old it is when served, so a historical snapshot is never taken as current.
+    The age is monotonic elapsed time since the build; a historical read falls back to wall time if it must."""
+    age = round(age_s if age_s is not None else (now_ms - snap["built_at_ms"]) / 1000, 3)
     out = dict(snap)
     out["served"] = {"latest": latest, "age_s": age, "served_at": iso_ms(now_ms),
                      "note": ("the latest snapshot" if latest else

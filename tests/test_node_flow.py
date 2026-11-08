@@ -172,6 +172,7 @@ def test_latest_reads_withhold_node_fill_results_once_their_flow_lapses(surfaces
 
     def latest(tool, extra=None):
         monkeypatch.setattr(runtime.time, "time", lambda: (NOW + 2_500) / 1000)
+        monkeypatch.setattr(runtime.time, "monotonic_ns", lambda: (NOW - T0 + 2_500) * 10 ** 6)
         via_chat = json.loads(tools.run_tool(tool, {"market": SP, **(extra or {})}, plugin.rt))
         if tool == "hl_alerts":
             via_tab = plugin.http.get(f"/api/plugins/hyperliquid-desk/tool/{tool}", params={"market": SP}).json()

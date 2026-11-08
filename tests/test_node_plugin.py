@@ -296,10 +296,14 @@ def test_the_tab_withholds_node_values_once_their_freshness_lapses(harness):
         assert _tab_validity(other, 2_100)["ok"] is True
 
 
-def _latest(plugin, monkeypatch, tool, market, read_at_ms):
-    """A tool read of the LATEST snapshot (no snapshot_id) at read_at_ms, through chat and the tab's tool route."""
+def _latest(plugin, monkeypatch, tool, market, read_at_ms, mono_at_ms=None):
+    """A tool read of the LATEST snapshot (no snapshot_id) at read_at_ms on the wall clock and mono_at_ms on the
+    monotonic clock (the same as the wall clock unless given; Surfaces stamps snapshots that way), through chat and
+    the tab's tool route."""
     from hl_desk import runtime, tools
+    mono = read_at_ms if mono_at_ms is None else mono_at_ms
     monkeypatch.setattr(runtime.time, "time", lambda: read_at_ms / 1000)
+    monkeypatch.setattr(runtime.time, "monotonic_ns", lambda: int(mono * 10 ** 6))
     via_chat = json.loads(tools.run_tool(tool, {"market": market}, plugin.rt))
     via_tab = plugin.http.get(f"/api/plugins/hyperliquid-desk/tool/{tool}", params={"market": market}).json()
     strip = lambda r: {k: v for k, v in r.items() if k not in ("served", "historical")}
@@ -350,6 +354,38 @@ def test_latest_node_tool_reads_are_judged_at_serving_time(surfaces, monkeypatch
     hist = json.loads(__import__("hl_desk.tools", fromlist=["run_tool"]).run_tool(
         "node_book", {"market": XY, "snapshot_id": sid}, plugin.rt))
     assert hist["families"]["book"]["state"] == "LIVE" and hist["served"]["latest"] is False and "historical" in hist
+
+
+def test_latest_reads_age_on_the_monotonic_clock_not_the_wall_clock(surfaces, monkeypatch):
+    """Review 8, finding 1. A snapshot LIVE when built is read 2.5 s later on the monotonic clock, while the wall
+    clock was corrected back by 2.4 s (wall time says 0.1 s). The served age is the monotonic 2.5 s: node_book
+    reads STALE with its numbers withheld, and the tab's own gate withholds the latest snapshot, as the client
+    itself reads STALE. A snapshot whose age can't be established on the monotonic clock isn't served as latest."""
+    plugin = surfaces([XY])
+    plugin.desk.collector = {"state": "connected", "note": "offline recorded feed"}
+    c = plugin.attach(FeedClient("unix:/run/feed.sock", "LIVE", {"stale_after_ms": 2_000, "max_source_age_ms": 5_000}))
+    c.listeners.append(lambda ev: panels.on_client_event(ev, OPTS))
+    h, msgs = read_recording(XYZ)
+    ms = by_market(msgs, XY)[:300]
+    start = ms[0][1]["block_time_ms"]
+    c.on_line(dict(hello_from(h), pub_ms=start + 300), start + 400, (start + 400) * 10 ** 6)
+    for _, m in ms:
+        now = m["block_time_ms"] + 400
+        c.on_line(dict(m, pub_ms=m["block_time_ms"] + 300), now, now * 10 ** 6)
+    view = plugin.read(XY, now)
+    assert view["families"]["book"]["state"] == "LIVE" and view["families"]["book"]["watermark_age_ms"] < 300
+    mono_at, wall_at = now + 2_500, now + 100                    # 2.5 s elapsed; the wall clock stepped back 2.4 s
+    assert c.family_status(XY, "book", wall_at, mono_at * 10 ** 6)["state"] == "STALE"
+    book = _latest(plugin, monkeypatch, "node_book", XY, wall_at, mono_at)
+    assert book["served"]["latest"] is True and abs(book["served"]["age_s"] - 2.5) < 1e-6
+    assert book["families"]["book"]["state"] == "STALE" and book["ladder"]["available"] is False
+    tab = plugin.http.get("/api/plugins/hyperliquid-desk/snapshot", params={"market": XY}).json()
+    assert tab["ok"] and abs(tab["served"]["age_s"] - 2.5) < 1e-6
+    gate = _tab_validity(tab, 0)
+    assert gate["ok"] is False and "node book was LIVE" in gate["reason"]
+    # a monotonic stamp from another clock (ahead of now): the age can't be established, so no latest answer
+    refused = _latest(plugin, monkeypatch, "node_book", XY, wall_at, now - 1)
+    assert refused["ok"] is False and "can't be established" in refused["error"]
 
 
 def test_deck_card_buckets_count_node_fills_only(harness):

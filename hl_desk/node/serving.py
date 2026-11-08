@@ -18,10 +18,12 @@ USABLE = ("LIVE", "REPLAY")
 BUCKET_KEYS = ("new_long", "cover", "new_short", "exit")
 
 
-def aged_status(st: dict | None, age_ms: float) -> dict | None:
-    """A family status as it stands age_ms after it was judged. Only LIVE statuses change."""
+def aged_status(st: dict | None, age_ms: float | None) -> dict | None:
+    """A family status as it stands age_ms after it was judged (None: unknown). Only LIVE statuses change."""
     if not isinstance(st, dict) or st.get("state") != "LIVE":
         return st
+    if age_ms is None:
+        return dict(st, state="STALE", reason="the snapshot's age when served isn't known, so it can't be shown as current")
     out = dict(st, aged_by_ms=round(age_ms))
     wm, lim = st.get("watermark_age_ms"), st.get("stale_after_ms")
     src, src_lim = st.get("source_age_ms"), st.get("max_source_age_ms")
@@ -96,10 +98,10 @@ def aged_fill_result(res: dict | None, age_ms: float) -> dict | None:
 def age_snapshot_for_serving(snap: dict) -> dict:
     """The latest snapshot with every node result re-judged at serving time (historical snapshots unchanged)."""
     served = snap.get("served") or {}
-    age_s = served.get("age_s")
-    if not served.get("latest") or not isinstance(age_s, (int, float)):
+    if not served.get("latest"):
         return snap
-    age_ms = max(0.0, age_s * 1000)
+    age_s = served.get("age_s")
+    age_ms = max(0.0, age_s * 1000) if isinstance(age_s, (int, float)) and not isinstance(age_s, bool) else None
     out = dict(snap, markets={})
     for name, ms in snap["markets"].items():
         m = dict(ms)

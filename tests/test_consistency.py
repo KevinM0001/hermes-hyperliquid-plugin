@@ -59,6 +59,7 @@ def client_and_snaps(tmp_path, monkeypatch):
     for i, frac in enumerate((0.3, 0.45)):
         rp.run_until(rp.records[int(len(rp.records) * frac)]["recv_mono_ns"])
         s = rp.snapshot(wall_ms=int(time.time() * 1000))     # built "now", as the live collector would
+        s["built_mono_ns"] = time.monotonic_ns()             # stamped on the owner's monotonic clock, as live
         rt.store.publish(s, frozen=rp.desk.frozen_last)
         snaps.append(s)
     app = FastAPI()
