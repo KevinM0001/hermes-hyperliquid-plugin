@@ -19562,7 +19562,9 @@
   // reported when serving it plus all the time since the tab sent the request, so delivery delay and the time it
   // stays on screen count (an upper bound). It is withheld once that age passes the latest-snapshot limit, or once
   // any status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) would no longer
-  // be fresh: progress age past its max age, or source age plus the clock bound past its source max age.
+  // be fresh: progress age past its max age, or source age plus the clock bound past its source max age. The same
+  // holds for every node family it shows as LIVE (node panels, node buckets, wallet splits): watermark age past
+  // the stale limit, or source age past the source limit.
   function snapshotValidity(data, requestedPerf, nowPerf, latestMaxS) {
     const served = (data && data.served) || {};
     if (served.latest !== true) {
@@ -19594,6 +19596,46 @@
         if (f.source_age_s + age + bound > f.source_max_age_s) {
           return { ok: false, age: age, reason: label + " was fresh when the snapshot was built, but by now its source time is about " +
             (f.source_age_s + age).toFixed(1) + " s old (max " + f.source_max_age_s + " s with a " + bound + " s clock bound), so the snapshot isn't shown as current" };
+        }
+      }
+    }
+    // Node families age the same way. A family LIVE when the snapshot was built stops being LIVE once its last
+    // watermark is older than its stale limit or its source block older than its source limit, counting the
+    // snapshot's age when served and all the time since the tab asked for it; then every node value built on it
+    // (node panels, the Flow Deck's node buckets, wallet splits) would no longer be current. REPLAY families run
+    // on the replay's own clock and aren't aged.
+    const nodes = [];
+    const nlive = (m.node && m.node.live) || {};
+    Object.keys(nlive.families || {}).forEach(function (k) { nodes.push([(m.market || "market") + " node " + k, nlive.families[k]]); });
+    Object.keys(m.wallets || {}).forEach(function (w) {
+      const sp = (m.wallets[w] || {}).node_activity_split;
+      if (sp && sp.available) nodes.push([(m.market || "market") + " wallet split (" + w + ") node fills", sp.freshness]);
+    });
+    Object.keys(deck).forEach(function (k) {
+      const d = deck[k] || {};
+      const ab = d.card && d.card.activity_buckets;
+      if (ab && ab.available) nodes.push([k + " Flow Deck node buckets", ab.freshness]);
+      (d.events || []).forEach(function (ev) {
+        if (ev && ev.node_activity && ev.node_activity.available) nodes.push([k + " burst node buckets", ev.node_activity.freshness]);
+      });
+    });
+    for (let i = 0; i < nodes.length; i++) {
+      const label = nodes[i][0], st = nodes[i][1];
+      if (!st || st.state !== "LIVE") continue;
+      if (typeof st.watermark_age_ms !== "number" || typeof st.stale_after_ms !== "number") {
+        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but its watermark age or limit isn't in " +
+          "the snapshot, so it isn't shown as current" };
+      }
+      const wmAge = st.watermark_age_ms / 1000 + age;
+      if (wmAge > st.stale_after_ms / 1000) {
+        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now its last watermark is about " +
+          wmAge.toFixed(1) + " s old (limit " + (st.stale_after_ms / 1000) + " s; heartbeats don't count), so the snapshot isn't shown as current" };
+      }
+      if (typeof st.source_age_ms === "number" && typeof st.max_source_age_ms === "number") {
+        const srcAge = st.source_age_ms / 1000 + age;
+        if (srcAge > st.max_source_age_ms / 1000) {
+          return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now its source block is about " +
+            srcAge.toFixed(1) + " s old (limit " + (st.max_source_age_ms / 1000) + " s), so the snapshot isn't shown as current" };
         }
       }
     }

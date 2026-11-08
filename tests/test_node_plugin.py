@@ -23,7 +23,7 @@ from hl_desk.node.replay import Recording, ReplayPlayer
 from hl_desk.node.transport import handshake, parse_source, run_feed
 
 from helpers import make_desk
-from node_helpers import EXECS, OPTS, RESTART, XYZ, hello_from, jsonable, read_recording, read_tap, surfaces
+from node_helpers import EXECS, OPTS, RESTART, XYZ, by_market, hello_from, jsonable, read_recording, read_tap, surfaces
 
 import hl_desk
 ROOT = Path(hl_desk.__file__).resolve().parent.parent          # the plugin repo, wherever these tests run from
@@ -248,6 +248,48 @@ def test_every_intermediate_tool_and_tab_result(harness):
             assert plugin.last["node_stops"]["stops"]["rows"] is not None
             stops_compared += 1
     assert swaps_checked == 2 and stops_compared > 300
+
+
+def _tab_validity(payload: dict, elapsed_ms: float) -> dict:
+    """The tab's own snapshotValidity (extracted from app.js), on a payload asked for elapsed_ms ago."""
+    import re
+    import subprocess
+    src = (ROOT / "dashboard" / "src" / "app.js").read_text()
+    fn = re.search(r"// <pure:snapshotValidity>.*?\n(.*?)  // </pure:snapshotValidity>", src, re.S).group(1)
+    script = fn + "\nprocess.stdout.write(JSON.stringify(snapshotValidity(" + json.dumps(payload) + \
+        ", 1000, " + str(1000 + elapsed_ms) + ", 5)));\n"
+    return json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True).stdout)
+
+
+@pytest.mark.skipif(__import__("shutil").which("node") is None, reason="needs node to run the tab's pure function")
+def test_the_tab_withholds_node_values_once_their_freshness_lapses(harness):
+    """Review 5, B2. A real tab payload with the node book LIVE (last watermark moments old) is current when it
+    arrives; 2.1 s after the tab asked for it, past the 2 s watermark limit, the tab's own gate withholds it, as
+    the client itself then reads STALE. Statuses that aren't LIVE (REPLAY, BEHIND) aren't aged."""
+    plugin = harness
+    c = plugin.mgr.live
+    c.cfg.update({"stale_after_ms": 2_000, "max_source_age_ms": 10 ** 9})
+    h, msgs = read_recording(XYZ)
+    c.on_line(hello_from(h), h["producer"]["started_ms"], 0)
+    for rx, m in by_market(msgs, XY)[:300]:
+        c.on_line(m, rx, rx * 10 ** 6)
+    rx = by_market(msgs, XY)[299][0]
+    plugin.read(XY, rx)
+    sid = plugin.last["snapshot"]["snapshot_id"]
+    payload = plugin.http.get("/api/plugins/hyperliquid-desk/snapshot", params={"market": XY, "snapshot_id": sid}).json()
+    fam = payload["market"]["node"]["live"]["families"]
+    assert fam["book"]["state"] == "LIVE" and fam["book"]["watermark_age_ms"] < 300 and fam["book"]["stale_after_ms"] == 2_000
+    payload["served"] = dict(payload["served"], latest=True, age_s=0.0)   # as served the moment it was built
+    assert _tab_validity(payload, 100)["ok"] is True
+    late = _tab_validity(payload, 2_100)
+    assert late["ok"] is False and "node book was LIVE when the snapshot was built" in late["reason"]
+    assert "limit 2 s" in late["reason"]
+    assert c.family_status(XY, "book", rx + 2_100, (rx + 2_100) * 10 ** 6)["state"] == "STALE"   # what the client says
+    for state in ("REPLAY", "BEHIND"):
+        other = json.loads(json.dumps(payload))
+        for f in other["market"]["node"]["live"]["families"].values():
+            f["state"] = state
+        assert _tab_validity(other, 2_100)["ok"] is True
 
 
 def test_deck_card_buckets_count_node_fills_only(harness):

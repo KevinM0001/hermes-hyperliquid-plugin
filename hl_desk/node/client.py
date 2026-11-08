@@ -21,6 +21,10 @@ from .flow import NodeFlow
 from .proto import CLIENT_DEFAULTS, FAMILIES, KIND_FAMILY, SNAPSHOT_KINDS, STATE_FAMILIES, VERSION, VIEW_FAMILIES
 from .triggers import NodeTriggers, TriggerError
 
+# Clock skew is judged on the worst offset (receipt wall time minus publication time) among the lines accepted in
+# the last SKEW_WINDOW_MS: a delayed line, whose offset is large, never clears a skew seen moments before it.
+SKEW_WINDOW_MS = 10_000
+
 NS = 1_000_000_000
 BOOK_FIELDS = ["oid", "side", "px", "sz", "user", "time_ms"]
 TRIG_FIELDS = ["oid", "side", "kind", "trigger_px", "sz", "position_tpsl", "user", "time_ms"]
@@ -109,7 +113,9 @@ class FeedClient:
         self.labels: dict = {}
         self.replay: dict | None = None         # the replay status from REPLAY heartbeats
         self.connection = {"state": "never connected", "since_wall_ms": None, "reason": None}
-        self.skew = {"bad": False, "last_offset_ms": None}
+        self.skew = {"bad": False, "last_offset_ms": None, "worst_offset_ms": None, "window_ms": SKEW_WINDOW_MS}
+        self.skew_samples: deque[tuple[int, int]] = deque()     # (monotonic ns, offset ms) of accepted lines
+        self._accepted = False
         self.last_line_mono_ns: int | None = None
         self.last_heartbeat_mono_ns: int | None = None
         self.counters = {"lines": 0, "retired_ignored": 0, "retired_replay_ignored": 0, "unsupported": 0,
@@ -125,6 +131,8 @@ class FeedClient:
         return " · ".join(str(p) for p in parts)
 
     def _new_partition(self, why: str) -> None:
+        self.skew_samples.clear()                    # a new session or replay learns its clock relationship anew
+        self.skew = {"bad": False, "last_offset_ms": None, "worst_offset_ms": None, "window_ms": SKEW_WINDOW_MS}
         old = self.markets
         self.markets = {}
         for m, mf in old.items():
@@ -165,6 +173,7 @@ class FeedClient:
             self._new_partition("the source serves a REPLAY")
         if self.mode == "REPLAY" and not self._replay_session_ok(obj):
             return
+        self._accepted = False
         if "control" in obj:
             self._control(obj, wall_ms, mono_ns)
         elif "kind" in obj:
@@ -172,12 +181,20 @@ class FeedClient:
         else:
             self.counters["malformed"] += 1
             return
-        # The clock relationship is learned only from lines of the current producer session, after the line was
-        # accepted for it: a retired or foreign session's line never changes the current session's freshness.
-        if (isinstance(obj.get("pub_ms"), int) and self.epoch is not None
-                and obj.get("epoch") == self.epoch and obj.get("session") == self.session):
-            off = wall_ms - obj["pub_ms"]
-            self.skew = {"bad": off < -self.cfg["skew_tolerance_ms"], "last_offset_ms": off}
+        # The clock relationship is learned only from lines the current session accepted: a market line that
+        # advanced its sequence, or the session's own hello or heartbeat. A duplicate, retired, foreign or malformed
+        # line never changes it, and a delayed one can't clear a skew seen within the window.
+        if self._accepted and isinstance(obj.get("pub_ms"), int):
+            self._note_clock(wall_ms - obj["pub_ms"], mono_ns)
+
+    def _note_clock(self, off: int, mono_ns: int) -> None:
+        self.skew_samples.append((mono_ns, off))
+        horizon = mono_ns - SKEW_WINDOW_MS * 1_000_000
+        while self.skew_samples and self.skew_samples[0][0] < horizon:
+            self.skew_samples.popleft()
+        worst = min(o for _, o in self.skew_samples)
+        self.skew = {"bad": worst < -self.cfg["skew_tolerance_ms"], "last_offset_ms": off, "worst_offset_ms": worst,
+                     "window_ms": SKEW_WINDOW_MS}
 
     def _replay_session_ok(self, obj: dict) -> bool:
         rs = obj.get("replay_session")
@@ -220,6 +237,7 @@ class FeedClient:
         if c == "hello":
             if not self._session_ok(obj.get("epoch"), obj.get("session")):
                 return
+            self._accepted = True
             self.hello = obj
             self.limits = obj.get("limits") or {}
             self.labels = obj.get("labels") or {}
@@ -247,6 +265,7 @@ class FeedClient:
         elif c == "heartbeat":
             if not self._session_ok(obj.get("epoch"), obj.get("session")):
                 return
+            self._accepted = True
             self.last_heartbeat_mono_ns = mono_ns
             if isinstance(obj.get("replay"), dict):
                 self.replay = dict(obj["replay"])
@@ -284,6 +303,7 @@ class FeedClient:
                 self._invalidate_market(mf, f"stream started at {seq}, not {mf.expected_start}")
             mf.run_start = seq
         mf.last_seq = seq
+        self._accepted = True                        # this line advanced the current session's sequence
         body = obj.get("body") if isinstance(obj.get("body"), dict) else {}
         block, bt = obj.get("block"), obj.get("block_time_ms")
         if isinstance(block, int):
@@ -592,7 +612,9 @@ class FeedClient:
             return {"state": "INVALID", "reason": "no data for this market from this source yet"}
         f = mf.fam[fam]
         out = {"family": fam, "watermark_block": f.wm_block, "watermark_block_time_ms": f.wm_block_time_ms,
-               "applied_through": f.applied_through}
+               "applied_through": f.applied_through,
+               # the limits the state was judged by, so a reader holding this status can keep aging it
+               "stale_after_ms": self.cfg["stale_after_ms"], "max_source_age_ms": self.cfg["max_source_age_ms"]}
         if not f.valid:
             return out | {"state": "INVALID", "reason": f.reason}
         if fam == "book" and mf.crossed is not None:
@@ -604,8 +626,9 @@ class FeedClient:
             return out | {"state": "REPLAY", "reason": None, "replay": self.replay}
         if self.skew["bad"]:
             return out | {"state": "UNKNOWN",
-                          "reason": f"clock skew: this machine's clock is {-self.skew['last_offset_ms']} ms behind "
-                                    "the producer's, so ages can't be bounded"}
+                          "reason": f"clock skew: this machine's clock is up to {-self.skew['worst_offset_ms']} ms behind "
+                                    f"the producer's (worst over the last {SKEW_WINDOW_MS // 1000} s), so ages can't be "
+                                    "bounded"}
         if f.wm_recv_mono_ns is None:
             return out | {"state": "STALE", "reason": "no freshness-advancing watermark since this family became valid"}
         since_ms = (now_mono_ns - f.wm_recv_mono_ns) / 1e6

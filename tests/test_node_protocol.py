@@ -634,6 +634,36 @@ def test_a_retired_sessions_line_never_changes_freshness(surfaces):
     assert all(f["state"] == "UNKNOWN" for f in v["families"].values())
 
 
+def test_a_duplicate_or_delayed_line_never_clears_clock_skew(surfaces):
+    """Review 5, B1. Lines received on a clock 2.5 s behind the producer's: every family is UNKNOWN. A verbatim
+    duplicate of an earlier watermark (ignored as a duplicate), and then an accepted heartbeat that was simply
+    delayed (an old publication time), must not make the ages look bounded: still UNKNOWN through chat and tab.
+    Only once no skewed line has been seen for the whole window does the clock relationship recover."""
+    h, ms = _xyz_market(XY)
+    plugin = surfaces([XY])
+    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "max_source_age_ms": 10 ** 9}))
+    _start(c, h)
+    for rx, m in ms:
+        c.on_line(dict(m, pub_ms=rx + 2_500), rx, rx * 10 ** 6)     # received 2.5 s "before" publication
+    rx = ms[-1][0]
+    v = plugin.read(XY, rx)
+    assert all(f["state"] == "UNKNOWN" for f in v["families"].values())
+    before = plugin.last["node_status"]["markets"][XY]["families"]
+    dup = next(m for _, m in ms if m["kind"] == "watermark")              # verbatim: its old publication time
+    dups = c.markets[XY].counters["duplicates"]
+    c.on_line(dup, rx, rx * 10 ** 6)
+    v = plugin.read(XY, rx)
+    assert c.markets[XY].counters["duplicates"] == dups + 1
+    assert plugin.last["node_status"]["markets"][XY]["families"] == before
+    t = rx + 500                                                           # a heartbeat delayed by 60 s: accepted
+    c.on_line({"v": 2, "control": "heartbeat", "epoch": c.epoch, "session": c.session, "pub_ms": t - 60_000}, t, t * 10 ** 6)
+    v = plugin.read(XY, t)
+    assert all(f["state"] == "UNKNOWN" for f in v["families"].values()) and "worst over the last" in v["families"]["book"]["reason"]
+    t2 = t + 10_001                                                        # a whole window of well-clocked lines
+    c.on_line({"v": 2, "control": "heartbeat", "epoch": c.epoch, "session": c.session, "pub_ms": t2 - 30}, t2, t2 * 10 ** 6)
+    assert c.family_status(XY, "book", t2, t2 * 10 ** 6)["state"] != "UNKNOWN"
+
+
 def test_clock_skew_reads_unknown(surfaces):
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
