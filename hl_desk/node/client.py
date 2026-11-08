@@ -90,7 +90,7 @@ class MarketFeed:
         self.crossed: dict | None = None        # set when the book is seen crossed, cleared by a snapshot
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_swapped": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0,
-                         "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0}
+                         "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0}
         self.events: deque[dict] = deque(maxlen=50)   # invalidations, swaps, rejections (for status)
 
     def note(self, what: str, **kw) -> None:
@@ -356,6 +356,12 @@ class FeedClient:
         through = body.get("through_seq")
         if through != seq - 1:
             mf.note("watermark through_seq mismatch", through=through)
+        if not isinstance(bt, int) or isinstance(bt, bool):
+            # A watermark without a source time (the node record had no parseable time, PROTOCOL.md 2.1) can't bound
+            # the source's age: it advances neither freshness nor the flow window. The next timed one does.
+            mf.counters["watermarks_without_time"] += 1
+            mf.note("watermark without a block time: freshness not advanced", seq=seq)
+            return
         if isinstance(block, int):
             mf.flow.on_watermark(block, bt)
             fl = mf.fam["flow"]
@@ -396,6 +402,8 @@ class FeedClient:
                 mf.crossed = {"since_seq": seq, "since_block_time_ms": mf.block_time_ms,
                               "best_bid": mf.book.best("B"), "best_ask": mf.book.best("A")}
                 mf.note("book crossed", best_bid=str(mf.book.best("B")), best_ask=str(mf.book.best("A")))
+                # The book is invalid from here until a fresh snapshot: nothing built on it spans that interval.
+                self._reset_book_panels(mf)
         elif from_snapshot and mf.crossed is not None:
             mf.note("crossed book cleared by a snapshot")
             mf.crossed = None
@@ -460,14 +468,19 @@ class FeedClient:
         mf.held = [h for h in mf.held if h["family"] != fam]
         if fam == "book":
             mf.book = None
-            ps = getattr(mf, "panels", None)
-            if ps is not None:
-                ps.history.clear()
-                ps.history_since_ms = ps.last_sample_ms = None
-                ps.walls.clear()
-                ps.walls_gone.clear()
+            self._reset_book_panels(mf)
         else:
             mf.triggers = None
+
+    @staticmethod
+    def _reset_book_panels(mf: MarketFeed) -> None:
+        """Panel state built on the book (heatmap history, walls) starts again after the book was unusable."""
+        ps = getattr(mf, "panels", None)
+        if ps is not None:
+            ps.history.clear()
+            ps.history_since_ms = ps.last_sample_ms = None
+            ps.walls.clear()
+            ps.walls_gone.clear()
 
     def check_deadlines(self, mono_ns: int, wall_ms: int | None = None) -> None:
         limit = self.cfg["snapshot_timeout_ms"] * 1_000_000
@@ -631,6 +644,8 @@ class FeedClient:
                                     "bounded"}
         if f.wm_recv_mono_ns is None:
             return out | {"state": "STALE", "reason": "no freshness-advancing watermark since this family became valid"}
+        if f.wm_block_time_ms is None:
+            return out | {"state": "STALE", "reason": "the last watermark carried no source time, so its age can't be bounded"}
         since_ms = (now_mono_ns - f.wm_recv_mono_ns) / 1e6
         out["watermark_age_ms"] = round(since_ms)
         if since_ms > self.cfg["stale_after_ms"]:

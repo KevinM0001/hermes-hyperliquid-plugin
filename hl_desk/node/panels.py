@@ -378,8 +378,8 @@ def history(ps: PanelState, client, market: str) -> dict:
             "since_ms": ps.history_since_ms,
             "partial": True if ps.history_since_ms is None else (
                 (ps.history[-1][0] - ps.history_since_ms) < HISTORY_SPAN_MS if ps.history else True),
-            "partial_note": "history starts when this source's book became valid (connect, gap, or replay start); "
-                            "nothing before it is shown",
+            "partial_note": "history starts when this source's book last became valid (connect, gap, replay start, or "
+                            "recovery from an invalid or crossed book); nothing before it is shown",
             "fields": ["t_ms", "mid", "bins: [lo, bid_usd, ask_usd]"],
             "samples": tuple(ps.history)}
 

@@ -18564,11 +18564,15 @@
       ctx.strokeStyle = C.mark;
       ctx.lineWidth = 1.25;
       ctx.beginPath();
-      let on = false;
+      // The mid line joins consecutive samples only: a gap of more than two sample steps (an interval the book
+      // wasn't observed, or was invalid) is left open, never drawn as continuous history.
+      let on = false, prevT = null;
       L.samples.forEach(function (s) {
         if (!isNum(s[1])) { on = false; return; }
         const x = X(s[0] + L.step / 2), y = Y(s[1]);
-        if (on) ctx.lineTo(x, y); else { ctx.moveTo(x, y); on = true; }
+        if (on && prevT !== null && s[0] - prevT <= 2 * L.step) ctx.lineTo(x, y); else ctx.moveTo(x, y);
+        on = true;
+        prevT = s[0];
       });
       ctx.stroke();
       ctx.fillStyle = C.border;
@@ -19631,12 +19635,14 @@
         return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now its last watermark is about " +
           wmAge.toFixed(1) + " s old (limit " + (st.stale_after_ms / 1000) + " s; heartbeats don't count), so the snapshot isn't shown as current" };
       }
-      if (typeof st.source_age_ms === "number" && typeof st.max_source_age_ms === "number") {
-        const srcAge = st.source_age_ms / 1000 + age;
-        if (srcAge > st.max_source_age_ms / 1000) {
-          return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now its source block is about " +
-            srcAge.toFixed(1) + " s old (limit " + (st.max_source_age_ms / 1000) + " s), so the snapshot isn't shown as current" };
-        }
+      if (typeof st.source_age_ms !== "number" || typeof st.max_source_age_ms !== "number") {
+        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but its source age or limit isn't in " +
+          "the snapshot, so its age can't be bounded and it isn't shown as current" };
+      }
+      const srcAge = st.source_age_ms / 1000 + age;
+      if (srcAge > st.max_source_age_ms / 1000) {
+        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now its source block is about " +
+          srcAge.toFixed(1) + " s old (limit " + (st.max_source_age_ms / 1000) + " s), so the snapshot isn't shown as current" };
       }
     }
     return { ok: true, age: age, reason: null };

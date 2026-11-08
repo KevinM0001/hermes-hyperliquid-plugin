@@ -137,6 +137,15 @@ def test_a_crossed_book_is_invalid_until_a_fresh_snapshot_clears_it(surfaces):
     assert v["book"]["valid"] is True and v["book"]["crossed"] is None   # cleared by the 60 s snapshot
     assert plugin.last["node_status"]["markets"][XY]["families"]["book"]["state"] == "LIVE"
     assert plugin.last["node_book"]["ladder"]["bids"]
+    # Review 6, B2: nothing built on the book spans the crossed interval. The history and walls were dropped
+    # when it crossed; after the recovery they start again, with no sample from before the crossing.
+    crossed_at = crossed["block_time_ms"]
+    for rx2, m2 in ms[snap60 + 2:]:
+        c.on_line(m2, rx2, rx2 * 10 ** 6)
+        hist = plugin.read(XY, rx2)["history"]
+        if hist.get("since_ms") is not None:
+            assert hist["since_ms"] > crossed_at and all(t > crossed_at for t, *_ in hist["samples"])
+    assert hist["samples"] and plugin.last["tab"]["node"]["live"]["history"]["since_ms"] > crossed_at
 
 
 def test_thinning_numbers_match_a_calculation_from_the_recorded_snapshot(surfaces):

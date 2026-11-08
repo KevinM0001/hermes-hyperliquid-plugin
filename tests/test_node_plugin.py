@@ -285,6 +285,10 @@ def test_the_tab_withholds_node_values_once_their_freshness_lapses(harness):
     assert late["ok"] is False and "node book was LIVE when the snapshot was built" in late["reason"]
     assert "limit 2 s" in late["reason"]
     assert c.family_status(XY, "book", rx + 2_100, (rx + 2_100) * 10 ** 6)["state"] == "STALE"   # what the client says
+    no_source = json.loads(json.dumps(payload))                           # review 6, B1: LIVE without a source age
+    no_source["market"]["node"]["live"]["families"]["book"].pop("source_age_ms")
+    gone = _tab_validity(no_source, 100)
+    assert gone["ok"] is False and "source age or limit isn't in the snapshot" in gone["reason"]
     for state in ("REPLAY", "BEHIND"):
         other = json.loads(json.dumps(payload))
         for f in other["market"]["node"]["live"]["families"].values():

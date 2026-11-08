@@ -664,6 +664,40 @@ def test_a_duplicate_or_delayed_line_never_clears_clock_skew(surfaces):
     assert c.family_status(XY, "book", t2, t2 * 10 ** 6)["state"] != "UNKNOWN"
 
 
+def test_a_watermark_without_a_source_time_never_makes_a_family_live(surfaces):
+    """Review 6, B1. PROTOCOL.md 2.1 lets block_time_ms be null when the node record had no parseable time. Such a
+    watermark can't bound the source's age: (a) after the first snapshots it leaves the families STALE, never
+    LIVE, through chat and tab, with the ladder withheld; the first timed watermark then makes them LIVE.
+    (b) Once LIVE, null-time watermarks don't refresh freshness: past the 2 s limit the families read STALE."""
+    h, ms = _xyz_market(XY)
+    first_wm = next(i for i, (_, m) in enumerate(ms) if m["kind"] == "watermark")
+    plugin = surfaces([XY])
+    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "max_source_age_ms": 10 ** 9}))
+    _start(c, h)
+    for rx, m in ms[:first_wm + 1]:
+        m = dict(m, block_time_ms=None) if m["kind"] == "watermark" else m
+        c.on_line(m, rx, rx * 10 ** 6)
+        v = plugin.read(XY, rx)
+        assert all(f["state"] != "LIVE" for f in v["families"].values()), v["families"]
+    st = plugin.last["node_status"]["markets"][XY]["families"]["book"]
+    assert st["state"] == "STALE" and plugin.last["node_book"]["ladder"]["available"] is False
+    assert c.markets[XY].counters["watermarks_without_time"] == 1
+    nxt = next(i for i, (_, m) in enumerate(ms) if i > first_wm and m["kind"] == "watermark")
+    for rx, m in ms[first_wm + 1:nxt + 1]:
+        c.on_line(m, rx, rx * 10 ** 6)
+    v = plugin.read(XY, ms[nxt][0])
+    assert v["families"]["book"]["state"] == "LIVE" and plugin.last["node_book"]["ladder"]["bids"]
+    # (b) later null-time watermarks, received promptly for 3 s: freshness isn't refreshed by them
+    later = [(rx, m) for rx, m in ms[nxt + 1:] if ms[nxt][0] < rx <= ms[nxt][0] + 3_000]
+    for rx, m in later:
+        c.on_line(dict(m, block_time_ms=None) if m["kind"] == "watermark" else m, rx, rx * 10 ** 6)
+        v = plugin.read(XY, rx)
+        if rx - ms[nxt][0] > 2_000:
+            assert v["families"]["book"]["state"] == "STALE"
+            assert plugin.last["node_book"]["ladder"]["available"] is False
+    assert any(rx - ms[nxt][0] > 2_000 for rx, _ in later)
+
+
 def test_clock_skew_reads_unknown(surfaces):
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
