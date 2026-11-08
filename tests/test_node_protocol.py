@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import pytest
+
 from hl_desk.node import panels
 
 from node_helpers import (OPTS, RESTART, XYZ, by_market, check_view, client, feed, hello_from, jsonable,
@@ -226,6 +228,48 @@ def test_interrupted_multipart_snapshot_recovers_at_the_next_one(surfaces):
         if m["seq"] < seq_next_snap:
             assert v["book"]["valid"] is False and plugin.last["node_book"]["ladder"]["available"] is False
     assert v["book"]["valid"] is True and plugin.last["node_book"]["ladder"]["bids"]
+
+
+@pytest.mark.parametrize("bound", ["bytes", "chunks", "time"])
+def test_snapshot_assembly_bounds_discard_it(surfaces, bound):
+    """Rule 6.3: assembly is bounded by bytes, chunks and time. The real 60 s book snapshot (two parts) is pushed
+    over each bound in turn: it is discarded, the book goes invalid with the reason, its history and walls go
+    with it, and nothing of it is applied; the other families stay up."""
+    h, ms = _xyz_market(XY)
+    plugin = surfaces([XY])
+    c = plugin.attach(client())
+    _start(c, h)
+    i = next(i for i, (_, m) in enumerate(ms) if m["kind"] == "book_snapshot" and m["body"]["part"] == 1 and m["seq"] > 10)
+    assert ms[i][1]["body"]["parts"] == 2
+    for rx, m in ms[:i]:
+        c.on_line(m, rx, rx * 10 ** 6)
+        plugin.read(XY, rx)
+    assert plugin.last["node_status"]["markets"][XY]["families"]["book"]["state"] == "LIVE"
+    if bound == "bytes":
+        c.cfg["max_snapshot_bytes"] = 10_000                  # part 1 alone is far larger
+        why = "byte or chunk bound"
+    elif bound == "chunks":
+        c.limits["snapshot_max_chunks"] = 1                   # the producer's own limit, as its hello would say
+        why = "byte or chunk bound"
+    else:
+        why = "not complete within 10000 ms"
+    rx, m = ms[i]
+    c.on_line(m, rx, rx * 10 ** 6)
+    if bound == "time":                                       # part 2 is late: only heartbeats arrive meanwhile
+        assert c.markets[XY].assembly is not None
+        t = rx + 10_001
+        c.on_line({"v": 2, "control": "heartbeat", "epoch": c.epoch, "session": c.session, "pub_ms": t}, t, t * 10 ** 6)
+        rx = t
+    v = plugin.read(XY, rx)
+    assert c.markets[XY].assembly is None and c.markets[XY].counters["snapshots_discarded"] == 1
+    assert v["families"]["book"]["state"] == "INVALID" and why in v["families"]["book"]["reason"]
+    assert v["families"]["flow"]["state"] == "LIVE"
+    assert plugin.last["node_book"]["ladder"]["available"] is False and v["history"]["available"] is False
+    for rx2, m2 in ms[i + 1:]:                                # part 2 is ignored; the book stays invalid
+        c.on_line(m2, max(rx, rx2), max(rx, rx2) * 10 ** 6)
+        v = plugin.read(XY, max(rx, rx2))
+        assert v["families"]["book"]["state"] == "INVALID" and plugin.last["node_book"]["ladder"]["available"] is False
+    assert c.markets[XY].book is None and c.markets[XY].counters["orphan_parts"] >= 1   # nothing of it applied
 
 
 def test_trigger_cancelled_during_a_gap_with_its_snapshot_delayed_or_dropped(surfaces):

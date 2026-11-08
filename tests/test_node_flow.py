@@ -443,6 +443,18 @@ def test_recorded_liquidations_counted_once_for_the_liquidated_trader():
         by_raw.setdefault((e.liquidation["liquidated_user"], v.oid), Decimal(0))
         by_raw[(e.liquidation["liquidated_user"], v.oid)] += e.px * e.sz
     assert {(g["liquidated_user"], g["oid"]): g["notional"] for g in liqs} == by_raw
+    # Each group is one liquidation order sweeping several makers: its fills share one block, one mark price
+    # and one method, at several prices.
+    shape = {}
+    for e in ex:
+        v = [p for p in e.participants if p.liquidated][0]
+        s = shape.setdefault((e.liquidation["liquidated_user"], v.oid), {"blocks": set(), "marks": set(), "methods": set(), "px": set()})
+        s["blocks"].add(e.block)
+        s["marks"].add(e.liquidation["mark_px"])
+        s["methods"].add(e.liquidation["method"])
+        s["px"].add(e.px)
+    assert all(len(s["blocks"]) == len(s["marks"]) == len(s["methods"]) == 1 for s in shape.values())
+    assert all(len(s["px"]) >= 2 for s in shape.values())
 
 
 def test_liquidation_burst_alert_through_the_plugin(surfaces):
