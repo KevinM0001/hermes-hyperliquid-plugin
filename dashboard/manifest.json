@@ -1,0 +1,14 @@
+{
+  "name": "hyperliquid-desk",
+  "label": "Hyperliquid Desk",
+  "description": "Live Hyperliquid public-data desk: price ladder, tape, aggressive flow, observed depth, the Flow Deck, wallets and a price chart, each value with its provenance and freshness. Read-only; no orders.",
+  "icon": "Activity",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/hyperliquid-desk",
+    "position": "end"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}

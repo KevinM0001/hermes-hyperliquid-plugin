@@ -1,0 +1,43 @@
+name: hyperliquid-desk
+version: 1.0.0
+description: Live Hyperliquid dashboard tab, market tools and a commentary skill on Hyperliquid's public data. Read-only; no orders, no keys.
+author: KevinM0001
+manifest_version: 2
+api_version: 1
+license: MIT
+requires_hermes: ">=0.23.0"
+provides_tools:
+  - hl_market
+  - hl_flow
+  - hl_context
+  - hl_status
+  - hl_alerts
+  - hl_wallets
+provides_hooks: []
+tags: [hyperliquid, markets, dashboard, read-only]
+config_schema:
+  markets:
+    type: list
+    default: ["BTC", "HYPE", "xyz:SP500", "xyz:XYZ100"]
+    label: Markets
+    description: Hyperliquid market names to follow. Each must pass the metadata check (info perpDexs + meta); unknown markets are unsupported.
+  burst_min_usd:
+    type: dict
+    default: {"BTC": 10000000, "HYPE": 2000000, "xyz:SP500": 1000000, "xyz:XYZ100": 1000000}
+    label: Burst alert threshold (USD per 60 s)
+    description: Aggressive buying or selling at or above this notional within 60 s raises a burst alert, per market.
+  large_print_usd:
+    type: dict
+    default: {"BTC": 250000, "HYPE": 100000, "xyz:SP500": 50000, "xyz:XYZ100": 50000}
+    label: Large print threshold (USD)
+    description: A single public trade at or above this notional is listed as a large print, per market.
+  clock_error_bound_ms:
+    type: float
+    default: 0
+    label: Clock error bound (ms)
+    description: Only needed where the OS can't report its clock error bound (for example macOS, or an unsynchronized clock). The local clock's maximum error, used to judge whether source timestamps are recent; 0 means "ask the OS".
+  wallet_target_share_pct:
+    type: float
+    default: 50
+    label: Wallet list target share (%)
+    description: The wallets panel lists the shortest ranked set reaching this share of its side, capped at 50 wallets.

@@ -1,0 +1,1095 @@
+{
+  "schema_id": "hyperliquid-desk.metrics",
+  "version": "1.0.0",
+  "description": "Every metric, freshness rule, regime and alert rule the plugin computes, defined once. Tools, the dashboard tab and the commentary skill read these definitions; code in hl_desk/ implements them and tests in tests/ check each one against independently calculated values.",
+  "sources": {
+    "hyperliquid_docs": "See docs/ENDPOINTS.md for every endpoint and the doc link that confirms it.",
+    "hl_deck": "The author's terminal Flow Deck, hl_deck.py (a private tool, not distributed; the version of 2026-10-09, 547 lines). Regime, card and latch definitions marked source=hl_deck are ported from it; the code is not copied. Line numbers refer to that file.",
+    "handoff": "Definitions marked source=handoff come from Handoff 1 (burst alert, wallet shares, depth bands). Definitions marked source=plugin are this plugin's own choices, documented here because neither the docs nor hl_deck define them."
+  },
+  "conventions": {
+    "time": "Source times are Hyperliquid's millisecond timestamps (the 'time' field). Local receive times are the collector's monotonic clock in nanoseconds. Receipt-progress ages use the monotonic clock. Source recency compares the local wall clock with source time through the clock relationship in freshness.clock_relationship, whose uncertainty must be known; otherwise nothing source-timestamped is fresh.",
+    "notional": "USD notional = px * sz (docs notation: 'Ntl ... USD amount, Px * Sz'). Sizes are in units of the coin (docs notation: 'Sz ... In units of coin, i.e. base currency').",
+    "side": "Trade side follows the docs: 'B = Bid = Buy, A = Ask = Short. Side is aggressing side for trades.' side=B means the buyer was the aggressor (taker); side=A means the seller was. users = [buyer, seller].",
+    "aggressor_address": "The taker of a trade is users[0] when side=B and users[1] when side=A.",
+    "trade_identity": "A trade is identified by (coin, time, tid), following the docs: 'For a globally unique trade id, use (block_time, coin, tid)'. The docs don't say that WsTrade.time is the block time; this plugin assumes it is. A trade whose identity was already seen is a duplicate and is counted once.",
+    "execution_set": "The flow metric's execution set for a market: every unique trade with time strictly after the current coverage segment's start, up to the trades watermark. The wallets panel, the Flow Deck and burst alerts all use this same set.",
+    "coverage_segment": "A segment starts when the collector subscribes to a market's trades on a connection: its start is the latest trade time in the first trades message on that connection (that message is treated as the subscription snapshot, because the docs don't say whether it holds every recent trade). It ends at the trades watermark when the connection closes, restarts or is forced to reconnect. Nothing counts trades across two segments; the time between them is a gap.",
+    "gap": "A gap is the interval between one segment's last trades watermark and the next segment's start. Every disconnect, restart and forced reconnect creates one. Gaps are listed per market in hl_status.",
+    "level_count": "Each book level carries n, shown as 'API count'. Hyperliquid's docs describe n two ways: '// number of levels' (info endpoint l2Book example) and '// number of orders' (websocket WsLevel). Levels are aggregated, so a level is never an individual order.",
+    "null_rule": "Missing, partial, stale, unverified or warming-up values are null with a reason, never zero. A computed zero (for example no aggressive selling in a complete, fresh window) is a real zero.",
+    "data_check": "Before release, the data check verifies public trade semantics (aggressor side, identity, users order, notional) for every flow number."
+  },
+  "freshness": {
+    "statuses": {
+      "fresh": "Both checks pass: the field's progress signal advanced within its receipt-age limit (monotonic clock), and its source timestamp is within its source-age limit under the clock relationship's known uncertainty.",
+      "delayed": "The feed is advancing, but its source timestamp is older than the source-age limit by more than the clock uncertainty: a backlog or a delayed source. Values are null.",
+      "stale": "The field has a progress signal that should keep advancing (l2Book pushes on a cadence), and it hasn't within its receipt-age limit.",
+      "unverified": "Freshness can't be established: no verified progress signal (bbo always; trades after their receipt-age limit with no new trade), no source timestamp (activeAssetCtx always), an unknown clock uncertainty, or a source age within the clock uncertainty of its limit.",
+      "warming_up": "Nothing has been received for this field on the current connection yet, or a window doesn't yet have enough coverage.",
+      "disconnected": "The collector has no connection.",
+      "stopped": "The collector isn't running.",
+      "missing": "Nothing has ever been received for this field."
+    },
+    "rechecked": "The state owner rebuilds every snapshot once per second whether or not a message arrived, so a field turns stale or unverified on time even when the socket is silent. A connected socket, a pong or a websocket ping never makes data fresh.",
+    "fields": {
+      "l2Book": {
+        "progress_signal": "WsBook.time strictly greater than the previous push's time on the same subscription. The docs: 'Snapshot feed, pushed on each block that is at least 0.5 since last push' (no unit given; this plugin reads it as seconds).",
+        "source_time": "WsBook.time (ms)",
+        "subscriptions": {
+          "fast": {
+            "subscription": {
+              "type": "l2Book",
+              "fast": true
+            },
+            "levels": 5,
+            "observed_cadence_s": 0.54,
+            "max_age_s": 3.0,
+            "used_for": "best bid, best ask, mid, spread",
+            "source_max_age_s": 5.0
+          },
+          "full": {
+            "subscription": {
+              "type": "l2Book"
+            },
+            "levels": 20,
+            "observed_cadence_s": 5.4,
+            "max_age_s": 15.0,
+            "used_for": "ladder levels and the finest depth bands",
+            "source_max_age_s": 20.0
+          },
+          "sf4": {
+            "request": {
+              "type": "l2Book",
+              "nSigFigs": 4
+            },
+            "transport": "info endpoint POST, polled every 5 s per market (weight 2)",
+            "levels": 20,
+            "max_age_s": 15.0,
+            "used_for": "depth bands",
+            "source_max_age_s": 20.0
+          },
+          "sf3": {
+            "request": {
+              "type": "l2Book",
+              "nSigFigs": 3
+            },
+            "transport": "info endpoint POST, polled every 5 s per market (weight 2)",
+            "levels": 20,
+            "max_age_s": 15.0,
+            "used_for": "depth bands",
+            "source_max_age_s": 20.0
+          }
+        },
+        "observed_cadence_note": "Measured on 2026-11-07 against mainnet: 20-level books pushed about every 5.4 s, 5-level fast books about every 0.54 s. The docs give only the 0.5 minimum and the 'fast' option (5 vs 20 levels); the slower 20-level cadence is an observation, not a documented rule, and the max ages above are set from it.",
+        "when_exceeded": "stale",
+        "frozen_source": "Pushes that arrive with a time that doesn't advance are ignored for freshness, so a frozen source behind a live connection turns stale after max_age_s.",
+        "stall_reconnect_s": 15.0,
+        "stall_rule": "If every subscribed market's fast l2Book has been stale for stall_reconnect_s while connected, the collector closes and reopens the connection, which records a gap.",
+        "subscription_identity_note": "WsBook messages carry no nSigFigs field, so two 20-level websocket subscriptions for one coin can't be told apart. The websocket therefore carries only the fast 5-level book and the 20-level full-precision book (told apart by level count: a message with more than 5 levels on a side is the full book; one with fewer than 5 on both sides updates both, since then they're identical; one with exactly 5 on a side updates only the fast book). Aggregated books come from the info endpoint, whose response time field is the source time."
+      },
+      "trades": {
+        "progress_signal": "A trade whose time is greater than the trades watermark (the latest trade time seen in the current segment).",
+        "source_time": "WsTrade.time (ms)",
+        "max_age_s_by_market": {
+          "BTC": 30.0,
+          "HYPE": 60.0,
+          "xyz:SP500": 120.0,
+          "xyz:XYZ100": 120.0,
+          "default": 60.0
+        },
+        "when_exceeded": "unverified",
+        "reason_when_exceeded": "No trade for longer than the max age. A quiet market can't be told apart from a stalled trades feed, so window values are null until a trade arrives.",
+        "source_max_age_s_by_market": {
+          "BTC": 35.0,
+          "HYPE": 65.0,
+          "xyz:SP500": 125.0,
+          "xyz:XYZ100": 125.0,
+          "default": 65.0
+        },
+        "restart_rule": "a coverage gap inside a connection (a malformed or unattributable trades message) restarts progress: the field is warming_up, and every window value is null with the reason, until a valid trade advances the new segment"
+      },
+      "bbo": {
+        "progress_signal": "none",
+        "source_time": "WsBbo.time (ms)",
+        "max_age_s": null,
+        "when_exceeded": "unverified",
+        "reason": "The docs: 'Bbo updates that are sent only if the bbo changes on a block'. Silence is normal, so bbo never shows progress; its values are never published as fresh. hl_market reports only its last event time and whether it matches the l2Book top. Best bid and ask come from l2Book."
+      },
+      "activeAssetCtx": {
+        "progress_signal": "none usable for freshness: WsActiveAssetCtx carries no source timestamp. A changed context is reported as receipt recency only.",
+        "source_time": "none: WsActiveAssetCtx carries no time field",
+        "watermark": "The market's fast l2Book time at the moment the context arrived on the same connection (recorded, not used as a freshness proof).",
+        "max_age_s_by_market": {
+          "BTC": 20.0,
+          "HYPE": 20.0,
+          "xyz:SP500": 45.0,
+          "xyz:XYZ100": 45.0,
+          "default": 30.0
+        },
+        "observed_note": "Measured on 2026-11-07: contexts arrived about once a second, and the longest gap between changed contexts was 7.2 s for BTC and HYPE and 17.5 s for the xyz markets.",
+        "when_exceeded": "unverified",
+        "reason_when_exceeded": "no source timestamp, so its source age is unknown; values are null with the receipt age shown",
+        "never_fresh": true
+      },
+      "clock_skew": {
+        "measure": "offset_ms = local wall clock at receipt - source time, per l2Book push (median of the last 50).",
+        "warn_abs_ms": 2000,
+        "effect": "Reported in hl_status. Source recency is judged through freshness.clock_relationship, so an unknown or exceeded clock bound withholds freshness rather than being ignored."
+      },
+      "clearinghouseState": {
+        "progress_signal": "none (a one-shot request when a wallet is opened)",
+        "source_time": "the answer's time field (ms)",
+        "source_max_age_s": 10.0,
+        "rule": "judged when the account is served: age = returned time (local wall clock when both the clearinghouseState and frontendOpenOrders answers are in hand, so network delay and the wait for the second answer count) - the answer's time. Fresh only when that age, widened by the clock bound, is within 10 s (freshness.clock_relationship); delayed when older by more than the bound; unverified otherwise, when time is missing, or when the returned time wasn't recorded",
+        "times_kept": "requested, state_received, orders_received and returned (ms, local wall clock)",
+        "in_the_tab": "the tab adds all the time since it sent the request (a monotonic clock) to the age the backend assessed, so delivery to the browser and the time the window stays open count; that over-counts only the backend's own request time, an upper bound. Once age + clock bound passes 10 s, including on arrival, the values are withheld as expired"
+      },
+      "frontendOpenOrders": {
+        "progress_signal": "none",
+        "source_time": "none: the answer is a bare list of orders",
+        "never_fresh": true,
+        "rule": "always unverified; values are null with the fetch time in the reason"
+      }
+    },
+    "clock_relationship": {
+      "decision": "Kevin, Nov 8 (GPT review R11 finding 7): a value is fresh only when its feed is still advancing and its source timestamp is recent, judged with a clock relationship whose uncertainty is known; otherwise it is delayed or unverified, never fresh.",
+      "estimate": "source_age = local wall clock now - source time",
+      "local_clock_bound": "The local wall clock's error bound E: on Linux the kernel's maximum error from adjtimex (maxerror) while the clock is NTP-synchronized; otherwise the plugin setting clock_error_bound_ms; if neither is known, E is unknown.",
+      "source_clock": "Hyperliquid's source timestamps are taken as accurate (an assumption; the docs don't state their accuracy). Network delay counts as source age.",
+      "rules": "fresh when receipt progress is recent AND source_age + E <= source_max_age AND source_age >= -(E + 1 s); delayed when source_age - E > source_max_age; unverified when E is unknown, the source time is ahead of local time beyond E + 1 s, or source_age is within E of the limit.",
+      "fields_without_source_time": "activeAssetCtx has none: it reports receipt recency and an unknown source age, and is never fresh. Another field's timestamp doesn't prove its source recency."
+    },
+    "in_the_tab": "the tab shows a snapshot only while it is current: its age (served.age_s plus all the time since the tab sent the request, so delivery delay and time on screen count) is within 5 s, and every status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) would still be fresh at that age: progress age + age within max_age_s, and source age + age + clock bound within source_max_age_s. Otherwise it is withheld with the reason, on arrival or as soon as it lapses"
+  },
+  "metrics": {
+    "book.best_bid": {
+      "source": "plugin",
+      "formula": "levels[0][0].px of the fast full-precision l2Book (fast: true, 5 levels)",
+      "units": "USD per coin",
+      "inputs": [
+        "l2Book fast"
+      ],
+      "side_convention": "bid side",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "null with reason 'empty bid side' if the side has no levels; null if l2Book isn't fresh"
+    },
+    "book.best_ask": {
+      "source": "plugin",
+      "formula": "levels[1][0].px of the fast full-precision l2Book (fast: true, 5 levels)",
+      "units": "USD per coin",
+      "inputs": [
+        "l2Book fast"
+      ],
+      "side_convention": "ask side",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "null with reason 'empty ask side' if the side has no levels; null if l2Book isn't fresh"
+    },
+    "book.mid": {
+      "source": "plugin",
+      "formula": "(best_bid + best_ask) / 2",
+      "units": "USD per coin",
+      "inputs": [
+        "book.best_bid",
+        "book.best_ask"
+      ],
+      "side_convention": "none",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "null if either side is null"
+    },
+    "book.spread": {
+      "source": "plugin",
+      "formula": "best_ask - best_bid",
+      "units": "USD per coin",
+      "inputs": [
+        "book.best_bid",
+        "book.best_ask"
+      ],
+      "side_convention": "none",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "null if either side is null"
+    },
+    "book.spread_bps": {
+      "source": "plugin",
+      "formula": "(best_ask - best_bid) / mid * 10000",
+      "units": "bps",
+      "inputs": [
+        "book.spread",
+        "book.mid"
+      ],
+      "side_convention": "none",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "null if either side is null"
+    },
+    "book.level": {
+      "source": "plugin",
+      "formula": "each returned WsLevel as {px, sz, api_count: n, notional_usd: px*sz}",
+      "units": "px USD per coin; sz coin; notional USD",
+      "inputs": [
+        "l2Book full (20 levels, no nSigFigs) for the ladder; nSigFigs=4 and 3 books for depth"
+      ],
+      "side_convention": "bids best first, asks best first",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "only the levels Hyperliquid returned (at most 20 per side per the docs); levels are aggregated, never individual orders; a level whose px or sz is missing, not a number or not positive is never summed, and makes that side's totals (and, at the best level, the mid) unavailable with a reason; n (API count) is a whole number >= 0, otherwise null with a reason, never truncated"
+    },
+    "book.depth_band": {
+      "source": "handoff; Kevin's decision 10 (GPT review R11 finding 10)",
+      "bands_pct": [
+        0.25,
+        0.5,
+        1.0
+      ],
+      "outputs": "Each band has two separate results: exact (full-precision levels only) and approximate (aggregated buckets). Neither is chosen in place of the other.",
+      "formula": "exact: bid depth = sum(px*sz) over the full-precision 20-level book's bid levels with px >= mid*(1-band/100); ask depth = sum(px*sz) over its ask levels with px <= mid*(1+band/100); also in coin (sum sz). approximate: see book.depth_band_approximate.",
+      "units": "USD notional (and coin)",
+      "inputs": [
+        "l2Book full (20 levels, full precision)",
+        "mid: the fast book's mid closest to and not after the book's time, within 1.5 s"
+      ],
+      "side_convention": "computed separately for each side",
+      "window": "latest push of the full-precision book",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "exact is available on a side only when that side's deepest returned full-precision level reaches the band edge (bids: lowest px <= edge; asks: highest px >= edge), no returned level on that side is malformed, and the mid is known (a malformed best level makes it unknown). Otherwise exact is null with a reason and 'observed depth within returned levels' is shown with its span."
+    },
+    "book.depth_imbalance": {
+      "source": "plugin",
+      "formula": "(bid_depth - ask_depth) / (bid_depth + ask_depth) for one band, computed separately for the exact and the approximate results",
+      "units": "ratio from -1 (all ask) to +1 (all bid)",
+      "inputs": [
+        "book.depth_band",
+        "book.depth_band_approximate"
+      ],
+      "side_convention": "positive = more bid depth",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "exact: null unless both sides of the band are exact; approximate: labeled approximate and null unless both sides come from one aggregated book snapshot; null when the sum is zero"
+    },
+    "book.observed_depth": {
+      "source": "handoff",
+      "formula": "sum(px*sz) and sum(sz) over all returned levels on one side, with span_pct = |deepest px - mid| / mid * 100",
+      "units": "USD notional, coin, percent",
+      "inputs": [
+        "l2Book (each aggregation)"
+      ],
+      "side_convention": "per side",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "always labeled 'observed depth within returned levels'; never presented as total book depth"
+    },
+    "book.bbo_consistency": {
+      "source": "plugin",
+      "formula": "true when the last bbo event's bid and ask prices equal the fast book's best bid and ask; bbo prices themselves are never shown",
+      "units": "boolean",
+      "inputs": [
+        "bbo",
+        "l2Book fast"
+      ],
+      "side_convention": "both sides",
+      "window": "latest bbo event and latest fast book",
+      "reset_rule": "replaced by every bbo event or fast book push",
+      "completeness_rule": "null when either input is missing; a consistency signal, not a value"
+    },
+    "flow.buy_aggressive_notional": {
+      "source": "plugin",
+      "formula": "sum(px*sz) over trades in the window with side=B",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "side=B (buyer aggressed)",
+      "window": "observed window (max(segment start, W - 15 min), W], half-open, where W is the trades watermark; 15 minutes are retained",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "the window's actual start, end and whether it covers the requested length are reported; values are null while trades freshness is unverified or warming up"
+    },
+    "flow.sell_aggressive_notional": {
+      "source": "plugin",
+      "formula": "sum(px*sz) over trades in the window with side=A",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "side=A (seller aggressed)",
+      "window": "as flow.buy_aggressive_notional",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as flow.buy_aggressive_notional"
+    },
+    "flow.net": {
+      "source": "plugin",
+      "formula": "buy_aggressive_notional - sell_aggressive_notional",
+      "units": "USD notional",
+      "inputs": [
+        "flow.buy_aggressive_notional",
+        "flow.sell_aggressive_notional"
+      ],
+      "side_convention": "positive = net aggressive buying",
+      "window": "as flow.buy_aggressive_notional",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as flow.buy_aggressive_notional"
+    },
+    "flow.volume": {
+      "source": "plugin",
+      "formula": "buy_aggressive_notional + sell_aggressive_notional (each trade once)",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "unsigned",
+      "window": "as flow.buy_aggressive_notional",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as flow.buy_aggressive_notional"
+    },
+    "flow.trade_count": {
+      "source": "plugin",
+      "formula": "number of trades in the execution set within the window",
+      "units": "trades",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "both sides",
+      "window": "as flow.buy_aggressive_notional",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as flow.buy_aggressive_notional"
+    },
+    "flow.cvd_bucket": {
+      "source": "plugin",
+      "formula": "per 30 s bucket aligned to source-time multiples of 30 s: buy, sell, delta = buy - sell; cumulative_usd = the running sum of delta from cumulative_from (the start of the snapshot's first complete bucket) through this bucket",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "positive = net aggressive buying",
+      "window": "the last 15 minutes of the current segment",
+      "reset_rule": "cumulative delta restarts at every gap",
+      "completeness_rule": "a bucket is complete only if it lies wholly inside the segment and at or before the trades watermark; an incomplete bucket, or any bucket while trades freshness isn't fresh, has null buy, sell, delta and cumulative with a reason; the cumulative sum starts at the snapshot's cumulative origin (cumulative_from: the start of its first complete bucket), not at the first bucket a slice shows; a slice gives that difference as cumulative_base_usd",
+      "slice": "hl_flow returns the last 12 buckets of the snapshot's series without changing their values, and adds slice.cumulative_base_usd = {value, unit: USD}: the cumulative_usd of the last complete bucket before the slice, so cumulative_usd of a shown bucket = cumulative_base_usd + the sum of delta_usd over the complete shown buckets up to it. Its value is 0 only when the series is available and no complete bucket precedes the slice; when the series is withheld (trades not fresh), it is null with that reason, never 0"
+    },
+    "flow.large_print": {
+      "source": "plugin",
+      "formula": "a trade with px*sz >= large_print_usd for its market",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "the trade's aggressor side",
+      "threshold": {
+        "large_print_usd_by_market": {
+          "BTC": 250000,
+          "HYPE": 100000,
+          "xyz:SP500": 50000,
+          "xyz:XYZ100": 50000,
+          "default": 100000
+        }
+      },
+      "window": "as flow.buy_aggressive_notional",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "a single public trade can be one of several fills of one taker order; a large print is a trade, not an order; the count is null with a reason while trades freshness isn't fresh (the prints themselves are listed as timed trades)"
+    },
+    "context.mark": {
+      "source": "plugin",
+      "formula": "WsActiveAssetCtx.ctx.markPx",
+      "units": "USD per coin",
+      "inputs": [
+        "activeAssetCtx"
+      ],
+      "side_convention": "none",
+      "window": "latest changed context",
+      "reset_rule": "replaced by every changed context",
+      "completeness_rule": "null unless activeAssetCtx is fresh"
+    },
+    "context.oracle": {
+      "source": "plugin",
+      "formula": "WsActiveAssetCtx.ctx.oraclePx",
+      "units": "USD per coin",
+      "inputs": [
+        "activeAssetCtx"
+      ],
+      "side_convention": "none",
+      "window": "latest changed context",
+      "reset_rule": "replaced by every changed context",
+      "completeness_rule": "null unless activeAssetCtx is fresh"
+    },
+    "context.mid": {
+      "source": "plugin",
+      "formula": "WsActiveAssetCtx.ctx.midPx",
+      "units": "USD per coin",
+      "inputs": [
+        "activeAssetCtx"
+      ],
+      "side_convention": "none",
+      "window": "latest changed context",
+      "reset_rule": "replaced by every changed context",
+      "completeness_rule": "null unless activeAssetCtx is fresh, or with reason 'midPx absent' when the field is missing"
+    },
+    "context.funding": {
+      "source": "plugin",
+      "formula": "WsActiveAssetCtx.ctx.funding, also shown as a percent (funding*100)",
+      "units": "fraction of position notional per funding period",
+      "period": "1 hour. The funding page says 'The funding rate on Hyperliquid is paid every hour'; the API docs don't state the field's period, so this is a documented-page reading, labeled as such.",
+      "inputs": [
+        "activeAssetCtx"
+      ],
+      "side_convention": "positive = longs pay shorts (funding page)",
+      "window": "latest changed context",
+      "reset_rule": "replaced by every changed context",
+      "completeness_rule": "null unless activeAssetCtx is fresh"
+    },
+    "context.open_interest": {
+      "source": "plugin",
+      "formula": "WsActiveAssetCtx.ctx.openInterest; also openInterest*markPx in USD",
+      "units": "coin (inferred from the docs' size convention; the field's unit isn't stated) and USD",
+      "inputs": [
+        "activeAssetCtx"
+      ],
+      "side_convention": "none",
+      "window": "latest changed context",
+      "reset_rule": "replaced by every changed context",
+      "completeness_rule": "null unless activeAssetCtx is fresh"
+    },
+    "context.day_notional_volume": {
+      "source": "plugin",
+      "formula": "WsActiveAssetCtx.ctx.dayNtlVlm",
+      "units": "USD notional (inferred from the 'Ntl' notation; the field's unit and its exact 24 h window aren't stated)",
+      "inputs": [
+        "activeAssetCtx"
+      ],
+      "side_convention": "none",
+      "window": "Hyperliquid's own day window",
+      "reset_rule": "replaced by every changed context",
+      "completeness_rule": "null unless activeAssetCtx is fresh"
+    },
+    "context.prev_day_px": {
+      "source": "plugin",
+      "formula": "WsActiveAssetCtx.ctx.prevDayPx",
+      "units": "USD per coin",
+      "inputs": [
+        "activeAssetCtx"
+      ],
+      "side_convention": "none",
+      "window": "Hyperliquid's own previous-day reference",
+      "reset_rule": "replaced by every changed context",
+      "completeness_rule": "null unless activeAssetCtx is fresh"
+    },
+    "deck.window": {
+      "source": "hl_deck",
+      "hl_deck_ref": "--window default 90 (386); --every default 15 (384)",
+      "window_s": 90,
+      "tick_s": 15,
+      "formula": "The deck is evaluated at ticks t = k*15 s of source time. A tick is evaluated once the trades watermark has passed t, using the execution set's trades with t - 90 s <= time <= t.",
+      "units": "s",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "n/a",
+      "reset_rule": "each tick is independent (hl_deck: nothing accumulates)",
+      "completeness_rule": "A tick is complete only if t - 90 s is after the segment start. Incomplete ticks are not classified and their numbers are null with reason 'window incomplete'. (plugin rule: hl_deck has no gap handling.)"
+    },
+    "deck.price": {
+      "source": "hl_deck",
+      "hl_deck_ref": "228 (p1)",
+      "formula": "px of the last trade in the window, ordered by time then arrival",
+      "units": "USD per coin",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "none",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete or has no trades"
+    },
+    "deck.move_bps": {
+      "source": "hl_deck",
+      "hl_deck_ref": "204-205, 211",
+      "formula": "(p1 - p0) / p0 * 10000, p0 = px of the first trade and p1 = px of the last trade in the window, ordered by time then arrival",
+      "units": "bps",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "positive = price up",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete or has no trades"
+    },
+    "deck.net_flow": {
+      "source": "hl_deck",
+      "hl_deck_ref": "201-203",
+      "formula": "sum(px*sz | side=B) - sum(px*sz | side=A) over the window",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "positive = net taker buying",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete"
+    },
+    "deck.volume": {
+      "source": "hl_deck",
+      "hl_deck_ref": "203",
+      "formula": "sum(px*sz | side=B) + sum(px*sz | side=A) over the window",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "unsigned",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete"
+    },
+    "deck.impact": {
+      "source": "hl_deck",
+      "hl_deck_ref": "223, MIN_NET_IMPACT=100000 (36)",
+      "formula": "|move_bps| / (|net_flow| / 1e6), only if |net_flow| >= 100000",
+      "units": "bps per $1M: absolute observed trade-price change per $1M of net aggressive flow (unsigned)",
+      "inputs": [
+        "deck.move_bps",
+        "deck.net_flow"
+      ],
+      "side_convention": "unsigned",
+      "threshold": {
+        "min_abs_net_usd": 100000
+      },
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null with reason 'net flow below $100K floor' under the floor (hl_deck shows n/a); null if the window is incomplete",
+      "label": "absolute observed trade-price change per $1M of net aggressive flow. A descriptive ratio, not an estimate of the price change an additional $1M order would cause."
+    },
+    "deck.pressure": {
+      "source": "plugin (Kevin's decision, Nov 8; GPT review R11 finding 8)",
+      "formula": "aggressive_buy_notional / aggressive_sell_notional over every valid execution in the window, flips included; available when aggressive_sell_notional >= 25000",
+      "units": "ratio (dimensionless)",
+      "inputs": [
+        "execution set (aggressor side)"
+      ],
+      "side_convention": "above 1 = more aggressive buying than aggressive selling",
+      "threshold": {
+        "min_denominator_usd": 25000
+      },
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null with reason 'aggressive selling below the $25K floor' under the floor; null if the window is incomplete. The same definition in public and node mode. The data check verifies public trade semantics for every flow number before release."
+    },
+    "deck.activity_buckets": {
+      "source": "Handoff 1c position-effect formulas (GPT review R11 finding 8)",
+      "formula": "For each participant, from its signed pre-fill position s and fill size q: for a buy, cover_qty = min(q, max(-s, 0)) and new_long_qty = q - cover_qty; for a sell, exit_qty = min(q, max(s, 0)) and new_short_qty = q - exit_qty. Each quantity is converted at that execution's price. The Flow Deck uses only the aggressive participant's effects, so new_long + cover = aggressive buying and new_short + exit = aggressive selling.",
+      "units": "USD notional",
+      "inputs": [
+        "node fills with each participant's starting position (Handoff 1c)"
+      ],
+      "side_convention": "buy side: new-long, cover; sell side: new-short, exit",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "needs node mode (implemented in Handoff 1c Part B). A missing starting position makes the dependent split unavailable, with the unclassified notional shown; it is never treated as zero."
+    },
+    "deck.top_wallet": {
+      "source": "hl_deck",
+      "hl_deck_ref": "213-217, 230",
+      "formula": "the taker address with the largest aggressive gross notional (aggressive bought + aggressive sold) in the window; share = that gross / deck.volume",
+      "units": "address; share as percent",
+      "inputs": [
+        "execution set (aggressor addresses)"
+      ],
+      "side_convention": "both sides combined, taker side only (makers aren't counted, as in hl_deck)",
+      "share_label": "share of the window's aggressive (taker) notional, both sides",
+      "ties": "lowest address first (plugin rule; hl_deck keeps the first seen)",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete or deck.volume is 0 (share unavailable, not 0%)"
+    },
+    "deck.top_wallet_net_aggressive": {
+      "source": "plugin",
+      "plugin_addition": true,
+      "formula": "for the deck.top_wallet address: aggressive bought (sum px*sz of its trades as buyer with side=B) minus aggressive sold (sum px*sz of its trades as seller with side=A) in the window; both parts are reported too",
+      "units": "USD notional (signed)",
+      "inputs": [
+        "execution set (aggressor addresses)"
+      ],
+      "side_convention": "positive = the top wallet's aggressive buying exceeded its aggressive selling",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete or has no aggressive volume; shown next to the top wallet's share so a wallet that both bought and sold can't read as one-sided"
+    },
+    "deck.accounts": {
+      "source": "hl_deck",
+      "hl_deck_ref": "224-229",
+      "formula": "number of distinct taker addresses in the window",
+      "units": "count",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "both sides",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete"
+    },
+    "deck.trade_count": {
+      "source": "hl_deck",
+      "hl_deck_ref": "228",
+      "formula": "number of trades in the window",
+      "units": "count",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "n/a",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "null if the window is incomplete"
+    },
+    "wallets.window": {
+      "source": "handoff",
+      "choices_min": [
+        1,
+        5,
+        15
+      ],
+      "formula": "requested window (W - N min, W], half-open, where W is the trades watermark and N is 1, 5 or 15; actual window (max(W - N min, segment start), W]",
+      "units": "ms",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "n/a",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "complete only if the actual start equals the requested start; the actual start, end and completeness are always shown; null while trades freshness is unverified",
+      "window": "1, 5 or 15 minutes ending at the trades watermark, never reaching before the current segment's start"
+    },
+    "wallets.unique_execution_notional": {
+      "source": "handoff",
+      "formula": "sum(px*sz) over the window's executions, each counted once",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "both sides (equals total bought and total sold)",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as wallets.window"
+    },
+    "wallets.executions": {
+      "source": "handoff",
+      "formula": "number of executions in the window (window total) or involving the wallet (per wallet; a self-trade counts once)",
+      "units": "executions",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "both sides",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as wallets.window"
+    },
+    "wallets.bought": {
+      "source": "handoff",
+      "formula": "sum(px*sz) over executions in the window where the wallet is users[0] (buyer), maker or taker",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "buyer side",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as wallets.window"
+    },
+    "wallets.sold": {
+      "source": "handoff",
+      "formula": "sum(px*sz) over executions in the window where the wallet is users[1] (seller), maker or taker",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "seller side",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as wallets.window; a self-trade (buyer = seller) counts once to bought and once to sold"
+    },
+    "wallets.aggressive_bought": {
+      "source": "handoff",
+      "formula": "sum(px*sz) over the wallet's bought executions with side=B",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "subset of wallets.bought",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as wallets.window"
+    },
+    "wallets.aggressive_sold": {
+      "source": "handoff",
+      "formula": "sum(px*sz) over the wallet's sold executions with side=A",
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "subset of wallets.sold",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "as wallets.window"
+    },
+    "wallets.participation": {
+      "source": "handoff",
+      "formula": "bought + sold",
+      "units": "USD notional",
+      "inputs": [
+        "wallets.bought",
+        "wallets.sold"
+      ],
+      "side_convention": "both",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "participation, never market volume: a trade counts to two wallets"
+    },
+    "wallets.net_bought": {
+      "source": "handoff",
+      "formula": "bought - sold",
+      "units": "USD notional",
+      "inputs": [
+        "wallets.bought",
+        "wallets.sold"
+      ],
+      "side_convention": "positive = net bought",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "net bought notional, not a position change or PnL"
+    },
+    "wallets.buy_share": {
+      "source": "handoff",
+      "formula": "wallet bought / sum of bought over every buyer in the market and window (including wallets not shown)",
+      "units": "percent",
+      "inputs": [
+        "wallets.bought"
+      ],
+      "side_convention": "buyer side",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "null with reason 'no buying in window' when the total is 0 (unavailable, not 0%)"
+    },
+    "wallets.sell_share": {
+      "source": "handoff",
+      "formula": "wallet sold / sum of sold over every seller in the market and window",
+      "units": "percent",
+      "inputs": [
+        "wallets.sold"
+      ],
+      "side_convention": "seller side",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "null with reason 'no selling in window' when the total is 0"
+    },
+    "wallets.ranked_list": {
+      "source": "handoff",
+      "formula": "buyers ranked by bought desc, sellers by sold desc, ties by address ascending; list the shortest ranked prefix whose cumulative share reaches target_share_pct, or cap wallets, whichever comes first",
+      "threshold": {
+        "target_share_pct": 50,
+        "cap": 50
+      },
+      "units": "wallets, percent",
+      "inputs": [
+        "wallets.buy_share",
+        "wallets.sell_share"
+      ],
+      "side_convention": "per side",
+      "window": "wallets.window",
+      "reset_rule": "resets at every gap",
+      "completeness_rule": "always report the share reached and whether the target or the cap stopped the list, e.g. 'Top 50 make up 25% of buying; the 50% target isn't reached.'"
+    },
+    "chart.candle": {
+      "source": "plugin",
+      "formula": "per 15 s interval aligned to source-time multiples of 15 s: open = px of the first trade, high = max px, low = min px, close = px of the last trade (ordered by time then arrival), volume_usd = sum(px*sz) of its trades, summed exactly and rounded to cents once",
+      "units": "USD per coin (OHLC); USD notional (volume)",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "both sides",
+      "window": "aligned 15 s candles from the candle boundary at or before (trades watermark - 15 minutes) to the watermark, within the current coverage segment; trades are retained for 16 minutes, so the oldest candle holds every trade of its interval",
+      "reset_rule": "restarts at every gap (candles come from the current segment only)",
+      "completeness_rule": "complete is false for a candle that starts at or before the segment start or ends after the trades watermark; the rolling 15-minute cutoff never truncates a candle, because the window starts on a candle boundary and includes a trade exactly at that boundary; candles are timed summaries of public trades, drawn as a chart"
+    },
+    "chart.price_line": {
+      "source": "plugin",
+      "formula": "horizontal lines at: best bid and best ask (fast book), mark and oracle (activeAssetCtx), and the largest-size returned level on each side of the 20-level book (an aggregated level, labeled with its size and API count)",
+      "units": "USD per coin",
+      "inputs": [
+        "l2Book fast",
+        "l2Book full",
+        "activeAssetCtx"
+      ],
+      "side_convention": "per line",
+      "window": "latest values",
+      "reset_rule": "replaced every snapshot",
+      "completeness_rule": "a line is drawn only when its value is available (fresh); missing lines are simply absent"
+    },
+    "deck.pressure_legacy_hl_deck": {
+      "source": "hl_deck (legacy comparison only)",
+      "hl_deck_ref": "210-211",
+      "formula": "(new_long + cover) / (new_short + exit) with hl_deck's dir filter, which leaves out flips (Long > Short, Short > Long)",
+      "units": "ratio",
+      "inputs": [
+        "node fills dir field"
+      ],
+      "side_convention": "as hl_deck",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "completeness_rule": "not computed in this version. If ever shown, only as a separately named legacy comparison; never used by the classifier, and agreement with it is not evidence that leaving out flips is correct."
+    },
+    "book.depth_band_approximate": {
+      "source": "plugin; Kevin's decision 10 (GPT review R11 finding 10)",
+      "formula": "For each band and side, the finest aggregated book (nSigFigs=4, then nSigFigs=3) whose returned buckets reach the band edge: approx_usd = sum(px*sz) over buckets whose representative (returned) price is inside the band. range_usd = [approx_usd - notional of the outermost bucket counted, approx_usd + notional of the nearest bucket left out], because Hyperliquid doesn't document bucket alignment, so the bucket at the edge may be partly in or out.",
+      "units": "USD notional (an estimate: representative price times aggregate size)",
+      "inputs": [
+        "l2Book nSigFigs=4 and nSigFigs=3 (info endpoint)",
+        "the same mid as book.depth_band"
+      ],
+      "side_convention": "per side",
+      "window": "latest poll of the aggregated book",
+      "reset_rule": "replaced by every poll",
+      "completeness_rule": "labeled approximate, with its aggregation and bucket width; unavailable with the books tried and their reasons when no fresh aggregated book reaches the edge, a level on that side is malformed, or the mid is unknown. Never shown as exact."
+    },
+    "wallet.current_account_value": {
+      "source": "plugin (wallet drill-down, Handoff 1 step 5b)",
+      "formula": "marginSummary.accountValue",
+      "units": "USD",
+      "inputs": [
+        "info clearinghouseState (user, dex)"
+      ],
+      "side_convention": "as Hyperliquid reports it",
+      "window": "the account state at the answer's own time (not part of any snapshot)",
+      "reset_rule": "fetched again each time a wallet is opened",
+      "completeness_rule": "null with a reason unless the answer's freshness (freshness.fields.clearinghouseState) is fresh; a missing field is null with a reason, and a missing assetPositions makes the positions unknown, not empty"
+    },
+    "wallet.current_total_position_notional": {
+      "source": "plugin (wallet drill-down, Handoff 1 step 5b)",
+      "formula": "marginSummary.totalNtlPos",
+      "units": "USD",
+      "inputs": [
+        "info clearinghouseState (user, dex)"
+      ],
+      "side_convention": "as Hyperliquid reports it",
+      "window": "the account state at the answer's own time (not part of any snapshot)",
+      "reset_rule": "fetched again each time a wallet is opened",
+      "completeness_rule": "null with a reason unless the answer's freshness (freshness.fields.clearinghouseState) is fresh; a missing field is null with a reason, and a missing assetPositions makes the positions unknown, not empty"
+    },
+    "wallet.current_margin_used": {
+      "source": "plugin (wallet drill-down, Handoff 1 step 5b)",
+      "formula": "marginSummary.totalMarginUsed",
+      "units": "USD",
+      "inputs": [
+        "info clearinghouseState (user, dex)"
+      ],
+      "side_convention": "as Hyperliquid reports it",
+      "window": "the account state at the answer's own time (not part of any snapshot)",
+      "reset_rule": "fetched again each time a wallet is opened",
+      "completeness_rule": "null with a reason unless the answer's freshness (freshness.fields.clearinghouseState) is fresh; a missing field is null with a reason, and a missing assetPositions makes the positions unknown, not empty"
+    },
+    "wallet.current_position": {
+      "source": "plugin (wallet drill-down, Handoff 1 step 5b)",
+      "formula": "per entry of assetPositions[].position on the market's dex: size_coin = szi (signed: positive long, negative short), entry_px = entryPx, position_value_usd = positionValue, unrealized_pnl_usd = unrealizedPnl, margin_used_usd = marginUsed, liquidation_px = liquidationPx (null with a reason when Hyperliquid gives none), leverage = leverage.value with leverage.type",
+      "units": "coin, USD, x (leverage)",
+      "inputs": [
+        "info clearinghouseState (user, dex)"
+      ],
+      "side_convention": "as Hyperliquid reports it",
+      "window": "the account state at the answer's own time (not part of any snapshot)",
+      "reset_rule": "fetched again each time a wallet is opened",
+      "completeness_rule": "null with a reason unless the answer's freshness (freshness.fields.clearinghouseState) is fresh; a missing field is null with a reason, and a missing assetPositions makes the positions unknown, not empty"
+    },
+    "wallet.current_open_orders": {
+      "source": "plugin (wallet drill-down, Handoff 1 step 5b)",
+      "formula": "the frontendOpenOrders list for the user and the market's dex",
+      "units": "orders",
+      "inputs": [
+        "info frontendOpenOrders (user, dex)"
+      ],
+      "side_convention": "as Hyperliquid reports it",
+      "window": "the open-order set when fetched",
+      "reset_rule": "fetched again each time a wallet is opened",
+      "completeness_rule": "always unverified and null with a reason: the answer carries no response timestamp, so whether the set is current can't be established (freshness.fields.frontendOpenOrders); an order's placement time doesn't establish it"
+    },
+    "trades.validity": {
+      "source": "plugin; Codex review 2 finding 3",
+      "formula": "a trade is valid when px > 0, sz > 0, integer time and tid, side in {B, A}, users = two 0x addresses (40 hex), and coin equal to the subscription's coin",
+      "units": "rule",
+      "inputs": [
+        "WsTrade (trades subscription)"
+      ],
+      "side_convention": "side is the aggressor: B = buyer took, A = seller took",
+      "window": "every trades message",
+      "reset_rule": "n/a",
+      "completeness_rule": "an invalid trade in a live message ends the coverage segment (a gap with the missing fields as its reason) and a new segment starts after the latest time in that message; the message's valid trades are on the tape, uncounted; nothing is filled in (no default side, address or tid)",
+      "routing": "a trades message is routed by its records' coins, never by the first record alone. Records naming no coin or another coin are invalid records of the subscribed coin the message names. A message naming no subscribed coin, with a record lacking its coin, can't be attributed, so it ends every subscribed market's trade coverage as a gap"
+    },
+    "deck.late_trades": {
+      "source": "plugin; Codex review 6 finding 3",
+      "formula": "a trade whose time is at or before the last evaluated tick re-evaluates, from the earliest tick whose 90 s window contains it, every retained tick (the last 8), starting from the latch state saved before that tick: window numbers, live classification, pending/confirmed latch and the regime-change events those ticks produced are re-derived from the execution set. A regime change the re-evaluation no longer supports is withdrawn with a 'regime_change_withdrawn' event, and the card carries 'revised' with the late-trade count and the ticks re-evaluated",
+      "units": "rule",
+      "inputs": [
+        "execution set",
+        "deck ticks"
+      ],
+      "side_convention": "n/a",
+      "window": "the retained ticks (about 2 minutes); a trade later than that falls outside every displayed card's window and leaves older latch steps as evaluated",
+      "reset_rule": "cleared at every gap with the rest of the deck",
+      "completeness_rule": "the displayed card's numbers always equal the execution set's totals for its window; delivering trades late or in order ends in the same card, latch and regime changes"
+    }
+  },
+  "regimes": {
+    "source": "hl_deck",
+    "hl_deck_ref": "classify 351-379, constants 34-45, latch 423-448, GUIDE 95-132",
+    "order": "first match wins, in this order",
+    "constants": {
+      "MIN_VOL_CLASSIFY_usd": 150000,
+      "THIN_MAX_BPS": 2.0,
+      "DIV_MIN_BPS": 5.0,
+      "DIV_MIN_NET_usd": 40000,
+      "MIN_NET_IMPACT_usd": 100000,
+      "IMPACT_VACUUM": 20.0,
+      "VACUUM_MIN_BPS": 1.0,
+      "IMPACT_ABSORB": 2.0,
+      "TREND_MIN_BPS": 3.0,
+      "PRESS_BUY": 1.15,
+      "PRESS_SELL": 0.87,
+      "MIN_DEN_PRESSURE_usd": 25000,
+      "SPARSE_MAX_TRADES": 5,
+      "CONFIRM_TICKS": 2
+    },
+    "rules": [
+      {
+        "state": "QUIET",
+        "when": "the complete window has no trades"
+      },
+      {
+        "state": "THIN",
+        "when": "volume < 150000 and |move_bps| < 2.0"
+      },
+      {
+        "state": "VACUUM-UP / VACUUM-DOWN",
+        "tag": "thin",
+        "when": "volume < 150000 and |move_bps| >= 2.0; UP if move_bps > 0 else DOWN"
+      },
+      {
+        "state": "PULLED-OFFERS / PULLED-BIDS",
+        "when": "|move_bps| >= 5.0 and |net_flow| >= 40000 and (move_bps > 0) != (net_flow > 0); OFFERS if move_bps > 0 else BIDS"
+      },
+      {
+        "state": "VACUUM-UP / VACUUM-DOWN",
+        "tag": "impact",
+        "when": "impact is not null (|net_flow| >= 100000) and impact >= 20.0 and |move_bps| >= 1.0; UP if move_bps > 0 else DOWN"
+      },
+      {
+        "state": "ABSORBING",
+        "when": "impact is not null and impact <= 2.0"
+      },
+      {
+        "state": "TRENDING-UP",
+        "when": "|move_bps| >= 3.0 and PRESSURE (aggressive buy / aggressive sell notional) is available (selling >= $25K) and >= 1.15 and move_bps > 0"
+      },
+      {
+        "state": "TRENDING-DOWN",
+        "when": "|move_bps| >= 3.0 and PRESSURE is available (selling >= $25K) and <= 0.87 and move_bps < 0"
+      },
+      {
+        "state": "BALANCED",
+        "when": "nothing above matched (including a >= 3 bps move whose PRESSURE is unavailable or between 0.87 and 1.15)"
+      }
+    ],
+    "display_rule_sparse": "If the window has between 1 and 4 trades and its live classification isn't VACUUM-UP or VACUUM-DOWN, the live classification is flagged sparse with the SPARSE explanation. The flag never enters the latch or the events list (hl_deck 450-453).",
+    "latch": "A classification different from the confirmed regime must repeat on 2 consecutive complete ticks to become the confirmed regime; a different classification restarts the count at 1; a return to the confirmed regime clears the pending count. Until the first confirmation the live classification is shown as unconfirmed. Confirmation sets 'since' to that tick's time (hl_deck 423-448).",
+    "events": "A confirmed change creates an event 'PREV -> NEW (held Ns)' when a previous confirmed regime existed; held = this tick's time - the previous regime's since (hl_deck 439-441).",
+    "gap_rule": "plugin rule: at a gap the confirmed regime ends, an event 'PREV -> (gap)' records how long it held up to the segment's last complete tick, and the latch clears. No regime, held time or event spans a gap.",
+    "held": "card held = latest complete tick time - since, in source time",
+    "decisions": "Kevin, Nov 8, accepting GPT review R11 findings 8 and 9: PRESSURE is aggressive buy notional over aggressive sell notional (flips included, $25K selling floor) in both modes, so TRENDING can fire on public data and the UNRESOLVED state is removed; the explanations below replace hl_deck's GUIDE wording and claim no cause the numbers can't show; the confirmed regime, the live classification and any pending change are shown separately.",
+    "display": "Each card reports three things separately, with their times: confirmed_regime (the latched regime, since and held), live_classification (what this tick's window numbers classify as, with its explanation) and pending (a different classification waiting for its second consecutive tick). The confirmed label is never presented as describing different current numbers.",
+    "meanings": {
+      "ABSORBING": {
+        "key": "IMPACT",
+        "text": "Small observed trade-price change relative to net aggressive notional. Absorption is a hypothesis; this calculation does not identify an absorber or its remaining size."
+      },
+      "VACUUM-UP": {
+        "key": "IMPACT",
+        "text": "Price moved with low total traded notional or a high price-change/net-flow ratio, as indicated by the branch tag. This calculation does not measure resting-book depth or predict a reversal."
+      },
+      "VACUUM-DOWN": {
+        "key": "IMPACT",
+        "text": "Price moved with low total traded notional or a high price-change/net-flow ratio, as indicated by the branch tag. This calculation does not measure resting-book depth or predict a reversal."
+      },
+      "PULLED-OFFERS": {
+        "key": "NET FLOW",
+        "text": "Observed trade prices rose while net aggressive flow was selling. The cause is undetermined; this classification does not establish offer cancellations."
+      },
+      "PULLED-BIDS": {
+        "key": "NET FLOW",
+        "text": "Observed trade prices fell while net aggressive flow was buying. The cause is undetermined; this classification does not establish bid cancellations."
+      },
+      "TRENDING-UP": {
+        "key": "PRESSURE",
+        "text": "The window meets the stated upward price-move and buy/sell-ratio thresholds. This describes the observed window and does not establish that the move will continue or end at a particular ratio."
+      },
+      "TRENDING-DOWN": {
+        "key": "PRESSURE",
+        "text": "The window meets the stated downward price-move and buy/sell-ratio thresholds. This describes the observed window and does not establish that the move will continue or end at a particular ratio."
+      },
+      "BALANCED": {
+        "key": null,
+        "text": "None of the earlier classifier conditions matched. This is not a measurement of trader commitment or expected profitability."
+      },
+      "THIN": {
+        "key": null,
+        "text": "Traded notional and observed trade-price movement are below this classifier's stated thresholds. Resting-book depth is not measured by this label."
+      },
+      "SPARSE": {
+        "key": null,
+        "text": "Fewer than five executions support this window. Displayed ratios are based on very few observations."
+      },
+      "QUIET": {
+        "key": null,
+        "text": "No qualifying executions occurred in the complete observed window. This is distinct from an unavailable or unverified feed."
+      }
+    },
+    "meanings_source": "GPT review R11 finding 9's replacement text, adopted by Kevin on Nov 8. Regimes are heuristic classifications of the stated execution-window measurements; their labels do not establish a cause, a participant's intent or remaining size, or a profitable trading opportunity. hl_deck's original GUIDE wording is no longer shown."
+  },
+  "alerts": {
+    "burst": {
+      "source": "handoff",
+      "formula": "For each side, the aggressive notional of trades with time in (W - 60 s, W], where W is the trades watermark after each trades message: sum(px*sz | side=B) for buying, sum(px*sz | side=A) for selling.",
+      "threshold": {
+        "window_s": 60,
+        "min_notional_usd_by_market": {
+          "BTC": 10000000,
+          "HYPE": 2000000,
+          "xyz:SP500": 1000000,
+          "xyz:XYZ100": 1000000,
+          "default": 2000000
+        },
+        "compare": ">="
+      },
+      "units": "USD notional",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "buying = side B trades; selling = side A trades",
+      "window": "60 s trailing, evaluated at each new trades watermark",
+      "reset_rule": "After a side fires it is disarmed. It re-arms when that side's 60 s sum, evaluated just before the trades of a new message are added (the minimum since the last evaluation, because the sum only falls between messages), is below the threshold; a gap also re-arms it and starts a new segment. One burst episode fires once.",
+      "completeness_rule": "Evaluated only when W - 60 s is at or after the segment start, so a burst never spans a gap.",
+      "wallets": "The aggressive participants (takers) of the burst's own executions, each with its aggressive notional on that side, ranked against the burst's total with the wallets.ranked_list rules (target 50%, cap 50, ties by address). Shares use the burst total as the denominator.",
+      "config": "per-market threshold in plugin settings burst_min_usd (BTC default $10M from the handoff; other defaults are plugin choices)"
+    },
+    "regime_change": {
+      "source": "hl_deck",
+      "formula": "see regimes.events and regimes.gap_rule",
+      "reset_rule": "events are kept newest first, the last 50 per market",
+      "completeness_rule": "only complete ticks change the latch"
+    },
+    "not_ported": {
+      "source": "hl_deck",
+      "items": [
+        "SELLING DONE (needs node exit bucket)",
+        "CONVICTION (needs node new-long/new-short buckets)",
+        "BUYER GONE / SELLER GONE / BUYER BACK / SELLER BACK / FLIPPED (portable to public data, not in v1 scope)"
+      ],
+      "reason": "Handoff 1 step 5a asks for regime events and burst alerts. hl_deck's other alerts are recorded here and left for a later version."
+    }
+  }
+}

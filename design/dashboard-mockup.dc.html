@@ -1,0 +1,763 @@
+<!doctype html>
+<!--
+Note for the builder, added Nov 7, 2026. The layout below is unchanged.
+This mockup predates the plan's final panel list. Handoff 1 step 5 names the panels to build; the mockup sets their layout.
+- Paper desk: out of this entry (paper trading and testnet orders are on the roadmap). Don't build it.
+- Alerts: this is the plan's Flow Deck panel (hl_alerts). Build it per step 5a. A reference screenshot of Kevin's terminal Flow Deck, provided separately, shows what the panel is modeled on; take its definitions only from hl_deck.py.
+- Wallets and the price chart aren't drawn here. Steps 5 and 5b define them.
+- Every number here is sample data.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Hyperliquid Desk · trader dashboard</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap">
+<style>
+body{margin:0;background:#0A0E13}
+a{color:#A9CCFF}a:hover{color:#D3E5FF}
+</style>
+</helmet>
+<div style="background: #0A0E13; color: #E7EDF3; font-family: Inter, system-ui, sans-serif; font-size: 13px; min-height: 100vh; font-variant-numeric: tabular-nums">
+<div style="max-width: 1440px; margin: 0 auto; padding: 14px 16px 28px; box-sizing: border-box; display: flex; flex-direction: column; gap: 12px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; padding: 8px 12px; border: 1px dashed #3A4654; border-radius: 8px; font-size: 12px; color: #C9D2DA">
+<span>Mockup with sample data. Every number on this screen is illustrative, not live.</span>
+<span style="color: #93A1AE">Hermes dashboard tab · hyperliquid-desk plugin</span>
+</div>
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 12px 22px; padding: 12px 14px; background: #10161D; border: 1px solid #1E2731; border-radius: 10px">
+<div style="display: flex; align-items: center; gap: 10px; flex: none">
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#E7EDF3" style="stroke-width: 1.8px; stroke-linecap: round; stroke-linejoin: round" aria-hidden="true"><path d="M3 16l5-6 4 3 5-7 4 5"></path><path d="M3 20h18"></path></svg>
+<div>
+<h1 style="margin: 0; font-size: 15px; font-weight: 700; letter-spacing: .01em">Hyperliquid Desk</h1>
+<div style="font-size: 11.5px; color: #93A1AE">Paper mode · orders never reach the exchange</div>
+</div>
+</div>
+<nav aria-label="Markets" style="display: flex; flex-wrap: wrap; gap: 6px; flex: none">
+<sc-for list="{{markets}}" as="mk" hint-placeholder-count="4">
+<button type="button" aria-pressed="{{mk.pressed}}" style="font: 600 12.5px/1 'JetBrains Mono', monospace; padding: 0 12px; min-height: 44px; border-radius: 8px; border: 1px solid {{mk.border}}; background: {{mk.bg}}; color: {{mk.color}}; cursor: pointer">{{mk.name}}</button>
+</sc-for>
+</nav>
+<div style="display: flex; flex-wrap: wrap; gap: 10px 24px; flex: 1 1 520px; align-items: flex-start; min-width: 0">
+<sc-for list="{{stats}}" as="st" hint-placeholder-count="5">
+<div style="min-width: 0">
+<div style="font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .06em">{{st.label}}</div>
+<div style="font: 600 15px/1.35 'JetBrains Mono', monospace; color: {{st.color}}">{{st.value}}</div>
+<div style="font-size: 11.5px; color: #93A1AE">{{st.sub}}</div>
+</div>
+</sc-for>
+</div>
+<div style="display: flex; flex-direction: column; gap: 5px; flex: none; font-size: 11.5px; color: #C9D2DA">
+<div style="display: flex; align-items: center; gap: 7px"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: {{bid}}"></span>Node block 1,202,418,337 · lag 0.21 s</div>
+<div style="display: flex; align-items: center; gap: 7px"><span aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: {{bid}}"></span>Rebuild lineage verified · no open gaps</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}">
+<div style="display: flex; gap: 6px"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(147,161,174,0.12); color: #D3DAE0; border: 1px solid rgba(147,161,174,0.4); white-space: nowrap">PUBLIC API · stats</span></div>
+</sc-if>
+</div>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start">
+
+<section aria-label="Order-level ladder" style="flex: 1 1 400px; max-width: 480px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="height: 70px; box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731; overflow: hidden">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Order-level ladder</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">Bid 7,392.5 · ask 7,393.0 · spread 0.5 (0.7 bps). Rows grouped by 2.0, with order counts and the stops waiting at each price.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · L4</span></sc-if>
+</div>
+<div style="overflow-x: auto">
+<div style="min-width: 400px">
+<div style="height: 24px; box-sizing: border-box; display: grid; grid-template-columns: 58px minmax(0, 1fr) 62px minmax(0, 1fr) 44px 40px 58px; align-items: center; padding: 0 8px; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid #1E2731">
+<span style="color: #D9CFFF">Stops</span>
+<span style="text-align: right; padding-right: 4px">Bids · #</span>
+<span style="text-align: center">Price</span>
+<span style="padding-left: 4px">Asks · #</span>
+<span title="Largest single order's share of the level" style="text-align: right">Top</span>
+<span style="text-align: right">Age</span>
+<span style="text-align: right">Δ 10s</span>
+</div>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="24">
+<div style="height: 22px; box-sizing: border-box; display: grid; grid-template-columns: 58px minmax(0, 1fr) 62px minmax(0, 1fr) 44px 40px 58px; align-items: center; padding: 0 8px; font: 500 12px/1 'JetBrains Mono', monospace; border-bottom: {{r.rowBorder}}">
+<span style="color: {{r.stopsColor}}">{{r.stopsText}}</span>
+<span style="position: relative; height: 18px; display: flex; align-items: center; justify-content: flex-end; gap: 5px; padding-right: 4px">
+<span aria-hidden="true" style="position: absolute; right: 0; top: 1px; bottom: 1px; width: {{r.bidW}}; background: {{r.bidBar}}; border-radius: 2px"></span>
+<span style="position: relative; color: #E7EDF3">{{r.bidText}}</span>
+<span style="position: relative; color: #93A1AE; font-size: 11px">{{r.bidN}}</span>
+</span>
+<span style="text-align: center; font-weight: {{r.priceWeight}}; color: {{r.priceColor}}">{{r.price}}</span>
+<span style="position: relative; height: 18px; display: flex; align-items: center; gap: 5px; padding-left: 4px">
+<span aria-hidden="true" style="position: absolute; left: 0; top: 1px; bottom: 1px; width: {{r.askW}}; background: {{r.askBar}}; border-radius: 2px"></span>
+<span style="position: relative; color: #E7EDF3">{{r.askText}}</span>
+<span style="position: relative; color: #93A1AE; font-size: 11px">{{r.askN}}</span>
+</span>
+<span style="text-align: right; font-weight: {{r.bigWeight}}; background: {{r.bigBg}}; border-radius: 3px; padding: 3px 3px">{{r.bigText}}</span>
+<span style="text-align: right; color: #C9D2DA">{{r.age}}</span>
+<span style="text-align: right; color: {{r.dColor}}">{{r.dText}}</span>
+</div>
+</sc-for>
+</div>
+</div>
+</section>
+
+<section aria-label="Resting liquidity heatmap" style="flex: 999 1 440px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="height: 70px; box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731; overflow: hidden">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Resting liquidity, last 15 minutes</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">Brighter cells hold more size. Circles are trades, sized by volume. Rows line up with the ladder.</p>
+</div>
+<div style="display: flex; align-items: center; gap: 6px; flex: none">
+<div role="group" aria-label="Time window" style="display: flex; gap: 4px">
+<button type="button" aria-pressed="false" style="font: 600 11.5px/1 'JetBrains Mono', monospace; min-height: 32px; padding: 0 9px; border-radius: 6px; border: 1px solid #2A3542; background: transparent; color: #C9D2DA">5m</button>
+<button type="button" aria-pressed="true" style="font: 600 11.5px/1 'JetBrains Mono', monospace; min-height: 32px; padding: 0 9px; border-radius: 6px; border: 1px solid #E7EDF3; background: #1B2530; color: #E7EDF3">15m</button>
+<button type="button" aria-pressed="false" style="font: 600 11.5px/1 'JetBrains Mono', monospace; min-height: 32px; padding: 0 9px; border-radius: 6px; border: 1px solid #2A3542; background: transparent; color: #C9D2DA">1h</button>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · L4</span></sc-if>
+</div>
+</div>
+<div style="height: 24px; box-sizing: border-box; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 0 12px; font-size: 11px; color: #C9D2DA; border-bottom: 1px solid #1E2731; overflow: hidden">
+<span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 2px; background: {{bid}}"></span>Bids</span>
+<span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 2px; background: {{ask}}"></span>Asks</span>
+<span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 14px; height: 2px; background: #E7EDF3"></span>Mid price</span>
+<span style="display: flex; align-items: center; gap: 5px"><span aria-hidden="true" style="width: 10px; height: 10px; border-radius: 50%; border: 2px solid #FF6FB1; box-sizing: border-box"></span>Liquidation</span>
+</div>
+<div style="position: relative">
+<div aria-hidden="true" style="display: flex; flex-direction: column">
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="24">
+<div style="height: 22px; display: grid; grid-template-columns: repeat(36, minmax(0, 1fr))">
+<sc-for list="{{r.cells}}" as="c" hint-placeholder-count="36">
+<div style="background: {{c.bg}}"></div>
+</sc-for>
+</div>
+</sc-for>
+</div>
+<div aria-hidden="true" style="position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none">
+<svg viewBox="0 0 360 528" preserveAspectRatio="none" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%">
+<polyline points="{{pathPoints}}" style="fill: none; stroke: #E7EDF3; stroke-width: 1.6px; vector-effect: non-scaling-stroke"></polyline>
+</svg>
+<sc-for list="{{trades}}" as="t" hint-placeholder-count="17">
+<div style="position: absolute; left: {{t.left}}; top: {{t.top}}; width: {{t.d}}; height: {{t.d}}; border-radius: 50%; background: {{t.bg}}; border: {{t.border}}; box-sizing: border-box"></div>
+</sc-for>
+<sc-for list="{{marks}}" as="m" hint-placeholder-count="3">
+<div style="position: absolute; left: {{m.left}}; top: {{m.top}}; transform: {{m.transform}}; white-space: nowrap; font: 600 11px/1 'JetBrains Mono', monospace; padding: 4px 6px; border-radius: 6px; background: #0A0E13; color: {{m.color}}; border: 1px solid {{m.color}}">{{m.text}}</div>
+</sc-for>
+</div>
+</div>
+<div style="display: flex; justify-content: space-between; padding: 7px 10px 9px; font: 500 11px/1 'JetBrains Mono', monospace; color: #93A1AE">
+<span>−15m</span><span>−10m</span><span>−5m</span><span>now</span>
+</div>
+</section>
+
+<section aria-label="Waiting stops by price" style="flex: 1 1 250px; max-width: 320px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="height: 70px; box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731; overflow: hidden">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Waiting stops</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">Trigger orders the public feed never shows. Fuel for the next move.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · L4</span></sc-if>
+</div>
+<div style="height: 24px; box-sizing: border-box; display: grid; grid-template-columns: 54px minmax(0, 1fr) 58px; align-items: center; gap: 6px; padding: 0 10px; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; border-bottom: 1px solid #1E2731">
+<span>Price</span><span>Buy stops above · sell below</span><span style="text-align: right">Size</span>
+</div>
+<sc-for list="{{rows}}" as="r" hint-placeholder-count="24">
+<div style="height: 22px; box-sizing: border-box; display: grid; grid-template-columns: 54px minmax(0, 1fr) 58px; align-items: center; gap: 6px; padding: 0 10px; font: 500 12px/1 'JetBrains Mono', monospace; border-bottom: {{r.rowBorder}}">
+<span style="color: {{r.priceColor}}">{{r.price}}</span>
+<span style="height: 12px; background: #151D26; border-radius: 2px; overflow: hidden"><span style="display: block; height: 100%; width: {{r.stopW}}; background: {{r.stopBar}}"></span></span>
+<span style="text-align: right; color: {{r.stopsColor}}">{{r.stopsText}}</span>
+</div>
+</sc-for>
+<div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 7px; font-size: 12px; color: #C9D2DA">
+<div><span style="font: 700 12.5px/1 'JetBrains Mono', monospace; color: #D9CFFF">$3.14M</span> of buy stops within +0.26%</div>
+<div><span style="font: 700 12.5px/1 'JetBrains Mono', monospace; color: #D9CFFF">$6.25M</span> of sell stops within −0.29%</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px">Liquidation levels <span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: transparent; color: #D3DAE0; border: 1px dashed #93A1AE; white-space: nowrap">PLANNED</span></div>
+</div>
+</section>
+
+</div>
+
+<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch">
+
+<section aria-label="Aggressive flow" style="flex: 2 1 520px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Who is aggressive</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">Cumulative volume delta (buys minus sells that crossed the spread), same 15 minutes.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · FILLS</span></sc-if>
+</div>
+<div style="padding: 12px 14px 10px; display: flex; flex-direction: column; gap: 8px">
+<div style="display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12.5px; color: #C9D2DA">
+<span><span style="font: 700 14px/1 'JetBrains Mono', monospace; color: {{bid}}">+$260k</span> net buying</span>
+<span>Low <span style="font: 600 12.5px/1 'JetBrains Mono', monospace; color: {{ask}}">−$400k</span> at the 7,380 test</span>
+<span>Buyers in control for 9 minutes</span>
+</div>
+<div style="position: relative; height: 120px; background: #0D131A; border-radius: 6px">
+<svg viewBox="0 0 360 120" preserveAspectRatio="none" aria-hidden="true" style="position: absolute; left: 0; top: 0; width: 100%; height: 100%">
+<line x1="0" x2="360" y1="{{zeroY}}" y2="{{zeroY}}" style="stroke: #2E3946; stroke-width: 1px; vector-effect: non-scaling-stroke"></line>
+<polyline points="{{cvdPoints}}" style="fill: none; stroke: #E7EDF3; stroke-width: 2px; vector-effect: non-scaling-stroke"></polyline>
+</svg>
+</div>
+<div aria-hidden="true" style="height: 64px; display: flex; gap: 2px; background: #0D131A; border-radius: 6px; padding: 0 4px">
+<sc-for list="{{bars}}" as="b" hint-placeholder-count="36">
+<div style="flex: 1 1 0; position: relative">
+<div style="position: absolute; left: 12%; right: 12%; bottom: {{b.bottom}}; height: {{b.h}}; background: {{b.bg}}; border-radius: 1px"></div>
+</div>
+</sc-for>
+</div>
+<div style="display: flex; justify-content: space-between; font: 500 11px/1 'JetBrains Mono', monospace; color: #93A1AE">
+<span>−15m</span><span>delta per 25 s</span><span>now</span>
+</div>
+</div>
+</section>
+
+<section aria-label="Book pressure" style="flex: 1 1 320px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Book pressure</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">Depth on each side, and how real it is.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · L4</span></sc-if>
+</div>
+<div style="padding: 12px 14px; display: flex; flex-direction: column; gap: 10px">
+<sc-for list="{{bands}}" as="bd" hint-placeholder-count="3">
+<div style="display: grid; grid-template-columns: 52px minmax(0, 1fr) 74px; align-items: center; gap: 8px">
+<span style="font: 600 12px/1 'JetBrains Mono', monospace; color: #C9D2DA">{{bd.label}}</span>
+<div style="display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px">
+<div style="display: flex; justify-content: flex-end"><div style="width: {{bd.bidW}}; height: 18px; background: {{bd.bidBar}}; border-radius: 3px 0 0 3px; display: flex; align-items: center; justify-content: flex-start; padding-left: 5px; box-sizing: border-box; font: 600 11px/1 'JetBrains Mono', monospace; color: #0A0E13">{{bd.bidText}}</div></div>
+<div style="display: flex; justify-content: flex-start"><div style="width: {{bd.askW}}; height: 18px; background: {{bd.askBar}}; border-radius: 0 3px 3px 0; display: flex; align-items: center; justify-content: flex-end; padding-right: 5px; box-sizing: border-box; font: 600 11px/1 'JetBrains Mono', monospace; color: #0A0E13">{{bd.askText}}</div></div>
+</div>
+<span style="text-align: right; font: 600 12px/1 'JetBrains Mono', monospace; color: #E7EDF3">{{bd.imb}}</span>
+</div>
+</sc-for>
+<div style="height: 1px; background: #1E2731"></div>
+<sc-for list="{{pstats}}" as="ps" hint-placeholder-count="5">
+<div style="display: flex; justify-content: space-between; gap: 10px; font-size: 12px">
+<span style="color: #C9D2DA">{{ps.label}}</span>
+<span style="font: 600 12px/1.3 'JetBrains Mono', monospace; color: #E7EDF3; white-space: nowrap">{{ps.value}}</span>
+</div>
+</sc-for>
+</div>
+</section>
+
+<section aria-label="Wall watch" style="flex: 2 1 520px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Wall watch</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">The largest single orders near the price, and what each did when tested.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · L4</span></sc-if>
+</div>
+<div style="overflow-x: auto">
+<table style="width: 100%; min-width: 560px; border-collapse: collapse">
+<thead>
+<tr>
+<th scope="col" style="text-align: left; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Side</th>
+<th scope="col" style="text-align: right; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Price</th>
+<th scope="col" style="text-align: right; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Order</th>
+<th scope="col" style="text-align: right; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Away</th>
+<th scope="col" style="text-align: right; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Age</th>
+<th scope="col" style="text-align: left; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Behavior</th>
+<th scope="col" style="text-align: left; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Status</th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{walls}}" as="w" hint-placeholder-count="5">
+<tr>
+<td style="padding: 8px 10px; border-bottom: 1px solid #161E27; font: 600 12px/1.35 'JetBrains Mono', monospace; color: {{w.sideColor}}">{{w.side}}</td>
+<td style="padding: 8px 10px; border-bottom: 1px solid #161E27; font: 500 12px/1.35 'JetBrains Mono', monospace; text-align: right">{{w.price}}</td>
+<td style="padding: 8px 10px; border-bottom: 1px solid #161E27; font: 600 12px/1.35 'JetBrains Mono', monospace; text-align: right">{{w.size}}</td>
+<td style="padding: 8px 10px; border-bottom: 1px solid #161E27; font: 500 12px/1.35 'JetBrains Mono', monospace; text-align: right; color: #C9D2DA">{{w.dist}}</td>
+<td style="padding: 8px 10px; border-bottom: 1px solid #161E27; font: 500 12px/1.35 'JetBrains Mono', monospace; text-align: right; color: #C9D2DA">{{w.age}}</td>
+<td style="padding: 8px 10px; border-bottom: 1px solid #161E27; font-size: 12px; line-height: 1.35; color: #C9D2DA">{{w.note}}</td>
+<td style="padding: 8px 10px; border-bottom: 1px solid #161E27"><span style="font: 600 11px/1 'JetBrains Mono', monospace; padding: 4px 7px; border-radius: 999px; background: {{w.chipBg}}; color: {{w.chipColor}}; border: 1px solid {{w.chipBorder}}; white-space: nowrap">{{w.status}}</span></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</section>
+
+</div>
+
+<div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: stretch">
+
+<section aria-label="Tape" style="flex: 1 1 320px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Tape</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">Trades in UTC, flagged when a stop, TWAP slice or liquidation caused them.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · FILLS</span></sc-if>
+</div>
+<div style="overflow-x: auto">
+<table style="width: 100%; min-width: 320px; border-collapse: collapse">
+<thead>
+<tr>
+<th scope="col" style="text-align: left; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Time</th>
+<th scope="col" style="text-align: left; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Side</th>
+<th scope="col" style="text-align: right; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Price</th>
+<th scope="col" style="text-align: right; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Size</th>
+<th scope="col" style="text-align: left; font-weight: 500; font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em; padding: 8px 10px; border-bottom: 1px solid #1E2731">Flag</th>
+</tr>
+</thead>
+<tbody>
+<sc-for list="{{tape}}" as="tp" hint-placeholder-count="10">
+<tr>
+<td style="padding: 6px 10px; border-bottom: 1px solid #161E27; font: 500 12px/1.3 'JetBrains Mono', monospace; color: #C9D2DA">{{tp.time}}</td>
+<td style="padding: 6px 10px; border-bottom: 1px solid #161E27; font: 600 12px/1.3 'JetBrains Mono', monospace; color: {{tp.sideColor}}">{{tp.side}}</td>
+<td style="padding: 6px 10px; border-bottom: 1px solid #161E27; font: 500 12px/1.3 'JetBrains Mono', monospace; text-align: right">{{tp.price}}</td>
+<td style="padding: 6px 10px; border-bottom: 1px solid #161E27; font: 600 12px/1.3 'JetBrains Mono', monospace; text-align: right">{{tp.size}}</td>
+<td style="padding: 6px 10px; border-bottom: 1px solid #161E27"><sc-if value="{{tp.hasFlag}}" hint-placeholder-val="{{ false }}"><span style="font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .05em; padding: 4px 6px; border-radius: 999px; background: {{tp.flagBg}}; color: {{tp.flagColor}}; white-space: nowrap">{{tp.flag}}</span></sc-if></td>
+</tr>
+</sc-for>
+</tbody>
+</table>
+</div>
+</section>
+
+<section aria-label="Alerts" style="flex: 1 1 320px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Alerts</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">What changed in the book, in words. The agent can explain any of these.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4); white-space: nowrap">NODE · L4</span></sc-if>
+</div>
+<ul style="list-style: none; margin: 0; padding: 4px 0">
+<sc-for list="{{alerts}}" as="al" hint-placeholder-count="5">
+<li style="display: grid; grid-template-columns: 12px minmax(0, 1fr) 36px; gap: 10px; align-items: start; padding: 10px 14px; border-bottom: 1px solid #161E27">
+<span aria-hidden="true" style="width: 9px; height: 9px; margin-top: 4px; border-radius: 50%; background: {{al.dot}}"></span>
+<div style="min-width: 0">
+<div style="font-size: 12.5px; font-weight: 600; color: #E7EDF3">{{al.title}}</div>
+<div style="font-size: 12px; line-height: 1.4; color: #C9D2DA; margin-top: 2px">{{al.detail}}</div>
+</div>
+<span style="text-align: right; font: 500 11.5px/1.4 'JetBrains Mono', monospace; color: #93A1AE">{{al.age}}</span>
+</li>
+</sc-for>
+</ul>
+</section>
+
+<section aria-label="Paper desk" style="flex: 1.3 1 420px; min-width: 0; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; overflow: hidden">
+<div style="box-sizing: border-box; padding: 10px 14px; display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; border-bottom: 1px solid #1E2731">
+<div style="min-width: 0">
+<h2 style="margin: 0; font-size: 13.5px; font-weight: 600">Paper desk</h2>
+<p style="margin: 3px 0 0; font-size: 11.5px; line-height: 1.35; color: #93A1AE">The agent proposes, the risk gate decides, and every action goes in the journal.</p>
+</div>
+<sc-if value="{{showProv}}" hint-placeholder-val="{{ true }}"><span style="flex: none; font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(76,154,255,0.14); color: #B5D3FF; border: 1px solid rgba(76,154,255,0.45); white-space: nowrap">PAPER · RISK GATE</span></sc-if>
+</div>
+<div style="padding: 12px 14px 14px; display: flex; flex-direction: column; gap: 12px">
+
+<div style="display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 14px; padding: 10px 12px; background: #0D131A; border: 1px solid #1E2731; border-radius: 8px">
+<div style="min-width: 0">
+<div style="font: 600 13px/1.4 'JetBrains Mono', monospace">Long 2.00 xyz:SP500 @ 7,381.0</div>
+<div style="font-size: 11.5px; color: #93A1AE">Notional $14.79k · client stop 7,368.0 · disaster stop 7,340.0</div>
+</div>
+<div style="text-align: right">
+<div style="font: 700 14px/1.4 'JetBrains Mono', monospace; color: {{bid}}">+$24.00</div>
+<div style="font-size: 11.5px; color: #93A1AE">+0.16% unrealized</div>
+</div>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 7px">
+<sc-for list="{{risk}}" as="rk" hint-placeholder-count="5">
+<div style="display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr) minmax(0, 1.2fr); gap: 10px; align-items: center; font-size: 12px">
+<span style="color: #C9D2DA">{{rk.label}}</span>
+<span style="font: 500 11.5px/1.3 'JetBrains Mono', monospace; color: #E7EDF3">{{rk.used}}</span>
+<span style="height: 8px; background: #1A232D; border-radius: 4px; overflow: hidden"><span style="display: block; height: 100%; width: {{rk.w}}; background: {{rk.bar}}"></span></span>
+</div>
+</sc-for>
+</div>
+
+<form aria-label="Paper order ticket" style="display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid #1E2731; border-radius: 8px">
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<div role="group" aria-label="Side" style="display: flex; gap: 4px">
+<button type="button" aria-pressed="true" style="min-height: 44px; padding: 0 18px; border-radius: 8px; border: 1px solid {{bid}}; background: {{bid}}; color: #0A0E13; font: 700 13px/1 Inter, sans-serif">Buy</button>
+<button type="button" aria-pressed="false" style="min-height: 44px; padding: 0 18px; border-radius: 8px; border: 1px solid {{ask}}; background: transparent; color: {{ask}}; font: 700 13px/1 Inter, sans-serif">Sell</button>
+</div>
+<div role="group" aria-label="Order type" style="display: flex; gap: 4px">
+<button type="button" aria-pressed="true" style="min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #E7EDF3; background: #1B2530; color: #E7EDF3; font: 600 12.5px/1 Inter, sans-serif">Limit</button>
+<button type="button" aria-pressed="false" style="min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A3542; background: transparent; color: #C9D2DA; font: 600 12.5px/1 Inter, sans-serif">Market</button>
+<button type="button" aria-pressed="false" style="min-height: 44px; padding: 0 12px; border-radius: 8px; border: 1px solid #2A3542; background: transparent; color: #C9D2DA; font: 600 12.5px/1 Inter, sans-serif">Stop</button>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px">
+<div style="display: flex; flex-direction: column; gap: 4px">
+<label for="tk-size" style="font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em">Size</label>
+<input id="tk-size" inputmode="decimal" value="1.00" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border-radius: 6px; border: 1px solid #2A3542; background: #0D131A; color: #E7EDF3; font: 600 13px/1 'JetBrains Mono', monospace; width: 100%">
+</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<label for="tk-limit" style="font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em">Limit</label>
+<input id="tk-limit" inputmode="decimal" value="7,380.0" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border-radius: 6px; border: 1px solid #2A3542; background: #0D131A; color: #E7EDF3; font: 600 13px/1 'JetBrains Mono', monospace; width: 100%">
+</div>
+<div style="display: flex; flex-direction: column; gap: 4px">
+<label for="tk-stop" style="font-size: 11px; color: #93A1AE; text-transform: uppercase; letter-spacing: .05em">Stop</label>
+<input id="tk-stop" inputmode="decimal" value="7,368.0" style="min-height: 40px; box-sizing: border-box; padding: 0 10px; border-radius: 6px; border: 1px solid #2A3542; background: #0D131A; color: #E7EDF3; font: 600 13px/1 'JetBrains Mono', monospace; width: 100%">
+</div>
+</div>
+<div style="display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border-radius: 8px; background: {{bidSoft}}; border: 1px solid {{bidLine}}">
+<span style="flex: none; font: 700 11px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: {{bid}}; color: #0A0E13">PASS</span>
+<div style="font-size: 12px; line-height: 1.45; color: #DCE7F5">Position after fill $22.2k of the $25k cap. Loss to stop $12, with $232 of daily room left. Joins the bid 1.0 above the 7,380 wall.</div>
+</div>
+<div style="display: flex; flex-wrap: wrap; gap: 8px">
+<button type="button" style="flex: 1 1 180px; min-height: 44px; border-radius: 8px; border: 1px solid {{bid}}; background: {{bid}}; color: #0A0E13; font: 700 13px/1 Inter, sans-serif">Place paper order</button>
+<button type="button" style="flex: 1 1 180px; min-height: 44px; border-radius: 8px; border: 1px solid #FF6B6B; background: #2A1214; color: #FFC2C2; font: 700 13px/1 Inter, sans-serif">Kill switch · flatten all</button>
+</div>
+</form>
+
+<div style="display: flex; align-items: center; gap: 8px; font-size: 12px; color: #C9D2DA">
+<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#C9D2DA" style="stroke-width: 1.8px; stroke-linecap: round; stroke-linejoin: round" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z"></path><path d="M9 12l2 2 4-4"></path></svg>
+<span>Journal verified · 1,284 entries · hash chain intact · data age 0.2 s, entries halt after 5 s</span>
+</div>
+
+</div>
+</section>
+
+</div>
+
+<footer style="display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; justify-content: space-between; padding: 12px 14px; background: #10161D; border: 1px solid #1E2731; border-radius: 10px; font-size: 12px; color: #C9D2DA">
+<div style="display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center">
+<span style="color: #93A1AE">Where each number comes from</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4)">NODE · L4</span>book rebuilt order by order from your node</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(179,157,255,0.14); color: #D9CFFF; border: 1px solid rgba(179,157,255,0.4)">NODE · FILLS</span>fills, liquidations, TWAP slices</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(147,161,174,0.12); color: #D3DAE0; border: 1px solid rgba(147,161,174,0.4)">PUBLIC API</span>mark, oracle, funding, open interest</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: rgba(76,154,255,0.14); color: #B5D3FF; border: 1px solid rgba(76,154,255,0.45)">PAPER</span>simulated orders only</span>
+<span style="display: flex; align-items: center; gap: 6px"><span style="font: 600 10.5px/1 'JetBrains Mono', monospace; letter-spacing: .06em; padding: 5px 7px; border-radius: 999px; background: transparent; color: #D3DAE0; border: 1px dashed #93A1AE">PLANNED</span>not built yet</span>
+</div>
+<span style="color: #93A1AE">Sample data · not live</span>
+</footer>
+
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"bidColor":{"editor":"color","default":"#4C9AFF","options":["#4C9AFF","#3FB8AF","#7C9CFF"],"section":"Colors"},"askColor":{"editor":"color","default":"#FF9A4D","options":["#FF9A4D","#F2C14E","#FF8080"],"section":"Colors"},"showProvenance":{"editor":"boolean","default":true,"section":"Labels"},"$preview":{"width":1440,"height":1900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const bid = this.props.bidColor ?? '#4C9AFF';
+    const ask = this.props.askColor ?? '#FF9A4D';
+    const showProv = this.props.showProvenance ?? true;
+    const violet = '#B39DFF';
+    const pink = '#FF6FB1';
+    const hexA = (hex, a) => {
+      const n = parseInt(String(hex).replace('#', '').slice(0, 6), 16);
+      return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a.toFixed(3) + ')';
+    };
+    const money = (k) => {
+      const v = Math.abs(k);
+      return v >= 1000 ? '$' + (v / 1000).toFixed(2) + 'M' : '$' + v + 'k';
+    };
+    const signed = (k) => (k > 0 ? '+' : (k < 0 ? '−' : '')) + money(k);
+    const fmtPrice = (p) => p.toLocaleString('en-US');
+    const TOP = 7416;
+    const ROWH = 22;
+    const COLS = 36;
+    const yOf = (p) => (TOP - p) / 2 * ROWH + ROWH / 2;
+
+    const raw = [
+      [7416, 420, 14, 18, '41m', 10, 120],
+      [7414, 610, 17, 21, '33m', 4, 380],
+      [7412, 540, 15, 19, '28m', -6, 1620],
+      [7410, 690, 19, 24, '22m', 18, 940],
+      [7408, 380, 12, 16, '19m', -2, 210],
+      [7406, 450, 13, 22, '12m', 6, 90],
+      [7404, 1350, 2, 74, '6m', -400, 60],
+      [7402, 310, 11, 15, '9m', -14, 40],
+      [7400, 520, 21, 60, '17m', 22, 150],
+      [7398, 260, 9, 18, '4m', -8, 20],
+      [7396, 240, 10, 14, '2m', 6, 10],
+      [7394, 190, 8, 20, '48s', -12, 0],
+      [7392, 230, 9, 17, '1m', 16, 0],
+      [7390, 310, 12, 15, '3m', 8, 30],
+      [7388, 280, 10, 19, '7m', -4, 60],
+      [7386, 460, 16, 57, '11m', 12, 140],
+      [7384, 390, 13, 21, '9m', 2, 180],
+      [7382, 520, 18, 16, '15m', -6, 260],
+      [7380, 1920, 3, 82, '14m', 40, 310],
+      [7378, 430, 14, 18, '21m', 6, 520],
+      [7376, 360, 12, 20, '26m', -2, 880],
+      [7374, 410, 15, 17, '30m', 4, 1460],
+      [7372, 380, 13, 22, '34m', 0, 2410],
+      [7370, 640, 22, 61, '44m', 8, 1180]
+    ];
+    const maxSize = 1920;
+    const maxStops = 2410;
+    const kp = [[0, 7386], [8, 7390], [14, 7388], [21, 7381], [24, 7384], [30, 7392], [33, 7395], [35, 7393]];
+    const pathAt = (c) => {
+      for (let j = 0; j < kp.length - 1; j++) {
+        const a0 = kp[j];
+        const a1 = kp[j + 1];
+        if (c >= a0[0] && c <= a1[0]) {
+          return a0[1] + (a1[1] - a0[1]) * (c - a0[0]) / (a1[0] - a0[0]);
+        }
+      }
+      return kp[kp.length - 1][1];
+    };
+    const noise = (a, b) => {
+      const x = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+      return x - Math.floor(x);
+    };
+
+    const rows = raw.map((r, i) => {
+      const p = r[0];
+      const s = r[1];
+      const n = r[2];
+      const big = r[3];
+      const age = r[4];
+      const d = r[5];
+      const st = r[6];
+      const isAsk = p >= 7394;
+      const wall = big >= 65;
+      const side = isAsk ? ask : bid;
+      const cells = [];
+      for (let c = 0; c < COLS; c++) {
+        const m = pathAt(c);
+        const above = p > m + 0.75;
+        const below = p < m - 0.75;
+        let level = s / maxSize;
+        if (p === 7380) {
+          level = c >= 4 ? 1 : 0.25;
+        }
+        if (p === 7404) {
+          level = c >= 18 ? (c >= 33 ? Math.max(0.25, 0.7 - (c - 32) * 0.15) : 0.7) : 0.18;
+        }
+        level = level * (0.72 + 0.28 * noise(i + 1, c + 1));
+        const near = Math.min(1, 0.3 + Math.abs(p - m) / 9);
+        const alpha = (above || below) ? 0.05 + 0.88 * Math.min(1, level * 1.5) * near : 0.03;
+        cells.push({ bg: hexA(above ? ask : bid, alpha) });
+      }
+      return {
+        price: fmtPrice(p),
+        priceColor: side,
+        priceWeight: wall ? '700' : '500',
+        stopsText: st > 0 ? money(st) : '–',
+        stopsColor: st >= 1000 ? '#E2DAFF' : (st > 0 ? '#C2B6F5' : '#8695A3'),
+        stopW: Math.round(st / maxStops * 100) + '%',
+        stopBar: st >= 1000 ? violet : hexA(violet, 0.55),
+        bidText: isAsk ? '' : money(s),
+        bidN: isAsk ? '' : String(n),
+        bidW: isAsk ? '0%' : Math.round(s / maxSize * 100) + '%',
+        bidBar: hexA(bid, wall ? 0.45 : 0.22),
+        askText: isAsk ? money(s) : '',
+        askN: isAsk ? String(n) : '',
+        askW: isAsk ? Math.round(s / maxSize * 100) + '%' : '0%',
+        askBar: hexA(ask, wall ? 0.45 : 0.22),
+        bigText: big + '%',
+        bigBg: wall ? hexA(side, 0.3) : 'transparent',
+        bigWeight: wall ? '700' : '400',
+        age: age,
+        dText: d === 0 ? '0' : signed(d),
+        dColor: d < 0 ? '#FFB27A' : '#93A1AE',
+        rowBorder: i === 11 ? '2px solid #E7EDF3' : '1px solid #18212B',
+        cells: cells
+      };
+    });
+
+    const tradeRaw = [
+      [3, 7387, 40, 'b'], [6, 7389, 60, 'b'], [9, 7390, 30, 's'], [12, 7389, 55, 's'],
+      [16, 7386, 90, 's'], [19, 7383, 140, 's'], [20, 7381.5, 400, 'l'], [21, 7380.5, 520, 's'],
+      [22, 7381, 180, 'b'], [24, 7384, 120, 'b'], [26, 7386, 160, 'b'], [28, 7389, 210, 'b'],
+      [30, 7392, 260, 'b'], [32, 7394, 300, 'b'], [33, 7395, 380, 'b'], [34, 7394, 90, 's'], [35, 7393, 212, 'b']
+    ];
+    const trades = tradeRaw.map((t) => {
+      const d = Math.round(8 + Math.sqrt(t[2]) * 1.1);
+      const x = (t[0] + 0.5) / COLS * 100;
+      const y = yOf(t[1]);
+      const col = t[3] === 'b' ? bid : ask;
+      return {
+        left: 'calc(' + x.toFixed(2) + '% - ' + (d / 2) + 'px)',
+        top: (y - d / 2).toFixed(1) + 'px',
+        d: d + 'px',
+        bg: hexA(col, 0.5),
+        border: t[3] === 'l' ? '2px solid ' + pink : '1px solid ' + col
+      };
+    });
+
+    const markRaw = [
+      { c: 21, p: 7380, text: 'Absorbed $0.9M', color: '#A9CCFF', side: 'r' },
+      { c: 20, p: 7381.5, text: 'LIQ $0.4M', color: '#FF9ACD', side: 'l' },
+      { c: 34, p: 7404, text: 'Pulling −$0.4M', color: '#FFC08A', side: 'l' }
+    ];
+    const marks = markRaw.map((m) => {
+      const x = (m.c + 0.5) / COLS * 100;
+      return {
+        text: m.text,
+        color: m.color,
+        left: m.side === 'r' ? 'calc(' + x.toFixed(2) + '% + 18px)' : 'calc(' + x.toFixed(2) + '% - 14px)',
+        top: yOf(m.p).toFixed(1) + 'px',
+        transform: m.side === 'r' ? 'translateY(-50%)' : 'translate(-100%, -50%)'
+      };
+    });
+
+    const pts = [];
+    for (let c = 0; c < COLS; c++) {
+      pts.push((c * 10 + 5) + ',' + yOf(pathAt(c)).toFixed(1));
+    }
+    const pathPoints = pts.join(' ');
+
+    const delta = [12, 8, -4, 6, 10, 14, 9, 3, -6, -12, -18, -9, -14, -22, -30, -41, -26, -35, -48, -62, -95, -40, 30, 44, 52, 61, 48, 36, 40, 58, 72, 30, 85, 96, 20, -12];
+    let run = 0;
+    const cum = delta.map((v) => {
+      run += v;
+      return run;
+    });
+    const lo = Math.min.apply(null, cum.concat([0]));
+    const hi = Math.max.apply(null, cum.concat([0]));
+    const yC = (v) => (110 - (v - lo) / (hi - lo) * 100).toFixed(1);
+    const cvdPoints = cum.map((v, c) => (c * 10 + 5) + ',' + yC(v)).join(' ');
+    const zeroY = yC(0);
+    const maxAbs = Math.max.apply(null, delta.map((v) => Math.abs(v)));
+    const bars = delta.map((v) => {
+      const h = Math.abs(v) / maxAbs * 48;
+      return {
+        h: h.toFixed(1) + '%',
+        bottom: v >= 0 ? '50%' : (50 - h).toFixed(1) + '%',
+        bg: hexA(v >= 0 ? bid : ask, 0.85)
+      };
+    });
+
+    const bands = [['±0.25%', 4600, 3100], ['±0.5%', 9800, 8900], ['±1%', 21400, 22700]].map((b) => {
+      const m = Math.max(b[1], b[2]);
+      const imb = Math.round((b[1] - b[2]) / (b[1] + b[2]) * 100);
+      return {
+        label: b[0],
+        bidText: money(b[1]),
+        askText: money(b[2]),
+        bidW: Math.round(b[1] / m * 100) + '%',
+        askW: Math.round(b[2] / m * 100) + '%',
+        imb: imb > 0 ? '+' + imb + '% bid' : (imb < 0 ? Math.abs(imb) + '% ask' : 'even'),
+        bidBar: hexA(bid, 0.85),
+        askBar: hexA(ask, 0.85)
+      };
+    });
+
+    const pstats = [
+      { label: 'Orders, top 10 levels', value: '142 bid · 121 ask' },
+      { label: 'Cancel-to-fill near the touch, 5m', value: '14.2 : 1' },
+      { label: 'Median life of top-of-book orders', value: '3.8 s' },
+      { label: 'Quote flicker at the touch', value: '9.6 / s' },
+      { label: 'Top-20 depth held by single orders ≥ $250k', value: '41%' }
+    ];
+
+    const chip = {
+      hold: [hexA(bid, 0.16), '#B5D3FF', hexA(bid, 0.45)],
+      pull: [hexA(ask, 0.16), '#FFC79A', hexA(ask, 0.5)],
+      build: ['rgba(179,157,255,0.14)', '#E2DAFF', 'rgba(179,157,255,0.45)'],
+      rest: ['rgba(147,161,174,0.12)', '#D3DAE0', 'rgba(147,161,174,0.4)']
+    };
+    const walls = [
+      ['Bid', '7,380', '$1.57M', '−0.18%', '14m', 'Held two tests; absorbed $0.9M of selling', 'Holding', 'hold'],
+      ['Ask', '7,404', '$1.00M', '+0.15%', '6m', 'Down $0.4M in 10 s as price came within 0.15%', 'Pulling', 'pull'],
+      ['Ask', '7,400', '$0.31M', '+0.10%', '17m', 'Added $120k in the last minute', 'Building', 'build'],
+      ['Bid', '7,370', '$0.39M', '−0.31%', '44m', 'Unchanged for 44 minutes', 'Resting', 'rest'],
+      ['Bid', '7,386', '$0.26M', '−0.09%', '11m', 'Moved up 2 ticks, twice', 'Trailing', 'build']
+    ].map((w) => ({
+      side: w[0],
+      sideColor: w[0] === 'Bid' ? bid : ask,
+      price: w[1],
+      size: w[2],
+      dist: w[3],
+      age: w[4],
+      note: w[5],
+      status: w[6],
+      chipBg: chip[w[7]][0],
+      chipColor: chip[w[7]][1],
+      chipBorder: chip[w[7]][2]
+    }));
+
+    const flagStyle = {
+      large: ['rgba(147,161,174,0.16)', '#E1E7EC'],
+      twap: ['rgba(147,161,174,0.16)', '#E1E7EC'],
+      stop: ['rgba(179,157,255,0.18)', '#E2DAFF'],
+      liq: ['rgba(255,111,177,0.18)', '#FFC2DE'],
+      none: ['transparent', 'transparent']
+    };
+    const tape = [
+      ['15:46:21.4', 'Buy', '7,393.0', '$84k', '', 'none'],
+      ['15:46:20.9', 'Buy', '7,393.0', '$212k', 'LARGE', 'large'],
+      ['15:46:18.2', 'Sell', '7,392.5', '$31k', '', 'none'],
+      ['15:46:16.7', 'Buy', '7,393.5', '$46k', 'TWAP', 'twap'],
+      ['15:46:12.0', 'Sell', '7,392.0', '$118k', 'STOP', 'stop'],
+      ['15:46:09.8', 'Buy', '7,393.0', '$22k', '', 'none'],
+      ['15:46:02.3', 'Buy', '7,393.0', '$57k', '', 'none'],
+      ['15:45:58.7', 'Sell', '7,392.5', '$64k', '', 'none'],
+      ['15:45:51.2', 'Buy', '7,392.5', '$15k', '', 'none'],
+      ['15:45:44.6', 'Buy', '7,392.0', '$96k', '', 'none']
+    ].map((t) => ({
+      time: t[0],
+      side: t[1],
+      sideColor: t[1] === 'Buy' ? bid : ask,
+      price: t[2],
+      size: t[3],
+      flag: t[4],
+      hasFlag: t[4] !== '',
+      flagBg: flagStyle[t[5]][0],
+      flagColor: flagStyle[t[5]][1]
+    }));
+
+    const dotColor = { pull: ask, stops: violet, absorb: bid, liq: pink };
+    const alerts = [
+      ['now', 'Ask wall at 7,404 is pulling', 'Down $0.4M (−30%) in 10 s with price 0.15% away.', 'pull'],
+      ['1m', 'Buy stops stacked above', '$3.14M waiting between 7,394 and 7,412, within +0.26%.', 'stops'],
+      ['6m', 'Bid wall at 7,380 absorbed selling', '$0.9M sold into it, and the wall is still $1.57M.', 'absorb'],
+      ['6m', 'Liquidation', '$0.4M long position liquidated at 7,381.5.', 'liq'],
+      ['12m', 'Sell-stop cluster grew', '$2.41M waiting at 7,372; $6.25M within −0.29%.', 'stops']
+    ].map((a) => ({ age: a[0], title: a[1], detail: a[2], dot: dotColor[a[3]] }));
+
+    const risk = [
+      ['Daily loss used', '$18 of $250', 7],
+      ['Gross exposure', '$14.8k of $50k', 30],
+      ['Largest position', '$14.8k of $25k', 59],
+      ['Open positions', '1 of 5', 20],
+      ['Refusals, last 60 s', '0 of 3, halts at 3', 0]
+    ].map((r) => ({ label: r[0], used: r[1], w: r[2] + '%', bar: r[2] >= 80 ? ask : bid }));
+
+    const markets = ['BTC', 'HYPE', 'xyz:SP500', 'xyz:XYZ100'].map((m) => {
+      const on = m === 'xyz:SP500';
+      return {
+        name: m,
+        pressed: on ? 'true' : 'false',
+        bg: on ? '#1B2530' : 'transparent',
+        border: on ? '#E7EDF3' : '#2A3542',
+        color: on ? '#E7EDF3' : '#C9D2DA'
+      };
+    });
+
+    const stats = [
+      { label: 'Last', value: '7,393.0', sub: '24h +0.41%', color: '#E7EDF3' },
+      { label: 'Mark / oracle', value: '7,393.2 / 7,388.6', sub: 'premium +6.2 bps', color: '#E7EDF3' },
+      { label: 'Funding, 1h', value: '+0.0042%', sub: '36.8% annualized', color: '#E7EDF3' },
+      { label: 'Open interest', value: '$184.2M', sub: '24h volume $612M', color: '#E7EDF3' },
+      { label: 'Underlying market', value: 'Closed', sub: 'reopens Sun 6:00 PM ET', color: '#FFC08A' }
+    ];
+
+    return {
+      bid: bid,
+      ask: ask,
+      bidSoft: hexA(bid, 0.12),
+      bidLine: hexA(bid, 0.45),
+      showProv: showProv,
+      markets: markets,
+      stats: stats,
+      rows: rows,
+      trades: trades,
+      marks: marks,
+      pathPoints: pathPoints,
+      cvdPoints: cvdPoints,
+      zeroY: zeroY,
+      bars: bars,
+      bands: bands,
+      pstats: pstats,
+      walls: walls,
+      tape: tape,
+      alerts: alerts,
+      risk: risk
+    };
+  }
+}
+</script>
+</body>
+</html>

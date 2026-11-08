@@ -1,0 +1,11 @@
+[project]
+name = "hyperliquid-desk"
+version = "1.0.0"
+description = "Hermes plugin: live Hyperliquid dashboard tab, market tools and commentary skill on public data"
+requires-python = ">=3.11"
+license = "MIT"
+# The one runtime dependency: the websocket client for Hyperliquid's public feed.
+# Floor: 13.0 introduced websockets.asyncio.client; Hermes v0.23.0 pins 15.0.1.
+dependencies = [
+    "websockets>=13.0,<16",
+]

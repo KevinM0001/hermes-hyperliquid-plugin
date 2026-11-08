@@ -1,0 +1,32 @@
+$ env -i bash --noprofile --norc -c 'source ~/contest/hermes-env.sh; cd ~/contest/hyperliquid-desk && ~/contest/hermes/.hermes/bin/hermes plugins validate . --install-deps'
+  → Resolving Python dependencies…
+  ✗ Resolving Python dependencies failed; last 4 lines of output:
+      error: Failed to generate package metadata for `kittentts==0.8.1 @ direct+https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl`
+        cause: Request failed after 3 retries in 4.7s
+        cause: Failed to fetch: https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl
+        cause: HTTP status server error (504 Gateway Timeout) for url (https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl)
+dependency preparation failed: venv: uv lock exited 2: error: Failed to generate package metadata for `kittentts==0.8.1 @ direct+https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl`
+  cause: Request failed after 3 retries in 4.7s
+  cause: Failed to fetch: https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl
+  cause: HTTP status server error (504 Gateway Timeout) for url (https://github.com/KittenML/KittenTTS/releases/download/0.8.1/kittentts-0.8.1-py3-none-any.whl) — retry, or run `hermes pm doctor`
+
+✓ manifest — plugin.yaml parses
+✓ manifest fields — name, version, description present
+✓ requires_hermes — spec '>=0.23.0' parses
+✓ config schema — shape valid
+✓ requires_env — all entries UPPER_SNAKE
+✓ oauth — not declared
+✓ loadable — entry: __init__.py
+✓ python dependencies — 1 requirements from pyproject
+✓ capability probe — register() ran in isolation
+✓ declared tools — matches registrations
+✓ declared hooks — matches registrations
+✓ declared middleware — matches registrations
+✓ built-in tool collisions — no collisions
+✓ security scan — safe
+✓ no core override — no runtime rebinds of Hermes core
+◆ Isolation — runs in the plugin host (plugins.isolation: host)
+  · dashboard backend API is served through the plugin host (buffered responses)
+
+Validation passed.
+[exit code: 0]

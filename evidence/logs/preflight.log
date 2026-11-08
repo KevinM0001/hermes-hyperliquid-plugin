@@ -1,0 +1,13 @@
+# Preflight record (redacted for publication)
+# The check ran before the first write in ~/contest (Nov 7 2026). Details of the machine's storage (devices,
+# filesystems, mount points and options, and the node's data paths) are left out; the checks and conclusions are kept.
+$ realpath ~/contest
+~/contest                                   # a real directory, not a symlink
+$ findmnt -T ~/contest
+~/contest is on the home filesystem          [device, type and options left out]
+$ findmnt -T <the node's data storage, and each device it uses>
+none of them is the filesystem ~/contest is on   [paths, devices, types and options left out]
+$ git -C ~/contest rev-parse --show-toplevel
+fatal: not a git repository (or any of the parent directories): .git
+# Conclusion: ~/contest is a real directory on the home filesystem, separate from the node's data storage and every
+# device it uses, and not inside any repo.
