@@ -1,0 +1,3 @@
+$ cd ~/contest/hyperliquid-desk && PYTHONDONTWRITEBYTECODE=1 python3 scripts/build_dashboard.py . --check
+dashboard/dist/index.js is up to date (1024630 bytes, sha256 5bdccb30abb49ca8a57574c074b5e414ad76cb05c5f331f439eba03a41b21bb3)
+[exit code: 0]

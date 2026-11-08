@@ -1,0 +1,10 @@
+start: clicked Start
+scroll: scrolled to .hd-events
+Each market's regime over a 90 s window, ported from hl_deck; regime changes and burst alerts below. In node mode, burst alerts come from node fills, ranked against Nov 3 to 7, and liquidation alerts are added. The agent can explain any card or event (hl_alerts).
+NODE · node fills
+NODE · node fills
+NODE · node fills
+NODE · node fills
+Burst rule: BTC node fills, $30.00M (automatic: about 10 a day, measured Nov 3 to 7) · HYPE node fills, $5.00M (automatic: 14.6 a day, measured Nov 3 to 7 (the target of 10 a day has no threshold within 25%)) · xyz:SP500 node fills, $5.00M (automatic: 7.2 a day, measured Nov 3 to 7 (the target of 10 a day has no threshold within 25%)) · xyz:XYZ100 node fills, $5.00M (automatic: about 10 a day, measured Nov 3 to 7)
+Buyers ranked by bought notional · side total $1.30M
+Sellers ranked by sold notional · side total $1.30M

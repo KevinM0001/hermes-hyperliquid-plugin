@@ -1,0 +1,14 @@
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD
+70c25532e194ba62872c9248825e304db7e19c86
+[exit code: 0]
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git status --porcelain
+[exit code: 0]
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git rev-parse --abbrev-ref HEAD
+feat/node-burst-calibration
+[exit code: 0]
+# post-check (after pytest 3.14, pytest 3.12, build_dashboard --check)
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD
+70c25532e194ba62872c9248825e304db7e19c86
+[exit code: 0]
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git status --porcelain
+[exit code: 0]
