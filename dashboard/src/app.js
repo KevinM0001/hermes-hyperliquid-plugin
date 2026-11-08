@@ -2832,8 +2832,8 @@
         fr[k] = agedFresh(fr0[k], l);
         why[k] = fr[k].field + " " + fr[k].status + ": " + fr[k].reason;
       });
-      Object.keys(fr0).forEach(function (k) {         // still fresh: its ages as of now
-        if (fr0[k] && fr0[k].status === "fresh" && !why[k]) {
+      Object.keys(fr0).forEach(function (k) {         // every status shows its ages as of now
+        if (fr0[k] && !why[k]) {
           const o = Object.assign({}, fr0[k], { aged_by_s: Math.round(ageS * 1000) / 1000 });
           ["progress_age_s", "source_age_s", "last_message_age_s"].forEach(function (a) {
             if (NUM(fr0[k][a])) o[a] = Math.round((fr0[k][a] + ageS) * 1000) / 1000;
@@ -2918,7 +2918,7 @@
       Object.keys(data.deck).forEach(function (k) {
         let x = deckNode(data.deck[k]);
         const l = lapse(x.trades_freshness);
-        if (!l && x.trades_freshness && x.trades_freshness.status === "fresh") {
+        if (!l && x.trades_freshness) {
           const tf0 = x.trades_freshness;
           const tf = Object.assign({}, tf0, { aged_by_s: Math.round(ageS * 1000) / 1000 });
           ["progress_age_s", "source_age_s", "last_message_age_s"].forEach(function (a) {

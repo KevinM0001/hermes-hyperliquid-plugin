@@ -89,16 +89,16 @@ def _aged_ages(f: dict, age_s: float) -> dict:
 
 
 def age_market(ms: dict, age_s: float, when: str) -> dict:
-    """A public market block re-judged age_s after it was built: every fresh status shows its ages as of now, and a
-    lapsed one reads stale or delayed with every value built on it withheld. Unchanged at age 0."""
+    """A public market block re-judged age_s after it was built: every status shows its ages as of now, and a fresh
+    one that has lapsed reads stale or delayed with every value built on it withheld. Unchanged at age 0."""
     fr0 = ms.get("freshness") or {}
     if not _num(age_s) or age_s <= 0:
         return ms
     lapses = {k: v for k in fr0 if (v := lapse(fr0[k], age_s))}
     out = dict(ms)
     fr, why = dict(fr0), {}
-    for k, f in fr0.items():                     # still fresh: its ages as of now
-        if isinstance(f, dict) and f.get("status") == "fresh" and k not in lapses:
+    for k, f in fr0.items():                     # every status shows its ages as of now
+        if isinstance(f, dict) and k not in lapses:
             fr[k] = _aged_ages(f, age_s)
     if not lapses:
         out["freshness"] = fr
