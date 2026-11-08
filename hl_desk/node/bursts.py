@@ -11,12 +11,14 @@ The rule is the one the thresholds were measured with (analysis PLAN.md, "The bu
 - Incomplete windows: a window that starts before the segment's start, or that contains a rejected or unreadable
   record, keeps its executions but never fires, re-arms or disarms.
 
-A record is rejected or unreadable when the execution can't be read (tid, price, size or time); when its
-participants' records are missing or disagree (`complete` false) or its repeated records disagree (`conflict`); when it
-isn't exactly one taker and one maker, one buyer and one seller, each with an address; when its fill time isn't the
-block time; when its identity was already seen in an earlier block; or when the block's fills weren't read at all
-(`fills_known` false). A block time running backwards is an unreadable record at the last block time; a block with
-executions but no block time is one at both the last block time and the next.
+A record is rejected or unreadable when the executions message or an execution can't be read (its own integer tid
+and time, price, size); when it isn't exactly two fill records (`duplicates`: identical repeats the producer merged);
+when its participants' records are missing or disagree (`complete` false) or its repeated records disagree
+(`conflict`); when it isn't exactly one taker and one maker, one buyer and one seller, each with an address; when its
+fill time isn't the block time; when its identity was already seen in an earlier block; or when the block's fills
+weren't read at all (`fills_known` false). A block time running backwards is an unreadable record at the last block
+time. A record that can't be placed in time (a block with executions but no block time, or a feed line that can't be
+assigned to a market, which counts for every market) is one at both the last block time and the next.
 
 Thresholds are per market: automatic (the dated calibration, `calibration.py`) or manual (`node_burst_min_usd`).
 Public mode doesn't use this module; its bursts keep the public-trades rule (`deck.py`).
@@ -67,7 +69,7 @@ class NodeBurstRule:
         self.bad: deque[int] = deque()              # block times of rejected or unreadable records
         self.armed = {"buying": True, "selling": True}
         self.last_bt: int | None = None
-        self.untimed = False                        # an executions message without a block time since last_bt
+        self.untimed = False                        # the reason of an unplaced record since last_bt, if any
 
     # --- segments --------------------------------------------------------------------
     def boundary(self, reason: str) -> None:
@@ -87,20 +89,16 @@ class NodeBurstRule:
         if self.segment_start_ms is None:
             return
         if not isinstance(bt, int) or isinstance(bt, bool):
-            # A block without a time (the node record had none): its executions can't be placed, so they're an
-            # unreadable record at some time between the last block time and the next one. Every window that could
-            # contain it is incomplete: those containing the last block time now, and the next block's.
+            # A block without a time (the node record had none): its executions can't be placed.
             if raws or fills_known is False:
-                self._reject("a block without a block time", self.last_bt if self.last_bt is not None
-                             else self.segment_start_ms)
-                self.untimed = True
+                self.unreadable("a block without a block time")
             return
         if self.last_bt is not None and bt < self.last_bt:
             self._reject("a block time ran backwards", self.last_bt)
             return
         self.last_bt = bt
         if self.untimed:
-            self._reject("a block without a block time", bt)
+            self._reject(self.untimed, bt)
             self.untimed = False
         valid, problems = self._validate(block, bt, raws, fills_known)
         for why in problems:
@@ -135,9 +133,13 @@ class NodeBurstRule:
     def _validate(self, block: int, bt: int, raws, fills_known: bool):
         if fills_known is False:
             return [], ["the block's fills weren't read (fills_known false)"]
+        if not isinstance(raws, list):
+            return [], ["an executions message that can't be read"]
         valid, problems = [], []
-        for raw in raws if isinstance(raws, list) else []:
-            e = parse_exec(raw, block, bt) if isinstance(raw, dict) else None
+        for raw in raws:
+            # Each execution must carry its own integer tid and time (never the block's, by default).
+            e = (parse_exec(raw, block, bt) if isinstance(raw, dict) and type(raw.get("tid")) is int
+                 and type(raw.get("time_ms")) is int else None)
             if e is None:
                 problems.append("an unreadable execution (tid, price, size or time)")
                 continue
@@ -151,13 +153,22 @@ class NodeBurstRule:
                 continue                                 # an identical copy within its own block counts once
             self.seen[e.tid] = (block, bt, record)
             self.seen_order.append((bt, e.tid))
-            why = _problem(e, bt)
+            why = _problem(e, bt, raw.get("duplicates", 0))
             if why:
                 problems.append(why)
                 continue
             taker = next(p for p in e.participants if p.role == "taker")
             valid.append((SIDE_NAME[taker.side], e.notional, e))
         return valid, problems
+
+    def unreadable(self, why: str) -> None:
+        """A record that can't be placed in time (a block without a time, or a feed line that can't be assigned to
+        a market): it lies somewhere between the last block time and the next one, so every window that could
+        contain it is incomplete: those containing the last block time now, and those containing the next."""
+        if self.segment_start_ms is None:
+            return
+        self._reject(why, self.last_bt if self.last_bt is not None else self.segment_start_ms)
+        self.untimed = why
 
     def _reject(self, why: str, at_ms: int) -> None:
         self.bad.append(at_ms)
@@ -202,7 +213,11 @@ class NodeBurstRule:
                 "events": len(self.events)}
 
 
-def _problem(e: Execution, bt: int) -> str | None:
+def _problem(e: Execution, bt: int, duplicates=0) -> str | None:
+    if type(duplicates) is not int or duplicates < 0:
+        return "an unreadable execution (duplicates)"
+    if duplicates > 0:
+        return "more than two fill records (identical repeats merged: duplicates)"
     if not e.complete:
         return "an execution whose participants' records are missing or disagree (complete false)"
     if e.conflict:

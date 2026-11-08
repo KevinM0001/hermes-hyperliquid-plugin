@@ -148,6 +148,14 @@ class FeedClient:
                 mf.flow.bursts = self.burst_rule_factory(name, self)
         return mf
 
+    def unreadable_line(self, why: str) -> None:
+        """A line that can't be read or assigned to a market: counted, and, as in the burst calibration's rule, an
+        unreadable record in every market's burst windows (it could have been any market's)."""
+        self.counters["malformed"] += 1
+        for mf in self.markets.values():
+            if mf.flow.bursts is not None:
+                mf.flow.bursts.unreadable(why)
+
     # --- connection --------------------------------------------------------------
     def on_connect(self, wall_ms: int) -> None:
         self.connection = {"state": "connected", "since_wall_ms": wall_ms, "reason": None}
@@ -162,7 +170,7 @@ class FeedClient:
         self.counters["lines"] += 1
         self.last_line_mono_ns = mono_ns
         if not isinstance(obj, dict):
-            self.counters["malformed"] += 1
+            self.unreadable_line("a feed line that isn't a JSON object")
             return
         if obj.get("v") != VERSION:
             self.counters["unsupported"] += 1
@@ -182,7 +190,7 @@ class FeedClient:
         elif "kind" in obj:
             self._market_line(obj, wall_ms, mono_ns)
         else:
-            self.counters["malformed"] += 1
+            self.unreadable_line("a feed line that is neither a control nor a market line")
             return
         # The clock relationship is learned only from lines the current session accepted: a market line that
         # advanced its sequence, or the session's own hello or heartbeat. A duplicate, retired, foreign or malformed
@@ -291,7 +299,7 @@ class FeedClient:
             return
         m, seq, kind = obj.get("market"), obj.get("seq"), obj.get("kind")
         if not isinstance(m, str) or not isinstance(seq, int) or kind not in KIND_FAMILY:
-            self.counters["malformed"] += 1
+            self.unreadable_line("a feed line that can't be assigned to a market")
             return
         mf = self._market(m)
         if mf.last_seq is not None and seq <= mf.last_seq:

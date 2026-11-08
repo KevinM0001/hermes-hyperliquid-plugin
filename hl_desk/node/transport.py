@@ -90,7 +90,7 @@ def _feed(client, raw: bytes | str) -> None:
         try:
             obj = json.loads(piece)
         except ValueError:
-            client.counters["malformed"] += 1
+            client.unreadable_line("a feed line that isn't JSON")
             continue
         client.on_line(obj, int(time.time() * 1000), time.monotonic_ns())
 

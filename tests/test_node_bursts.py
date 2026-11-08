@@ -189,7 +189,8 @@ def test_rank_is_the_upper_tail_with_ties_counted_at_or_above(tmp_path):
     assert r["available"] and r["upper_tail"] == 0.75 and r["label"] == "a top 75% minute, Nov 3 to 7"
     assert c.rank("BTC", "buying", 0.5)["upper_tail"] == 1.0
     top = c.rank("BTC", "buying", 4.0)
-    assert top["upper_tail"] == 0.0 and top["label"] == "larger than every minute in the reference, Nov 3 to 7"
+    assert top["upper_tail"] == 0.0
+    assert top["label"] == "a top 0% minute, Nov 3 to 7 (larger than every minute in the reference)"
     assert c.rank("BTC", "selling", 5.0)["upper_tail"] == 1.0
     assert c.rank("HYPE", "buying", 1.0) == {"available": False, "reason": "the burst reference has no buying sums for HYPE"}
 
@@ -372,3 +373,85 @@ def test_the_schema_carries_the_calibrations_version_dates_and_achieved_rates():
         assert sc["markets"][m] == {k: x[k] for k in ("threshold_usd", "achieved_per_day", "near_target")}
         assert f"{x['achieved_per_day']:.1f} a day" in b["config"] and m in b["config"]
     assert d["version"] in b["config"] and d["dated"] in b["config"] and "node_burst_min_usd" in b["config"]
+
+
+@pytest.mark.parametrize("raws, why", [
+    (None, "an executions message that can't be read"),             # no execs list (or a body that isn't an object)
+    ({"tid": 1}, "an executions message that can't be read"),
+    ([{k: v for k, v in ex(9, 50_000, T + 61_000).items() if k != "time_ms"}],
+     "an unreadable execution (tid, price, size or time)"),           # never defaulted to the block time
+    ([dict(ex(9, 50_000, T + 61_000), tid=True)], "an unreadable execution (tid, price, size or time)"),
+    ([dict(ex(9, 50_000, T + 61_000), duplicates=1)], "more than two fill records (identical repeats merged: duplicates)"),
+    ([dict(ex(9, 50_000, T + 61_000), duplicates="x")], "an unreadable execution (duplicates)"),
+])
+def test_an_unreadable_message_or_execution_makes_its_windows_incomplete(raws, why):
+    r = rule()
+    r.on_block(100, T + 61_000, [ex(1, 50_000, T + 61_000)])
+    r.on_block(101, T + 61_000, raws)
+    r.on_block(102, T + 62_000, [ex(2, 60_000, T + 62_000)])       # $110,000 valid: crosses without the bad record
+    assert not r.events and r.counters["rejected"] == {why: 1}
+    assert sum(s[2] for s in r.samples) == 110_000
+
+
+def _client_with_rules(thr=THR):
+    """A feed client with the plugin's burst attachment at a manual threshold, its two markets' segments started."""
+    from hl_desk.config import DeskConfig
+    from hl_desk.node.manager import NodeManager
+
+    from node_helpers import client
+    mgr = NodeManager(DeskConfig(markets=["BTC", "HYPE"], node_burst_min_usd={"BTC": thr, "HYPE": thr}))
+    c = mgr.attach_bursts(client("sock-a"))
+    s = "0" * 31 + "1"
+    c.on_line({"v": 2, "control": "hello", "epoch": 7, "session": s, "started_ms": T - 5_000, "pub_ms": T - 5_000,
+               "mode": "LIVE", "markets": {"BTC": {"start_seq": 1, "snapshot": "pending"},
+                                           "HYPE": {"start_seq": 1, "snapshot": "pending"}}}, T - 4_990, 0)
+    seq = {"BTC": 0, "HYPE": 0}
+
+    def send(market, kind, body, block, bt, **over):
+        seq[market] += 1
+        line = {"v": 2, "epoch": 7, "session": s, "market": market, "seq": seq[market], "kind": kind,
+                "block": block, "block_time_ms": bt, "pub_ms": bt + 10, "body": body} | over
+        c.on_line(line, bt + 50, (bt + 50 - T) * 10 ** 6)
+    for m in ("BTC", "HYPE"):
+        send(m, "watermark", {"through_seq": 0}, 1, T)
+    return c, send
+
+
+def test_a_line_that_cant_be_assigned_to_a_market_makes_every_markets_windows_incomplete():
+    """PLAN.md: an event that can't be assigned to a market makes every market's windows containing it
+    incomplete. Here it arrives between two blocks: both markets' windows around it never fire, and neither re-arms;
+    once it has left (the next block's time + 60 s) they fire again. It is never a gap for them."""
+    c, send = _client_with_rules()
+    for m in ("BTC", "HYPE"):
+        send(m, "execs", {"execs": [ex(1, 50_000, T + 61_000)]}, 2, T + 61_000)
+    c.on_line({"v": 2, "epoch": 7, "session": "0" * 31 + "1", "market": None, "seq": 9, "kind": "execs"},
+              T + 61_100, 0)
+    for m in ("BTC", "HYPE"):
+        send(m, "execs", {"execs": [ex(2, 60_000, T + 62_000)]}, 3, T + 62_000)
+        r = c.markets[m].flow.bursts
+        assert not r.events and r.counters["gaps"] == 0
+        assert r.counters["rejected"] == {"a feed line that can't be assigned to a market": 2}   # last and next block
+        send(m, "execs", {"execs": [ex(3, 150_000, T + 122_500)]}, 4, T + 122_500)
+        assert [e["aggressive_notional_usd"] for e in r.events] == [150_000.0]
+    assert c.counters["malformed"] == 1
+
+
+def test_a_line_that_isnt_json_is_unreadable_for_every_market():
+    from hl_desk.node import transport
+    c, send = _client_with_rules()
+    for m in ("BTC", "HYPE"):
+        send(m, "execs", {"execs": [ex(1, 50_000, T + 61_000)]}, 2, T + 61_000)
+    transport._feed(c, b"{not json\n")
+    for m in ("BTC", "HYPE"):
+        send(m, "execs", {"execs": [ex(2, 60_000, T + 62_000)]}, 3, T + 62_000)
+        assert not c.markets[m].flow.bursts.events
+        assert c.markets[m].flow.bursts.counters["rejected"] == {"a feed line that isn't JSON": 2}
+
+
+def test_an_execs_line_whose_body_isnt_an_object_is_unreadable_not_empty():
+    c, send = _client_with_rules()
+    send("BTC", "execs", {"execs": [ex(1, 50_000, T + 61_000)]}, 2, T + 61_000)
+    send("BTC", "execs", "garbled", 3, T + 61_500)                  # the client reads a body that isn't an object as {}
+    send("BTC", "execs", {"execs": [ex(2, 60_000, T + 62_000)]}, 4, T + 62_000)
+    r = c.markets["BTC"].flow.bursts
+    assert not r.events and r.counters["rejected"] == {"an executions message that can't be read": 1}

@@ -106,8 +106,8 @@ class Calibration:
         frac = at_or_above / len(sums)
         pct = frac * 100
         shown = f"{pct:.2g}" if pct < 1 else f"{pct:.1f}".rstrip("0").rstrip(".")
-        label = (f"a top {shown}% minute, {self.measured}" if at_or_above else
-                 f"larger than every minute in the reference, {self.measured}")
+        label = f"a top {shown}% minute, {self.measured}" + (
+            "" if at_or_above else " (larger than every minute in the reference)")
         return {"available": True, "upper_tail": frac, "top_pct": pct, "at_or_above": at_or_above,
                 "reference_count": len(sums), "label": label,
                 "reference": f"{self.data['source']['reference']['file']} ({self.measured}, 60 s sums every 15 s)"}

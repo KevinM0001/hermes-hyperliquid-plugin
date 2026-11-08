@@ -1293,7 +1293,7 @@
               "near_target": true
             }
           },
-          "refresh": "a newer calibration ships as a new dated version; thresholds are read when the collector starts, so a change starts a new segment with its warm-up and never creates a burst by itself"
+          "refresh": "a newer calibration ships as a new dated version. Thresholds are read when the collector starts, so a change (a new version or a manual threshold) takes effect at a restart, which is a gap: a new segment with its 60 s warm-up, and no window from before it. As after any gap, a window whose sum is at or above the new threshold then fires once at its first complete evaluation"
         }
       }
     },

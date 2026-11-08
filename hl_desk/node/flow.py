@@ -126,7 +126,7 @@ class NodeFlow:
         if self.bursts is not None:
             # Node-mode bursts: one evaluation per block, under the burst calibration's rule. A block whose fills
             # weren't read is an unreadable record for them (its windows incomplete), not a gap.
-            self.bursts.on_block(block, block_time_ms, body.get("execs") or [], fills_known=known)
+            self.bursts.on_block(block, block_time_ms, body.get("execs"), fills_known=known)
         if not known:
             # For the flow's own window, unknown executions are a boundary (PROTOCOL.md 6.7).
             self.boundary(f"executions unknown at block {block} (fills record not read)", burst_gap=False)
