@@ -7,7 +7,7 @@ A live Hyperliquid market dashboard inside Hermes, on Hyperliquid's **public** d
 - **A commentary skill**, `hyperliquid-desk:hyperliquid-commentary`, that explains only what the tools returned, cites the snapshot and its freshness, and describes rather than recommends.
 - **A `/hl` command** for status and for starting, stopping and restarting the collector.
 
-It's read-only. There is no order code, no exchange endpoint, no signing and no key. Markets: `BTC`, `HYPE`, `xyz:SP500`, `xyz:XYZ100`; each must pass a metadata check against Hyperliquid's info endpoint, and unknown markets are unsupported.
+It's read-only. There is no order code, no exchange endpoint, no signing and no trading or wallet key; the only credential is the optional node feed key described under Node mode. Markets: `BTC`, `HYPE`, `xyz:SP500`, `xyz:XYZ100`; each must pass a metadata check against Hyperliquid's info endpoint, and unknown markets are unsupported.
 
 Requires **Hermes >= 0.23.0** (tested on v0.23.0), Linux or macOS.
 
@@ -60,19 +60,54 @@ Open the dashboard (`hermes dashboard`) and choose the **Hyperliquid Desk** tab.
 - **Wallets.** Addresses are public on-chain identifiers; the plugin never guesses who owns one. Bought plus sold is participation, not volume, and net bought is not a position change or PnL. An opened wallet's account state is fetched from the info endpoint for the market's dex only and is shown only when the answer's own time is recent when served (within 10 s under the clock bound, counting the time both requests took); otherwise every value is unavailable with the reason. Open orders have no response timestamp, so they're never shown as current. The tab keeps aging the account state from the moment it asked for it, so delivery time and every second the window stays open count. Once it passes 10 s, including on arrival, it is marked expired and its values are withheld until **Fetch account again** gets a new answer.
 - **Node mode** (order-level ladder columns, waiting stops, wall watch, tape flags, activity buckets) isn't in this version; those panels say "needs node mode". The resting-liquidity heatmap isn't built.
 
+## Node mode (optional)
+
+With a node feed, the tab's node panels and the `node_status`, `node_book` and `node_stops` tools show the engine's own book, waiting triggers and fills (the l4-runner live feed, protocol v2). Set `node_feed` to the engine's local Unix socket, or to a relay's `wss://` URL, and start the collector. Without it, everything above works as before and the node panels say "needs node mode".
+
+- **The protocol is followed as written.**
+  - State is kept per source, mode, producer session, replay session and market, and each family (book, triggers, depth, bands, node fills) has its own validity.
+  - A new producer session, a missing sequence number, a dropped connection or an incomplete snapshot invalidates the affected families at once. They recover only from their own snapshot, assembled off to the side and swapped in whole, never rolling state back.
+  - A retired session's late lines are ignored.
+- **Freshness comes only from the engine's watermarks**, once the client has applied everything before them. Heartbeats and connection activity never count.
+  - Each family reads LIVE, STALE (no watermark for 2 s), BEHIND (the source block is more than 5 s old), UNKNOWN (this machine's clock is behind the producer's, so ages can't be bounded) or INVALID, and every node result shows it.
+- **One stream per metric.** Public panels count public trades; node metrics (activity buckets, wallet splits, liquidations, the node tape) count node fills. The two are never added together.
+  - Whether a public trade and a node fill with the same `tid` are the same execution hasn't been proven on recorded data, so neither stream adds flags or quantity to the other.
+  - A change of input stream starts a new, labelled window.
+- **Activity buckets** (new long and cover for aggressive buying, new short and exit for aggressive selling) come from each participant's own position effect as the engine states it.
+  - A flip fills both buckets, and each converts to notional at the execution's price.
+  - Flow Deck cards and burst alerts use the aggressive side's effects over the same window, each percentage over that side's aggressive notional.
+  - Wallet splits show all fills and the aggressive (taker) fills separately, each over the wallet's own bought or sold notional.
+  - A missing effect shows the bucket as unavailable, with the unclassified notional; nothing is scaled to 100%.
+  - None of this is a change in open interest.
+- **Book panels:**
+  - **Level statistics.** "largest order size at this level" and "oldest resting order at this level" are separate statistics.
+  - **Changes.** Changes in the last 10 s are labelled only from lifecycle records: absorbed (filled as maker), pulled (canceled with nothing filled) or unknown. Nothing is called "moved".
+  - **Crossed book.** If the best bid is at or above the best ask, the book and every panel built on it read INVALID until a fresh snapshot clears it.
+  - **Liquidity thinning.** Depth per 0.5% band out to 10% from the price, in dollars and dollars per $1 of price, with the sharpest drop called out. What's resting right now. Orders can be added or pulled at any moment; this isn't a forecast.
+  - **Heatmap.** The 15-minute history starts when the book became valid and is marked partial until it covers 15 minutes.
+- **Waiting stops** are conditional interest: orders that do nothing unless the price reaches them.
+  - Each band shows its order count beside its size, and says so when one order makes up most of it.
+  - Whole-position TP/SL orders have no stated size and are counted apart.
+  - Every waiting trigger is accounted for, in a band or outside the range. The engine leaves out trailing stops (their current trigger price isn't established) and reports how many.
+- **Liquidations** count once each, for the liquidated trader, whose own position effect says long or short. A burst of them (by default 2 within 60 s, or $1M) raises its own alert.
+- **Replay** runs only when you start it: `/hl replay start [file]`, then `pause`, `resume`, `seek <time>`, `speed <x>`, `restart` and `stop` (or the tab's replay controls).
+  - Each start, seek and restart is a new replay session.
+  - Its view shows the recording's date and time, the position, the speed and whether it is playing, paused or ended.
+  - It is labelled REPLAY throughout, its end stays REPLAY, and it is never drawn over live prices or mixed into current metrics or commentary.
+
 ## Disclosures (catalog rule 13)
 
 | What | Details |
 | --- | --- |
-| Network destinations | `https://api.hyperliquid.xyz/info` (POST: `perpDexs`, `meta`, `l2Book`, `clearinghouseState`, `frontendOpenOrders`) and `wss://api.hyperliquid.xyz/ws` (subscriptions `l2Book`, `trades`, `bbo`, `activeAssetCtx`, plus `ping`). Nothing else. Each endpoint and its doc link are in [docs/ENDPOINTS.md](docs/ENDPOINTS.md). No telemetry. |
+| Network destinations | `https://api.hyperliquid.xyz/info` (POST: `perpDexs`, `meta`, `l2Book`, `clearinghouseState`, `frontendOpenOrders`) and `wss://api.hyperliquid.xyz/ws` (subscriptions `l2Book`, `trades`, `bbo`, `activeAssetCtx`, plus `ping`). Nothing else. Each endpoint and its doc link are in [docs/ENDPOINTS.md](docs/ENDPOINTS.md). No telemetry. Optional, only when you set `node_feed`: that local Unix socket or relay WebSocket URL, nothing else; the plugin writes one handshake line there and only reads. |
 | Background worker | One worker thread, `hyperliquid-desk-collector`, created with Hermes's documented `spawn_context_thread` so it keeps its profile's context, running its own asyncio loop: one websocket connection, an info poll every 5 s per market for depth books, and a snapshot every second. Blocking HTTP requests run in that loop's short-lived executor threads, never on the gateway's event loop. Snapshots stay in memory; nothing is written per snapshot. It starts only on `/hl start` or the tab's Start button, never on install, import, registration, `plugins doctor` or `plugins validate`. Stop it with `/hl stop`; `/hl restart` restarts it. Reconnects back off from 1 s to 30 s, and the disconnected state is shown. Bounded memory: 16 minutes of trades per market and the last 180 snapshots. |
 | Storage | `<HERMES_HOME>/plugin-data/hyperliquid-desk/`: `collector.lock` (marks the profile's single collector owner) and, while the collector runs, `owner.sock`, a Unix socket with mode 0600 (removed on stop). If that path is too long for a Unix socket, the socket goes in a private per-user directory under the system temp folder instead (`hl-desk-<uid>/`, mode 0700). Snapshots stay in the owner's memory: the last 180, each with the exact trades its panels used. Nothing else is written, and nothing is written outside it. Inside Hermes this profile directory is always used; the `HL_DESK_DATA_DIR` environment variable, used by the tests, is honored only where Hermes's plugin storage isn't available (outside Hermes). |
 | Local IPC | The process that owns the collector answers the profile's other Hermes processes (for example the dashboard process and a plugin host) on `owner.sock`. It serves snapshots by ID, a wallet's executions from a retained snapshot, status, stop and restart. Only the same OS user can connect, and there is no network listener. |
-| Commands | `/hl [status|start|stop|restart|help]` |
-| Tools | `hl_market`, `hl_flow`, `hl_context`, `hl_status`, `hl_alerts`, `hl_wallets`: all read-only; `hl_wallets` with an `address` makes two info requests. |
-| Dashboard routes | `/api/plugins/hyperliquid-desk/`: `snapshot`, `status`, `wallets`, `tool/<name>` (GET); `collector/start|stop|restart` (POST). |
-| Credentials | None. No secrets are read or stored. |
-| Shell commands, reads outside its data | None. The clock error bound is read with a read-only `adjtimex` system call through the C library already loaded in the process; no external command is run to find it. |
+| Commands | `/hl [status|start|stop|restart|help]`; `/hl replay start [file]|pause|resume|seek <time>|speed <x>|restart|stop` |
+| Tools | `hl_market`, `hl_flow`, `hl_context`, `hl_status`, `hl_alerts`, `hl_wallets`: all read-only; `hl_wallets` with an `address` makes two info requests. `node_status`, `node_book`, `node_stops`: read-only, from the same snapshot as the tab's node panels. |
+| Dashboard routes | `/api/plugins/hyperliquid-desk/`: `snapshot`, `status`, `wallets`, `tool/<name>` (GET); `collector/start|stop|restart` (POST); `node/replay/<start|pause|resume|seek|speed|restart|stop>` (POST). |
+| Credentials | One optional setting: `node_key`, a Hermes secret (`HL_DESK_NODE_KEY`), read only through Hermes's secret scope and sent only to a relay WebSocket URL as an `Authorization: Bearer` header. Not needed for a local socket or a relay without keys; never in `requires_env`, so the plugin loads and public mode works without it. No other secret is read or stored. |
+| Shell commands, reads outside its data | None. The clock error bound is read with a read-only `adjtimex` system call through the C library already loaded in the process; no external command is run to find it. The one file it reads outside its data is a recording you name in `node_replay_file` (or pass to `/hl replay start`), and only when you start a replay. |
 | Bundled JavaScript | TradingView Lightweight Charts 5.2.1, readable development build, Apache-2.0. License, notice and on-chart attribution are kept; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). No remote code or fonts are loaded. |
 
 ## Settings
@@ -88,6 +123,8 @@ python scripts/record_fixtures.py --out <dir> # re-records public fixtures (need
 ```
 
 The tests cover every tool's JSON shape; each data rule (a band the levels don't reach, an empty side, a duplicate trade, stale data, a frozen source behind a live connection, a quiet market, a reconnect gap, clock skew); every Flow Deck regime at its thresholds; bursts below, at and above threshold and across a gap; wallet ranks and shares against independent calculations; the metadata check per market; and the real collector against a local stand-in server, including its reconnect.
+
+The node-mode tests (`tests/test_node_*.py`) feed recorded node feed lines (`tests/fixtures/node`, provenance in its `MANIFEST.json`) through the plugin and read every intermediate tool and tab result. Two optional checks need local reference files and are skipped without them: `HL_DECK_SOURCE` (the terminal Flow Deck's `hl_deck.py`, for the bucket definitions) and `HL_DECK_LIVE_LOG` (its frames, a vocabulary check only).
 
 See [docs/DEMO.md](docs/DEMO.md) for the 90-second public-data demo, and [docs/SNAPSHOT.md](docs/SNAPSHOT.md) for the snapshot contract.
 

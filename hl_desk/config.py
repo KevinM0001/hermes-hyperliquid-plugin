@@ -29,6 +29,10 @@ class DeskConfig:
     clock_bound_s: float | None = None     # configured local clock error bound; None = ask the OS (hl_desk.clock)
     ws_url: str = WS_URL
     info_url: str = INFO_URL
+    node_feed: str = ""                    # a Unix socket path or a ws(s):// relay URL; "" = public mode only
+    node_replay_file: str = ""             # a recording, played only when a replay is started explicitly
+    liq_burst_count: int = 2
+    liq_burst_usd: float = 1_000_000.0
 
     def burst_threshold(self, market: str) -> float:
         if market in self.burst_min_usd:
@@ -80,4 +84,26 @@ def from_settings(get) -> DeskConfig:
     t = get("wallet_target_share_pct", None)
     if isinstance(t, (int, float)) and 0 < t <= 100:
         cfg.wallet_target_share_pct = float(t)
+    for key in ("node_feed", "node_replay_file"):
+        v = get(key, None)
+        if isinstance(v, str):
+            setattr(cfg, key, v.strip())
+    n = get("liq_burst_count", None)
+    if isinstance(n, int) and not isinstance(n, bool) and n > 0:
+        cfg.liq_burst_count = n
+    u = get("liq_burst_usd", None)
+    if isinstance(u, (int, float)) and not isinstance(u, bool) and u > 0:
+        cfg.liq_burst_usd = float(u)
     return cfg
+
+
+def node_key() -> str | None:
+    """The optional node feed access key, read only through Hermes's secret scope (never from a file or
+    the environment directly). None outside Hermes or when unset. Hermes's own error (for example no secret
+    scope bound on a multiplexing gateway) is raised to the caller, which reports the key as unreadable."""
+    try:
+        from agent.secret_scope import get_secret
+    except ImportError:
+        return None
+    v = get_secret("HL_DESK_NODE_KEY")
+    return v or None

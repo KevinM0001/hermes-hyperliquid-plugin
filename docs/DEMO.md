@@ -6,7 +6,7 @@ Prerequisite for the chat step (0:58): the Hermes profile needs a configured inf
 
 | Time | Screen | Say / type |
 | --- | --- | --- |
-| 0:00–0:08 | Hermes dashboard, **Hyperliquid Desk** tab, BTC | "Hyperliquid Desk: a live Hyperliquid dashboard inside Hermes, on public data only. Read-only: no keys, no orders." |
+| 0:00–0:08 | Hermes dashboard, **Hyperliquid Desk** tab, BTC | "Hyperliquid Desk: a live Hyperliquid dashboard inside Hermes, on public data only. Read-only: no trading keys, no orders." |
 | 0:08–0:20 | Header: LIVE badge, snapshot ID, freshness statuses | "Every number carries its source, snapshot ID and freshness. Fresh means the feed is advancing and its timestamps are recent; anything stale, delayed or unverified shows as unavailable with a reason, never as zero." |
 | 0:20–0:32 | Ladder and observed depth | "The ladder shows Hyperliquid's aggregated levels with their API count. Exact depth bands appear only where full-precision levels reach them; the coarse figures are labeled approximate." |
 | 0:32–0:47 | Flow Deck cards and events | "The Flow Deck, ported from my terminal deck: each market's confirmed regime, what the current window classifies as, and what that means in plain words, plus burst alerts naming the wallets behind them." |

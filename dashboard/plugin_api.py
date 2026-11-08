@@ -123,6 +123,7 @@ async def get_snapshot(market: str | None = Query(default=None), snapshot_id: st
         "collector": snap["collector"], "markets": names, "unsupported_markets": snap.get("unsupported_markets", []),
         "market": snap["markets"][chosen] if chosen else None,
         "deck": _deck_summary(snap),
+        "node_status": snap.get("node_status"),
     }
 
 
@@ -159,6 +160,33 @@ async def collector_restart():
     return await _control("restart")
 
 
+REPLAY_COMMANDS = ("start", "pause", "resume", "seek", "speed", "restart", "stop")
+
+
+@router.post("/node/replay/{cmd}")
+async def node_replay(cmd: str, arg: str | None = Query(default=None)):
+    """Explicit replay control (never automatic). seek takes milliseconds since the epoch; speed a positive number;
+    start an optional recording path (default: the node_replay_file setting)."""
+    if cmd not in REPLAY_COMMANDS:
+        return {"ok": False, "error": f"unknown replay command {cmd!r}; one of {', '.join(REPLAY_COMMANDS)}"}
+    value = arg
+    try:
+        if cmd == "seek":
+            value = int(arg) if arg is not None else None
+            if value is None:
+                return {"ok": False, "error": "seek needs arg: milliseconds since the epoch"}
+        elif cmd == "speed":
+            value = float(arg) if arg is not None else None
+            if value is None or value <= 0:
+                return {"ok": False, "error": "speed needs a positive arg"}
+    except ValueError:
+        return {"ok": False, "error": f"invalid arg {arg!r} for {cmd}"}
+    rt_mod = await _engine_async("runtime")
+    if rt_mod is None:
+        return _not_loaded()
+    return await asyncio.to_thread(rt_mod.get_runtime().replay, cmd, value)
+
+
 @router.get("/wallets")
 async def get_wallets(market: str, window_min: int = 5, address: str | None = None,
                       snapshot_id: str | None = None):
@@ -175,14 +203,16 @@ async def get_wallets(market: str, window_min: int = 5, address: str | None = No
 
 
 @router.get("/tool/{name}")
-async def run_tool(name: str, market: str | None = None, snapshot_id: str | None = None):
-    """Any read-only tool by name, for the tab's 'same as chat' check. Never starts the collector."""
+async def run_tool(name: str, market: str | None = None, snapshot_id: str | None = None,
+                   source: str | None = None):
+    """Any read-only tool by name, for the tab's 'same as chat' check (source: the node tools' live or replay).
+    Never starts the collector."""
     tools_mod, rt_mod = await _engine_async("tools"), await _engine_async("runtime")
     if tools_mod is None or rt_mod is None:
         return _not_loaded()
     if name not in tools_mod.HANDLERS:
         return {"ok": False, "error": f"unknown tool {name}"}
     import json
-    args = {k: v for k, v in (("market", market), ("snapshot_id", snapshot_id)) if v}
+    args = {k: v for k, v in (("market", market), ("snapshot_id", snapshot_id), ("source", source)) if v}
     raw = await asyncio.to_thread(tools_mod.run_tool, name, args, rt_mod.get_runtime())
     return json.loads(raw)

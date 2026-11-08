@@ -1,6 +1,6 @@
 # Hyperliquid endpoints used
 
-Every network call this plugin makes goes to one of the endpoints below, each confirmed in Hyperliquid's official API docs on 2026-11-07. All are public and read-only. The plugin never calls the exchange endpoint (`/exchange`), signs nothing and holds no keys.
+Every network call this plugin makes goes to one of the endpoints below, each confirmed in Hyperliquid's official API docs on 2026-11-07. All are public and read-only. The plugin never calls the exchange endpoint (`/exchange`), signs nothing and holds no exchange or wallet keys (the optional node feed key below is for the engine's feed, not Hyperliquid).
 
 Docs root: https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/api
 
@@ -50,3 +50,8 @@ Each gap is labeled wherever it shows:
 ## Features dropped for lack of a confirmed endpoint
 
 None of the v1 features was dropped. `openOrders` is documented as well, but `frontendOpenOrders` is used because it also lists trigger orders.
+
+## Not a Hyperliquid endpoint: the optional node feed
+
+Node mode (Handoff 1c) reads the engine's own live feed (l4-livefeed protocol v2), from a local Unix socket or a relay WebSocket URL that the user sets in `node_feed`. It isn't a Hyperliquid API endpoint, so it isn't listed above; the README's disclosures describe it.
+

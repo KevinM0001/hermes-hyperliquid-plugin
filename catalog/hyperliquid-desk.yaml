@@ -6,7 +6,7 @@ name: hyperliquid-desk
 repo: https://github.com/KevinM0001/hermes-hyperliquid-plugin
 sha: "FILL_IN_THE_ACCEPTED_40_CHARACTER_COMMIT_SHA"
 subdir: ""
-description: Live Hyperliquid dashboard tab, Flow Deck alerts, wallets and market tools with a commentary skill, all on Hyperliquid's public data. Read-only; no orders, no keys.
+description: Live Hyperliquid dashboard tab, Flow Deck alerts, wallets and market tools with a commentary skill, all on Hyperliquid's public data, with optional node panels from an engine feed. Read-only; no orders, no trading keys.
 maintainer: KevinM0001
 tier: community
 category: tools
@@ -16,9 +16,9 @@ readme: true
 platforms: [linux, macos]
 title: Hyperliquid Desk
 known_issues:
-  - Node-mode panels (waiting stops, wall watch, the opening and closing activity buckets) show "needs node mode" in this version.
+  - Node panels need a node feed (the engine's local socket or a relay) set in node_feed; without one they show "needs node mode" and public mode works as before.
 capabilities:
-  provides_tools: [hl_market, hl_flow, hl_context, hl_status, hl_alerts, hl_wallets]
+  provides_tools: [hl_market, hl_flow, hl_context, hl_status, hl_alerts, hl_wallets, node_status, node_book, node_stops]
   provides_hooks: []
   provides_middleware: []
   requires_env: []

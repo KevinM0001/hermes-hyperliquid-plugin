@@ -387,6 +387,113 @@ HANDLERS = {"hl_market": hl_market, "hl_flow": hl_flow, "hl_context": hl_context
             "hl_alerts": hl_alerts, "hl_wallets": hl_wallets}
 
 
+_NODE_SOURCE_PROP = {"type": "string", "enum": ["live", "replay"],
+                     "description": "live (default) or replay: a replay is never mixed with live data and is labelled REPLAY."}
+
+SCHEMAS.update({
+    "node_status": {
+        "name": "node_status",
+        "description": ("Node mode status: the node feed connection (local socket or relay), its producer session, and for "
+                        "each market the state of every family (book, triggers, depth, bands, node fills): LIVE, STALE, "
+                        "BEHIND, UNKNOWN (clock skew), INVALID or REPLAY, with the source watermark, plus any replay's "
+                        "recording time, position, speed and status."),
+        "parameters": {"type": "object", "properties": {"market": {"type": "string", "description": "Optional: one market only."},
+                                                        "source": _NODE_SOURCE_PROP, "snapshot_id": _SNAP_PROP}},
+    },
+    "node_book": {
+        "name": "node_book",
+        "description": ("Node-mode order book for one market from every resting order: ladder levels with total size, order "
+                        "count, 'largest order size at this level' and 'oldest resting order at this level' (separate "
+                        "statistics), changes in the last 10 s labelled only from lifecycle records (absorbed, pulled, unknown), "
+                        "walls, the liquidity-thinning bands out to 10% and whether the book is crossed (then invalid). "
+                        "With provenance and freshness."),
+        "parameters": {"type": "object", "properties": {"market": _MARKET_PROP, "source": _NODE_SOURCE_PROP,
+                                                        "snapshot_id": _SNAP_PROP}, "required": ["market"]},
+    },
+    "node_stops": {
+        "name": "node_stops",
+        "description": ("Node-mode waiting stop and take-profit orders (conditional interest) for one market, in price bands "
+                        "around the mid: each band's order count beside its size, a flag when one order makes up most of a "
+                        "band, whole-position orders of unknown size counted apart, and everything outside the range or "
+                        "excluded (trailing stops) reported, never dropped. With provenance and freshness."),
+        "parameters": {"type": "object", "properties": {"market": _MARKET_PROP, "source": _NODE_SOURCE_PROP,
+                                                        "snapshot_id": _SNAP_PROP}, "required": ["market"]},
+    },
+})
+
+
+def _node_view(snap: dict, args: dict) -> tuple[str, dict, str]:
+    market = args.get("market")
+    ms, err = _market(snap, market)
+    if err:
+        raise LookupError(err)
+    source = (args.get("source") or "live").lower()
+    if source not in ("live", "replay"):
+        raise ValueError("source must be live or replay")
+    node = ms.get("node") or {}
+    view = node.get(source)
+    if view is None:
+        reason = ("no replay is running: start one with /hl replay start" if source == "replay"
+                  else "needs node mode: no node feed configured (setting node_feed)")
+        view = {"available": False, "reason": reason}
+    return ms["market"], view, source
+
+
+def _node_envelope(tool: str, snap: dict, market: str, view: dict, source: str, body: dict) -> dict:
+    return {"tool": tool, "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
+            **_served(snap), "market": market, "source": source,
+            "mode": (view.get("provenance") or {}).get("mode") or ("REPLAY" if source == "replay" else None),
+            "provenance": view.get("provenance"), "families": view.get("families"),
+            "replay": view.get("replay"), **body,
+            "notes": ["node data is the engine's own book, triggers and fills, separate from the public-API panels",
+                      "a replay is labelled REPLAY and is never current market data"]}
+
+
+def node_status(snap: dict, args: dict, rt=None) -> dict:
+    wanted = args.get("market")
+    source = (args.get("source") or "live").lower()
+    markets = {}
+    for name, ms in snap["markets"].items():
+        if wanted and name != wanted:
+            continue
+        view = (ms.get("node") or {}).get(source)
+        if view is None:
+            markets[name] = {"available": False,
+                             "reason": "no replay is running" if source == "replay" else "no node feed configured"}
+            continue
+        markets[name] = {"families": view.get("families"), "provenance": view.get("provenance"),
+                         "book": view.get("book"), "replay": view.get("replay"), "counters": view.get("counters"),
+                         "recent_events": view.get("recent_events")}
+    if wanted and not markets:
+        raise LookupError(f"unknown market {wanted!r}")
+    return {"tool": "node_status", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
+            **_served(snap), "source": source, "node": snap.get("node_status"), "markets": markets,
+            "states": {"LIVE": "applied through a recent watermark", "STALE": "no watermark lately (heartbeats don't count)",
+                       "BEHIND": "the source block is old", "UNKNOWN": "clock skew: ages can't be bounded",
+                       "INVALID": "not recovered since a gap, new session or incomplete snapshot",
+                       "REPLAY": "a recording, never current"}}
+
+
+def node_book(snap: dict, args: dict, rt=None) -> dict:
+    market, view, source = _node_view(snap, args)
+    body = {"book": view.get("book"), "ladder": view.get("ladder"), "walls": view.get("walls"),
+            "thinning": view.get("thinning"), "tape": view.get("tape")}
+    if view.get("available") is False:
+        body = {"available": False, "reason": view.get("reason")}
+    return _node_envelope("node_book", snap, market, view, source, body)
+
+
+def node_stops(snap: dict, args: dict, rt=None) -> dict:
+    market, view, source = _node_view(snap, args)
+    body = {"stops": view.get("stops")}
+    if view.get("available") is False:
+        body = {"available": False, "reason": view.get("reason")}
+    return _node_envelope("node_stops", snap, market, view, source, body)
+
+
+HANDLERS.update({"node_status": node_status, "node_book": node_book, "node_stops": node_stops})
+
+
 def run_tool(name: str, args: dict | None, rt) -> str:
     """Resolve the snapshot and run one tool. Always returns a JSON string; never raises."""
     try:

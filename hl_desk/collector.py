@@ -53,6 +53,10 @@ class Collector:
         self.owner_api = owner_api      # answers other processes of this profile (hl_desk.owner)
         self.owner_server = None
         self.desk = DeskState(cfg, mode="LIVE")
+        from .config import node_key
+        from .node.manager import NodeManager
+        self.node = NodeManager(cfg, key_getter=node_key)     # node feed (optional) and explicit replays
+        self.desk.node = self.node
         self.thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop: asyncio.Event | None = None
@@ -126,10 +130,16 @@ class Collector:
                 await self.owner_server.close()
 
     async def _run_feeds(self) -> None:
+        # Node tasks (a configured node feed, deadline checks, an explicitly started replay) run from the start,
+        # on this loop; public metadata is loaded alongside.
+        node_tasks = self.node.tasks(self._stop)
         if not await self._load_metadata():
+            for t in node_tasks:
+                t.cancel()
+            await asyncio.gather(*node_tasks, return_exceptions=True)
             return
-        tasks = [asyncio.create_task(self._ws_loop()), asyncio.create_task(self._snapshot_loop()),
-                 asyncio.create_task(self._depth_loop())]
+        tasks = node_tasks + [asyncio.create_task(self._ws_loop()), asyncio.create_task(self._snapshot_loop()),
+                              asyncio.create_task(self._depth_loop())]
         await self._stop.wait()
         for t in tasks:
             t.cancel()

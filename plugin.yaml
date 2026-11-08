@@ -1,6 +1,6 @@
 name: hyperliquid-desk
 version: 1.0.0
-description: Live Hyperliquid dashboard tab, market tools and a commentary skill on Hyperliquid's public data. Read-only; no orders, no keys.
+description: Live Hyperliquid dashboard tab, market tools and a commentary skill on Hyperliquid's public data, with optional node panels from an engine feed. Read-only; no orders, no trading keys.
 author: KevinM0001
 manifest_version: 2
 api_version: 1
@@ -13,6 +13,9 @@ provides_tools:
   - hl_status
   - hl_alerts
   - hl_wallets
+  - node_status
+  - node_book
+  - node_stops
 provides_hooks: []
 tags: [hyperliquid, markets, dashboard, read-only]
 config_schema:
@@ -41,3 +44,29 @@ config_schema:
     default: 50
     label: Wallet list target share (%)
     description: The wallets panel lists the shortest ranked set reaching this share of its side, capped at 50 wallets.
+  node_feed:
+    type: str
+    default: ""
+    label: Node feed
+    description: Optional. A node feed to connect to when the collector starts, for the node panels. A local Unix socket path (the l4-runner live feed) or a relay WebSocket URL (wss://...). Empty means public mode only.
+  node_key:
+    type: secret
+    env: HL_DESK_NODE_KEY
+    required: false
+    label: Node feed access key
+    description: Optional. Sent only to a relay WebSocket URL, as an Authorization header. Not needed for a local socket or a relay without keys.
+  node_replay_file:
+    type: str
+    default: ""
+    label: Node replay recording
+    description: Optional. A recording made by the engine's recorder, played only when you start a replay (/hl replay start). Replays are labelled REPLAY and never mixed with live data.
+  liq_burst_count:
+    type: int
+    default: 2
+    label: Liquidation burst (count per 60 s)
+    description: Node mode. This many liquidations within 60 s of block time raise a liquidation burst alert, per market. Each liquidation counts once, for the liquidated trader.
+  liq_burst_usd:
+    type: float
+    default: 1000000
+    label: Liquidation burst (USD per 60 s)
+    description: Node mode. Liquidated notional at or above this within 60 s raises a liquidation burst alert, per market.

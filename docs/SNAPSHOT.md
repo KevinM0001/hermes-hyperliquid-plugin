@@ -11,7 +11,7 @@ The state owner builds one immutable snapshot per second. Agent tools and the da
 | `GET status` | `{ok, runtime: {owner, collector, pid}}` |
 | `POST collector/start`, `collector/stop`, `collector/restart` | `{ok, result: {owner, collector, action: {message, ok, at}}}` |
 | `GET wallets?market=BTC&window_min=5[&address=0x…][&snapshot_id=…]` | exactly the `hl_wallets` tool result; with `address`, adds `wallet: {address, trades: {executions[], totals, window}, current: {label, fetched_at (both answers in hand), times: {requested, state_received, orders_received, returned}, dex, coverage, source, account: {freshness, margin_summary: {account_value_usd, total_position_notional_usd, total_margin_used_usd}, positions: value [ {coin, size_coin, entry_px, position_value_usd, unrealized_pnl_usd, margin_used_usd, liquidation_px, leverage} ] or null+reason}, open_orders: {freshness: unverified, orders: null+reason, count: null+reason}}}`. `account.freshness` is `{status, reason, source_time_ms, source_time, assessed_at, source_age_s, source_max_age_s: 10, clock_bound_s, clock_bound_basis}` from the answer's own `time`, judged when both answers are in hand, so request time counts as age: values are given only when it is `fresh` (schema `freshness.fields.clearinghouseState`). A missing `assetPositions` makes the positions null with a reason, never an empty list. |
-| `GET tool/<name>?market=…&snapshot_id=…` | exactly that agent tool's JSON (`hl_market`, `hl_flow`, `hl_context`, `hl_status`, `hl_alerts`) |
+| `GET tool/<name>?market=…&snapshot_id=…[&source=live\|replay]` | exactly that agent tool's JSON (`hl_market`, `hl_flow`, `hl_context`, `hl_status`, `hl_alerts`, and the node tools `node_status`, `node_book`, `node_stops`, whose `source` picks the live feed or the replay) |
 
 ## Value convention
 
@@ -41,7 +41,7 @@ A metric is `{"value": <number|string>, "unit": "USD"}` or, when unavailable, `{
 | `deck.events[]` | `{type: regime_change | regime_change_withdrawn | regime_ended_by_gap | burst, market, at, at_ms, text, …}` (`regime_change_withdrawn`: a late trade changed the ticks a change was confirmed on; schema `deck.late_trades`); regime change has `from, to, held_s`; burst has `side, aggressive_notional_usd, threshold_usd, executions, wallets: <ranked list>` |
 | `wallets["1m" | "5m" | "15m"]` | `{window: {requested_min, start, end, length_s, complete, completeness}, unique_execution_notional_usd, executions, buyers: <ranked list>, sellers: <ranked list>, wallets: {address: row}, notes[]}` or `{window_min, reason}` |
 | `chart` | `{candle_s: 15, candles: [{time (unix s), open, high, low, close, volume_usd}], price_lines: [{price, label, kind}], gaps[]}` |
-| `node` | `{status: "needs node mode", panels: [...]}` |
+| `node` | `{panels, live, replay, separation}`: see "Node mode" below; without a node feed `live` is `{available: false, reason: "needs node mode: ..."}` |
 
 Ranked list: `{total_usd, listed: [{rank, address, amount_usd, share_pct}], share_reached_pct, target_pct, cap, stopped_by: target|cap|empty|exhausted, wallets_on_side, summary}`. Show `summary` verbatim, e.g. "Top 50 make up 25% of buying; the 50% target isn't reached."
 
@@ -49,6 +49,28 @@ Wallet row: `{address, bought_usd, sold_usd, aggressive_bought_usd, aggressive_s
 
 ### Flow Deck card (`deck.card`)
 
-When the 90 s window is complete: `{market, window_s, tick_s, tick, window_start_ms, window_end_ms, regime: {value: the confirmed regime} or null+reason, confirmed_regime: {state, tag, since, held_s, as_of_tick, meaning} | null, live_classification: {state, tag, tick, describes, sparse, sparse_note, meaning}, pending: {state, ticks, of} | null, numbers: {price, move_bps, net_flow_usd, volume_usd, impact (descriptive ratio), pressure (aggressive buy / sell notional), top_wallet: {value: address, share_pct, share_label, net_aggressive_usd, aggressive_bought_usd, aggressive_sold_usd, net_label} | null+reason, accounts, trades}, activity_buckets: {new_long, cover, new_short, exit (all null: needs node mode), hook}}`. The confirmed regime, the live classification and the pending change are separate; the confirmed label never describes the current numbers by itself. `meaning: {state, key_number, text, wording}` comes from schema `regimes.meanings`.
+When the 90 s window is complete: `{market, window_s, tick_s, tick, window_start_ms, window_end_ms, regime: {value: the confirmed regime} or null+reason, confirmed_regime: {state, tag, since, held_s, as_of_tick, meaning} | null, live_classification: {state, tag, tick, describes, sparse, sparse_note, meaning}, pending: {state, ticks, of} | null, numbers: {price, move_bps, net_flow_usd, volume_usd, impact (descriptive ratio), pressure (aggressive buy / sell notional), top_wallet: {value: address, share_pct, share_label, net_aggressive_usd, aggressive_bought_usd, aggressive_sold_usd, net_label} | null+reason, accounts, trades}, activity_buckets: {new_long, cover, new_short, exit, *_pct, stream: "node fills", provenance, freshness, coverage, ...} from node fills over the card's window when a node feed is configured, else each null with "needs node mode", hook}`. The confirmed regime, the live classification and the pending change are separate; the confirmed label never describes the current numbers by itself. `meaning: {state, key_number, text, wording}` comes from schema `regimes.meanings`.
 
 When it isn't: `regime` and every number are null with the reason (e.g. "window incomplete: needs 90 s after the segment start …"), and `last_confirmed` may hold the last confirmed regime, labeled historical.
+
+## Node mode (`market.node`)
+
+`market.node = {panels, live, replay, separation}`. `live` is the configured node feed's view, or `{available: false, reason}`
+(no feed configured, or the feed turned out to serve a REPLAY); `replay` is an explicitly started replay's view, or null. Live
+and replay are separate partitions and are never mixed. A view is:
+
+| Key | Shape |
+| --- | --- |
+| `provenance` | `{source, mode: LIVE/REPLAY, epoch, session, replay_session, stream, market, protocol}` |
+| `families` | per family `book`, `triggers`, `depth`, `bands`, `flow`: `{state: LIVE/STALE/BEHIND/UNKNOWN/INVALID/REPLAY, reason, watermark_block, watermark_block_time_ms, applied_through, watermark_age_ms, source_age_ms}` |
+| `connection`, `replay` | the source's connection state (with a relay's refusal reason), and a replay's status (state, speed, position, recording span, partial history) |
+| `book` | `{valid, reason, crossed: null or {since_seq, best_bid, best_ask}, book_time_ms}`: panels built on the book are `{available: false, reason}` unless valid |
+| `ladder` | `bids`/`asks` rows `{px, total_sz, orders, notional_usd, largest_order_sz, largest_order_time_ms, oldest_order_time_ms, change_10s: {added, absorbed, pulled, unknown}, stops_to_next_level}`, `labels`, `book_time_ms`, best bid/ask, mid |
+| `stops` | conditional interest: `rows` `{lo, hi, kind, side, orders, sized_orders, sz, unknown_size_orders, largest_order, dominated, size_check}`, `outside` (below, above, no reference price), `accounted`, `excluded_by_engine` |
+| `walls`, `history`, `thinning`, `tape` | wall watch; the 15-minute heatmap samples (partial until covered); the liquidity-thinning bands with the sharpest drop and its note; the node tape with flags and its coverage |
+| `liquidation_events` | liquidation bursts (also merged into `deck.events`) |
+
+Flow Deck cards carry `activity_buckets` from node fills (`stream: "node fills"`), burst events `node_activity` (their side only), and
+wallet panels `node_activity_split`; each is unavailable with a reason when the node fills don't cover its window. Top level:
+`node_status` (live connection, configured settings, replay status).
+

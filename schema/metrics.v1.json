@@ -1,6 +1,6 @@
 {
   "schema_id": "hyperliquid-desk.metrics",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Every metric, freshness rule, regime and alert rule the plugin computes, defined once. Tools, the dashboard tab and the commentary skill read these definitions; code in hl_desk/ implements them and tests in tests/ check each one against independently calculated values.",
   "sources": {
     "hyperliquid_docs": "See docs/ENDPOINTS.md for every endpoint and the doc link that confirms it.",
@@ -933,6 +933,182 @@
       "window": "the retained ticks (about 2 minutes); a trade later than that falls outside every displayed card's window and leaves older latch steps as evaluated",
       "reset_rule": "cleared at every gap with the rest of the deck",
       "completeness_rule": "the displayed card's numbers always equal the execution set's totals for its window; delivering trades late or in order ends in the same card, latch and regime changes"
+    },
+    "node.family_state": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "per family (book, triggers, depth, bands, flow): INVALID if not recovered; REPLAY for a valid replay family; UNKNOWN when client wall - pub_ms < -1000 ms; STALE when no freshness-advancing watermark for 2000 ms of client monotonic time; BEHIND when source age (wall at the watermark's receipt - block_time_ms + monotonic time since) > 5000 ms; else LIVE",
+      "units": "state",
+      "inputs": [
+        "watermark",
+        "hello",
+        "heartbeat (never advances)"
+      ],
+      "side_convention": "as stated",
+      "window": "current",
+      "reset_rule": "per producer session and replay session",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.level_total_sz": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "sum of resting executable order sizes at the price level",
+      "units": "coin",
+      "inputs": [
+        "book_snapshot",
+        "book_delta"
+      ],
+      "side_convention": "as stated",
+      "window": "current book",
+      "reset_rule": "replaced at every swap",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.level_orders": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "count of resting executable orders at the level",
+      "units": "orders",
+      "inputs": [
+        "book_snapshot",
+        "book_delta"
+      ],
+      "side_convention": "as stated",
+      "window": "current book",
+      "reset_rule": "replaced at every swap",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.largest_order_size_at_level": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "size of the largest single resting order at the level; its time is that same order's (tie: earliest time, then lowest oid). Label: 'largest order size at this level'",
+      "units": "coin",
+      "inputs": [
+        "book_snapshot",
+        "book_delta"
+      ],
+      "side_convention": "as stated",
+      "window": "current book",
+      "reset_rule": "replaced at every swap",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.oldest_resting_order_at_level": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "earliest time_ms of any resting order at the level, a separate statistic. Label: 'oldest resting order at this level'",
+      "units": "ms since epoch (shown as an age)",
+      "inputs": [
+        "book_snapshot",
+        "book_delta"
+      ],
+      "side_convention": "as stated",
+      "window": "current book",
+      "reset_rule": "replaced at every swap",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.level_change_10s": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "per level over the last 10 s of block time: added (op add), absorbed (the part of a decrease covered by maker_filled), pulled (a removal with status canceled and maker_filled 0), unknown (anything else). Never 'moved'",
+      "units": "coin",
+      "inputs": [
+        "book_delta"
+      ],
+      "side_convention": "as stated",
+      "window": "last 10 s of block time",
+      "reset_rule": "restarts at every gap (the change history never bridges one)",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.stops_band": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "waiting stop/take-profit orders grouped by trigger price into [k*width, (k+1)*width) per kind and side, within 2% of the book mid: orders, stated size (sum of sizes of orders with a size), whole-position orders (size unknown, counted), the largest order and its share of the stated size; dominated when one order is more than 50% of it. Everything outside the range is counted below/above (or under no reference price)",
+      "units": "orders; coin",
+      "inputs": [
+        "trig_snapshot",
+        "trig_delta",
+        "book mid"
+      ],
+      "side_convention": "as stated",
+      "window": "current",
+      "reset_rule": "replaced at every swap",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in; every waiting trigger accounted for; trailing stops left out by the engine and counted"
+    },
+    "node.wall": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "orders within 2% of the mid at least 5x the median order notional there; the 5 largest per side; outcome labelled from lifecycle records only",
+      "units": "coin; USD",
+      "inputs": [
+        "book_delta"
+      ],
+      "side_convention": "as stated",
+      "window": "observed since the book became valid",
+      "reset_rule": "dropped at every gap",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.heatmap_sample": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "every 5 s of block time: per price bin (the market's band width) within 2% of the mid, resting bid and ask notional",
+      "units": "USD",
+      "inputs": [
+        "book"
+      ],
+      "side_convention": "as stated",
+      "window": "15 minutes",
+      "reset_rule": "restarts at every gap; partial until it covers 15 minutes",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+    },
+    "node.thinning_band": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "per 0.5% band out to 10% from the mid, bids below and asks above: depth_usd = sum(px*sz) of resting orders in the band; usd_per_1_price = depth_usd / (mid * 0.005); orders; the largest single order and its share (dominated over 50%); sharpest drop = the largest ratio usd_per_1_price[k] / usd_per_1_price[k+1] moving away from the price, with its band and distance (an empty next band is called empty)",
+      "units": "USD; USD per $1 of price",
+      "inputs": [
+        "book"
+      ],
+      "side_convention": "as stated",
+      "window": "current book",
+      "reset_rule": "replaced at every change",
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in; note: What's resting right now. Orders can be added or pulled at any moment; this isn't a forecast."
+    },
+    "node.activity_buckets": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "over the executions of the window, counted once by (market, tid): aggressive buying = the taker's new_long and cover where the taker bought; aggressive selling = the taker's new_short and exit where it sold; each at the execution's price (bucket size x px). Percentages: buying buckets / aggressive buy notional, selling buckets / aggressive sell notional, over the same executions. Effects from each participant's signed start position s and fill size q: buy cover = min(q, max(-s,0)), new_long = q - cover; sell exit = min(q, max(s,0)), new_short = q - exit",
+      "units": "USD; % of the side's aggressive notional",
+      "inputs": [
+        "execs"
+      ],
+      "side_convention": "aggressor (taker) side",
+      "window": "the card's 90 s window or the burst's 60 s window, in node fills",
+      "reset_rule": "restarts after the first watermark following a gap, new session, replay session change or fills_known false",
+      "completeness_rule": "unavailable with a reason and the unclassified notional when any taker effect, role or identity is missing; unavailable when node fills don't cover the window; never scaled to 100%"
+    },
+    "node.wallet_split": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "per wallet: full split = its own participant effects over all its fills (maker and taker), new_long and cover over its total bought notional, new_short and exit over its total sold notional; aggressive split = its taker fills only over its aggressive bought / sold notional",
+      "units": "USD; %",
+      "inputs": [
+        "execs"
+      ],
+      "side_convention": "the wallet's own side",
+      "window": "the wallets panel's window, in node fills",
+      "reset_rule": "as node.activity_buckets",
+      "completeness_rule": "a zero denominator gives an unavailable percentage; a missing effect, role or side makes the split unavailable with the unclassified notional"
+    },
+    "node.liquidation": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "one per (liquidated trader, liquidated participant's oid), its fills summed; long when the liquidated participant sold with exit > 0, short when it bought with cover > 0",
+      "units": "USD; count",
+      "inputs": [
+        "execs.liquidation"
+      ],
+      "side_convention": "as stated",
+      "window": "per execution",
+      "reset_rule": "restarts with the flow window",
+      "completeness_rule": "position unknown (with a reason) when the effect is missing"
+    },
+    "node.liquidation_burst": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "liquidations (counted once each) within 60 s of block time >= liq_burst_count (default 2) or their notional >= liq_burst_usd (default 1,000,000); rearms when the window falls below both",
+      "units": "count; USD",
+      "inputs": [
+        "node.liquidation"
+      ],
+      "side_convention": "as stated",
+      "window": "rolling 60 s of block time",
+      "reset_rule": "restarts with the flow window",
+      "completeness_rule": "never spans a gap"
     }
   },
   "regimes": {
@@ -1091,5 +1267,8 @@
       ],
       "reason": "Handoff 1 step 5a asks for regime events and burst alerts. hl_deck's other alerts are recorded here and left for a later version."
     }
-  }
+  },
+  "changes": [
+    "1.1.0 (Handoff 1c Part B): node.* metrics from the l4-livefeed protocol v2, additive; no public-data metric changed"
+  ]
 }

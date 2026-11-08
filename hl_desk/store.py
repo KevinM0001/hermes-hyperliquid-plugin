@@ -14,6 +14,7 @@ import threading
 from collections import OrderedDict
 
 KEEP = 180
+NODE_KEEP = 60      # node views (the largest part of a snapshot) are kept in the newest 60 snapshots only
 
 
 class SnapshotStore:
@@ -34,6 +35,11 @@ class SnapshotStore:
             while len(self._ring) > self.keep:
                 old, _ = self._ring.popitem(last=False)
                 self._frozen.pop(old, None)
+            if len(self._ring) > NODE_KEEP:
+                # The snapshot that just left the newest NODE_KEEP: replace it with a copy whose node views are a
+                # labelled stub. The published object itself is never edited (a reader may be serializing it).
+                sid_old = list(self._ring.keys())[-(NODE_KEEP + 1)]
+                self._ring[sid_old] = _without_node_views(self._ring[sid_old])
             self._latest = snap
 
     def latest(self) -> dict | None:
@@ -54,3 +60,19 @@ class SnapshotStore:
     def ids(self) -> list[str]:
         with self._lock:
             return list(self._ring.keys())
+
+
+def _without_node_views(snap: dict) -> dict:
+    if snap.get("node_views_trimmed"):
+        return snap
+    stub = {"available": False, "retained": False,
+            "reason": f"node views are kept only in the newest {NODE_KEEP} snapshots (about a minute); "
+                      "the public-data panels of this snapshot are unchanged"}
+    markets = {}
+    for m, ms in (snap.get("markets") or {}).items():
+        node = ms.get("node")
+        if isinstance(node, dict):
+            node = {k: v for k, v in node.items() if k not in ("live", "replay")} | {"live": stub, "replay": stub}
+        markets[m] = dict(ms) | {"node": node}
+    return dict(snap) | {"markets": markets, "node_views_trimmed": True}
+

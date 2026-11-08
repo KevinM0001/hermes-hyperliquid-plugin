@@ -297,11 +297,16 @@ class MarketState:
                                    "open interest is in coin (the docs' size convention; the field's unit isn't stated); "
                                    "day notional volume is USD over Hyperliquid's own day window")
 
-        # --- deck, wallets, chart
+        # --- deck, wallets, chart (node buckets come from the live node feed's fills only, never public trades)
+        node_client = getattr(self, "node_client", None)
+        node_view = getattr(self, "node_view", None) or {}
         deck = {"card": self.deck.card(r_tr), "events": self.deck.events_list()}
+        deck["card"]["activity_buckets"] = self._node_card_buckets(deck["card"], node_client)
+        deck["events"] = self._node_events(deck["events"], node_client, node_view.get("live"))
         wallet_panels = {}
         for n in WALLET_WINDOWS_MIN:
             wallet_panels[f"{n}m"] = self._wallet_panel(n, r_tr)
+            self._node_wallet_splits(wallet_panels[f"{n}m"], node_client)
         chart = self._chart(top, ctx_block, ladder)
         unavailable = [{"field": v["field"], "status": v["status"], "reason": v["reason"]}
                        for v in fr.values() if v["status"] != "fresh"]
@@ -316,8 +321,70 @@ class MarketState:
                          "bbo": bbo},
                 "flow": flow_block, "context": ctx_block, "deck": deck, "wallets": wallet_panels,
                 "chart": chart,
-                "node": {"status": "needs node mode", "panels": list(NODE_PANELS),
-                         "hook": "hl_desk.node_mode (not configured in this version)"}}
+                "node": self._node_block(node_view, node_client)}
+
+    # --- node mode (Handoff 1c Part B) ------------------------------------------------
+    def _node_block(self, view: dict, client) -> dict:
+        live = view.get("live")
+        if live is None:
+            live = {"available": False, "reason": "needs node mode: no node feed configured (setting node_feed)"}
+        return {"panels": list(NODE_PANELS), "live": live, "replay": view.get("replay"),
+                "separation": "live and replay are separate partitions; replay is never drawn over live prices or mixed "
+                              "into current metrics"}
+
+    def _node_card_buckets(self, card: dict, client) -> dict:
+        from .node.panels import deck_buckets
+        base = self.deck._buckets()
+        if client is None:
+            return base | ({"reason": "needs node mode: no node feed configured (setting node_feed)"}
+                           if card.get("complete") else {})
+        if not card.get("complete"):
+            why = (card.get("regime") or {}).get("reason") or "the card's 90 s window isn't complete yet"
+            return {k: na(why, "USD") for k in ("new_long", "cover", "new_short", "exit")} | {
+                "stream": "node fills", "available": False, "reason": why}
+        # The card's window is [start, end]; node fills are counted over the same block-time span.
+        b = deck_buckets(client, self.market, card["window_start_ms"] - 1, card["window_end_ms"])
+        return _bucket_metrics(b, "the card's 90 s window") | {"hook": base.get("hook")}
+
+    def _node_events(self, events: list, client, live_view: dict | None) -> list:
+        from .node.panels import deck_buckets
+        # Published events are shared with earlier snapshots, so they're never edited: each is copied with its
+        # node buckets, which are cached here per event (and recomputed while the node fills haven't caught up).
+        cache = self.__dict__.setdefault("_burst_node_cache", {})
+        out = []
+        for ev in events:
+            if ev.get("type") == "burst":
+                key = (ev.get("at_ms"), ev.get("side"))
+                m = cache.get(key)
+                if m is None or m.get("retry"):
+                    if client is None:
+                        m = {"available": False, "reason": "needs node mode: no node feed configured"}
+                    else:
+                        b = deck_buckets(client, self.market, ev["window_start_ms_exclusive"], ev["window_end_ms"])
+                        side = "buying" if ev.get("side") == "buying" else "selling"
+                        m = _bucket_metrics(b, "the burst's 60 s window", only=side)
+                        # Not processed through the window's end yet: try again at the next build.
+                        m["retry"] = (not b.get("available")) and "not processed through" in str(b.get("reason"))
+                    cache[key] = m
+                    if len(cache) > 200:
+                        cache.pop(next(iter(cache)))
+                ev = dict(ev) | {"node_activity": m}
+            out.append(ev)
+        for le in (live_view or {}).get("liquidation_events") or []:
+            out.append(dict(le) | {"at": iso_ms(le["at_ms"]), "source": "node fills"})
+        out.sort(key=lambda e: e.get("at_ms") or 0, reverse=True)
+        return out
+
+    def _node_wallet_splits(self, panel: dict, client) -> None:
+        if not panel.get("window"):
+            return
+        users = [x["address"] for side in ("buyers", "sellers") for x in ((panel.get(side) or {}).get("listed") or [])]
+        if client is None:
+            panel["node_activity_split"] = {"available": False, "reason": "needs node mode: no node feed configured"}
+            return
+        from .node.panels import wallet_buckets
+        w = panel["window"]
+        panel["node_activity_split"] = wallet_buckets(client, self.market, users, w["start_exclusive_ms"], w["end_ms"])
 
     def _mid_for(self, t: int) -> tuple[float | None, str | None]:
         """(mid, reason): the fast book's mid closest to and not after t, within 1.5 s. A malformed best level
@@ -408,9 +475,47 @@ class MarketState:
                 "note": "candles from public trades in the current coverage segment; price lines from the fast book, context and the 20-level book"}
 
 
+def _bucket_metrics(b: dict, window_label: str, only: str | None = None) -> dict:
+    """Activity buckets as metrics: each value null with a reason when unavailable; each percentage over its
+    own side's aggressive notional from the same node fills (one population)."""
+    keys = {"buying": ("new_long", "cover"), "selling": ("new_short", "exit")}
+    out = {"stream": "node fills", "window_label": window_label, "provenance": b.get("provenance"),
+           "freshness": b.get("freshness"), "coverage": b.get("coverage")}
+    if not b.get("available"):
+        reason = b.get("reason") or "node fills unavailable"
+        for side, ks in keys.items():
+            if only and side != only:
+                continue
+            for k in ks:
+                out[k] = na(reason, "USD")
+        return out | {"available": False, "reason": reason}
+    out["available"] = True
+    out["window"] = b.get("window")
+    for side, ks in keys.items():
+        if only and side != only:
+            continue
+        sd = b[side]
+        out[f"{side}_aggressive_usd"] = val(sd["aggressive_usd"], "USD")
+        for k in ks:
+            if sd["available"]:
+                out[k] = val(sd["buckets"][k], "USD")
+                p = (sd.get("pct") or {}).get(k)
+                out[f"{k}_pct"] = (val(round(p, 4), f"% of aggressive {side} notional") if p is not None else
+                                   na(sd.get("reason") or f"no aggressive {side} notional", f"% of aggressive {side} notional"))
+            else:
+                out[k] = na(sd["reason"], "USD")
+                out[f"{k}_pct"] = na(sd["reason"], f"% of aggressive {side} notional")
+        out[f"{side}_unclassified_usd"] = val(sd["unclassified_usd"], "USD")
+    out["no_single_taker_usd"] = val(b.get("no_single_taker_usd"), "USD")
+    out["population"] = ("each bucket counts the aggressive (taker) side's own position effects; percentages divide by "
+                         "that side's aggressive notional over the same node fills; not a change in open interest")
+    return out
+
+
 class DeskState:
     def __init__(self, cfg: DeskConfig, mode: str = "LIVE") -> None:
         self.cfg = cfg
+        self.node = None          # hl_desk.node.manager.NodeManager when running under a collector
         self.mode = mode
         self.run_id = secrets.token_hex(3)
         self.seq = 0
@@ -435,6 +540,10 @@ class DeskState:
         link = self.link
         # The exact executions each market's panels were built from, kept beside the snapshot (not serialized).
         self.frozen_last = {m: (s.store.segment_start_ms, tuple(s.store.trades)) for m, s in self.markets.items()}
+        node_views = self.node.views(wall_ms, now_ns) if self.node is not None else {}
+        for m, s in self.markets.items():
+            s.node_view = node_views.get(m)
+            s.node_client = self.node.live_client() if self.node is not None else None
         return {
             "snapshot_id": sid,
             "built_at_ms": wall_ms,
@@ -448,6 +557,7 @@ class DeskState:
             "clock_relationship": dict(zip(("bound_s", "basis"), self.clock.get())),
             "unsupported_markets": list(self.unsupported),
             "metadata": self.metadata,
+            "node_status": self.node.status() if self.node is not None else {"live": None, "replay": None},
         }
 
 

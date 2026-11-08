@@ -184,6 +184,25 @@ class Runtime:
             self._release()
             return self._result("stopped" if stopped else "stop requested; the worker is still closing", ok=stopped)
 
+    def replay(self, cmd: str, arg=None) -> dict:
+        """Control the explicit node replay (start [path], pause, resume, seek <ms>, speed <x>, restart, stop) in the
+        process that owns the collector. A replay is never started automatically."""
+        if not self._own():
+            remote = self._ask({"op": "replay", "cmd": cmd, "arg": arg})
+            if remote is None:
+                return {"ok": False, "error": "the collector isn't running for this profile (start it with /hl start)"}
+            return remote
+        return self._local_replay(cmd, arg)
+
+    def _local_replay(self, cmd, arg) -> dict:
+        c = self.collector
+        if c is None or not c.alive():
+            return {"ok": False, "error": "the collector isn't running for this profile (start it with /hl start)"}
+        try:
+            return c.node.call(lambda: c.node.replay_command(str(cmd), arg))
+        except Exception as exc:
+            return {"ok": False, "error": f"replay {cmd} failed: {type(exc).__name__}: {exc}"}
+
     def restart(self) -> dict:
         if not self._own():
             remote = self._ask({"op": "restart"})
@@ -210,6 +229,8 @@ class Runtime:
         if op == "wallet_trades":
             return {"ok": True, "result": self._local_wallet_trades(
                 req.get("snapshot_id"), req.get("market"), req.get("window_min"), req.get("address"))}
+        if op == "replay":
+            return self._local_replay(req.get("cmd"), req.get("arg"))
         if op in ("stop", "restart"):
             _spawn(getattr(self, op), f"{THREAD_NAME}-{op}")
             return {"ok": True, "message": f"{op} requested from another process; the owner (pid {os.getpid()}) is doing it"}

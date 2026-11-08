@@ -1,0 +1,38 @@
+{
+  "source": "Handoff 1c Part A deliverable recording w1212920000-120s.jsonl (engine recorder, protocol v2, allowlist livefeed-v2.0)",
+  "source_sha256": "a5a4c34ada5674c3c7a7531a3ad0b7835977d771495fa79ffc447b5802628885",
+  "source_bytes": 64157357,
+  "fixtures": [
+    {
+      "file": "xyz-2markets-66s.jsonl.gz",
+      "lines_kept": 1245,
+      "bytes_uncompressed": 6056123,
+      "sha256_uncompressed": "c53926c0fc3b08b00436f22ae2fc9879e65e1c4f4dc3a29b4f6269f3f235232f",
+      "filter": "the header line, then every line whose msg.market is xyz:SP500 or xyz:XYZ100 up to 66 s of block time after the first (ending after a complete snapshot pair in both markets), byte for byte; no trailer (the cut ends before the recording does); per-market sequences stay complete",
+      "block_time_span_ms": [
+        1794084476147,
+        1794084542112
+      ]
+    },
+    {
+      "file": "execs-4markets-120s.jsonl.gz",
+      "lines_kept": 2170,
+      "bytes_uncompressed": 1145559,
+      "sha256_uncompressed": "0a264e1dee146e7829b189393c46864420d25b854210af8857cd5cc366805292",
+      "filter": "header and trailer lines, then every execs and watermark line of all four markets, byte for byte (per-market sequences have holes: for flow tests only)"
+    },
+    {
+      "file": "restart-xyz-XYZ100.ndjson.gz",
+      "lines_kept": 306,
+      "bytes_uncompressed": 1915915,
+      "sha256_uncompressed": "b0a8603753486d91631ac7bbe4e641603939152f3fc442856b41ccd1cdb5aec6",
+      "source": "Part A follow test taps (tap-run1.ndjson then tap-run2.ndjson): verbatim producer lines of two producer sessions, before and after a real restart",
+      "source_sha256": {
+        "run1": "bd9032201b3c05f28aa81fd2a8fc97ced5345765c0f22aca3335bec540bf5f8e",
+        "run2": "e8a2cc5fe8ca47c742897c310814c5f585fca8a76e1a77cb476b78139220a7d3"
+      },
+      "filter": "each run's hello line, then its xyz:XYZ100 lines for the first 20 s of block time and the heartbeats published up to 1 s after the last of them, byte for byte; run 1 then run 2"
+    }
+  ],
+  "note": "lines are copied unchanged from the recording; nothing is synthesized"
+}
