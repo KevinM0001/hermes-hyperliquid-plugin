@@ -936,7 +936,7 @@
     },
     "node.family_state": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
-      "formula": "per family (book, triggers, depth, bands, flow): INVALID if not recovered; REPLAY for a valid replay family; UNKNOWN when client wall - pub_ms < -1000 ms; STALE when no freshness-advancing watermark for 2000 ms of client monotonic time; BEHIND when source age (wall at the watermark's receipt - block_time_ms + monotonic time since) > 5000 ms; else LIVE",
+      "formula": "per family (book, triggers, depth, bands, flow): INVALID if not recovered; REPLAY for a valid replay family; UNKNOWN when client wall - pub_ms < -1000 ms; STALE when no freshness-advancing watermark since the family became valid; otherwise from the node feed's delay (Kevin, Nov 8): delay(t) = wall at the market's latest timed watermark's receipt - its block_time_ms + monotonic time since receipt, averaged exactly over the last 5000 ms (or since the first watermark) = delay_ms; STALE when delay_ms > 30000; BEHIND (shown as DELAYED) when delay_ms > 10000; else LIVE. Heartbeats never count, so a silent feed's delay keeps growing",
       "units": "state",
       "inputs": [
         "watermark",
@@ -1315,6 +1315,7 @@
   },
   "changes": [
     "1.1.0 (Handoff 1c Part B): node.* metrics from the l4-livefeed protocol v2, additive; no public-data metric changed",
-    "1.2.0 (burst calibration, Kevin's choice A): node-mode bursts on node fills with the calibration's rule (alerts.burst.node_mode), automatic thresholds from a dated calibration with a manual override, and a rank against the calibration's reference; the public-trades burst rule is unchanged and is public mode's"
+    "1.2.0 (burst calibration, Kevin's choice A): node-mode bursts on node fills with the calibration's rule (alerts.burst.node_mode), automatic thresholds from a dated calibration with a manual override, and a rank against the calibration's reference; the public-trades burst rule is unchanged and is public mode's",
+    "1.2.0 also (Kevin, Nov 8, node-mode flicker): node.family_state comes from the node feed's delay, the latest watermark's age averaged over 5 s, LIVE up to 10 s, BEHIND (shown as DELAYED) above it, STALE above 30 s; the tab never blanks for a delay"
   ]
 }

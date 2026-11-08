@@ -74,6 +74,7 @@ Each result has an `unavailable` list. Mention what matters for the question, fo
 
 ## 8. Node data (node_status, node_book, node_stops)
 
+- When you describe node data, give the node feed's delay from `node_status` (`markets[m].delay.delay_ms`, the latest watermark's age averaged over 5 s) and its state; DELAYED is `BEHIND` in the data.
 - Node data is the engine's own book, waiting triggers and fills. Name it as node data, with its source, mode (LIVE or REPLAY), producer epoch and the state of each family it uses (LIVE, STALE, BEHIND, UNKNOWN, INVALID, REPLAY). Only LIVE is current.
 - A REPLAY result is a recording: say "in the recording, at <position>", give the recording's date, and never describe it as the market now or mix it with live numbers.
 - When the book reads INVALID (for example crossed, or after a gap), say so and the reason; quote no ladder, wall, thinning or heatmap number from it.

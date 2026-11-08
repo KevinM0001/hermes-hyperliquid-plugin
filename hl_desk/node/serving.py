@@ -1,11 +1,12 @@
 """Node results aged to the moment a latest snapshot is served (Codex review 7, B1).
 
 A snapshot is built once a second, but a tool may read the latest one up to a few seconds later. A node family
-that was LIVE at build time stops being LIVE once its last watermark is older than its stale limit, or its source
-block older than its source limit (PROTOCOL.md section 8). So every node result a tool serves from the latest
-snapshot is re-judged at serving time: each LIVE family status has its ages advanced by the snapshot's age when
-served, and any family that has lapsed reads STALE or BEHIND with the reason. Every number built on it is then
-withheld, exactly as the panel builder withholds it for a family that isn't usable.
+that was LIVE at build time stops being LIVE once the node feed's delay (the 5 s average of the latest watermark's
+age, client.delay) passes the delayed or stale limit. So every node result a tool serves from the latest snapshot is
+re-judged at serving time: each LIVE family status has its delay and ages advanced by the snapshot's age when served
+(an upper bound: the average can grow no faster than time passes), and any family that has lapsed reads BEHIND or
+STALE with the reason. Every number built on it is then withheld, exactly as the panel builder withholds it for a
+family that isn't usable.
 
 A historical snapshot (read by ID) is not aged: it is labelled as of its build time. REPLAY families run on the
 replay's own clock and are never aged. The tab's snapshot route isn't aged here either: the tab ages what it
@@ -13,6 +14,8 @@ shows itself, counting the served age and every second since it asked (app.js sn
 """
 
 from __future__ import annotations
+
+from .client import delay_state
 
 USABLE = ("LIVE", "REPLAY")
 BUCKET_KEYS = ("new_long", "cover", "new_short", "exit")
@@ -25,19 +28,14 @@ def aged_status(st: dict | None, age_ms: float | None) -> dict | None:
     if age_ms is None:
         return dict(st, state="STALE", reason="the snapshot's age when served isn't known, so it can't be shown as current")
     out = dict(st, aged_by_ms=round(age_ms))
-    wm, lim = st.get("watermark_age_ms"), st.get("stale_after_ms")
-    src, src_lim = st.get("source_age_ms"), st.get("max_source_age_ms")
-    if not all(isinstance(x, (int, float)) for x in (wm, lim, src, src_lim)):
-        return out | {"state": "STALE", "reason": "its age or limit isn't known, so it can't be shown as current"}
-    out["watermark_age_ms"], out["source_age_ms"] = round(wm + age_ms), round(src + age_ms)
-    if wm + age_ms > lim:
-        return out | {"state": "STALE",
-                      "reason": f"no watermark for {(wm + age_ms) / 1000:.1f} s (limit {lim / 1000:.1f} s) by the time "
-                                "this was served; heartbeats don't count"}
-    if src + age_ms > src_lim:
-        return out | {"state": "BEHIND",
-                      "reason": f"source block is {(src + age_ms) / 1000:.1f} s old (limit {src_lim / 1000:.1f} s) by "
-                                "the time this was served"}
+    keys = ("watermark_age_ms", "source_age_ms", "delay_ms", "delayed_after_ms", "stale_after_ms")
+    if not all(isinstance(st.get(k), (int, float)) for k in keys):
+        return out | {"state": "STALE", "reason": "its delay or limit isn't known, so it can't be shown as current"}
+    for k in ("watermark_age_ms", "source_age_ms", "delay_ms"):
+        out[k] = round(st[k] + age_ms)
+    state, reason = delay_state(out["delay_ms"], st)
+    if state != "LIVE":
+        return out | {"state": state, "reason": f"{reason}, by the time this was served"}
     return out
 
 
@@ -50,9 +48,15 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
     if not isinstance(view, dict) or not isinstance(view.get("families"), dict):
         return view
     fams = {k: aged_status(v, age_ms) for k, v in view["families"].items()}
-    if fams == view["families"]:
+    dl = view.get("delay")
+    if isinstance(dl, dict) and dl.get("available") and age_ms is not None:
+        dl = dict(dl, delay_ms=round(dl["delay_ms"] + age_ms), current_ms=round(dl["current_ms"] + age_ms),
+                  aged_by_ms=round(age_ms))
+        state, reason = delay_state(dl["delay_ms"], dl | {"delay_window_ms": dl["window_ms"]})
+        dl.update(state=state, reason=reason)
+    if fams == view["families"] and dl is view.get("delay"):
         return view
-    out = dict(view, families=fams)
+    out = dict(view, families=fams, delay=dl)
     book, trig, fl = fams.get("book") or {}, fams.get("triggers") or {}, fams.get("flow") or {}
     if "book" in out and book.get("state") not in USABLE and (view["families"].get("book") or {}).get("state") in USABLE:
         why = _why("book", book)

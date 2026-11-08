@@ -487,6 +487,16 @@
 .hd-pill-warn { background: rgba(242,193,78,0.2); color: #FBE3A6; margin-left: 0; }
 .hd-chips { display: flex; flex-wrap: wrap; gap: 4px 6px; }
 
+/* node feed delay counter (top of the tab): one fixed-height line, fixed-width number, so nothing moves */
+.hd-delaybar { display: flex; align-items: center; gap: 10px; height: 30px; padding: 0 14px; margin: 0 0 10px; overflow: hidden;
+  white-space: nowrap; font-size: 11.5px; color: var(--hd-text-2); border: 1px solid var(--hd-line, rgba(255,255,255,0.08)); border-radius: 8px; }
+.hd-delaybar-k { font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; }
+.hd-delaybar-v { display: inline-block; min-width: 5.5em; text-align: right; font-family: var(--hd-mono); font-size: 14px;
+  font-variant-numeric: tabular-nums; }
+.hd-delaybar-state { display: inline-block; min-width: 7em; }
+.hd-delaybar-sub { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
+.hd-delaybar-note { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; text-align: right; }
+
 /* node status strip */
 .hd-nodestrip { padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 11.5px; color: var(--hd-text-2); overflow: visible; }
 .hd-nodestrip-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }

@@ -465,6 +465,7 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
                              "reason": "no replay is running" if source == "replay" else "no node feed configured"}
             continue
         markets[name] = {"families": view.get("families"), "provenance": view.get("provenance"),
+                         "delay": view.get("delay"),
                          "book": view.get("book"), "replay": view.get("replay"), "counters": view.get("counters"),
                          "recent_events": view.get("recent_events"),
                          "bursts": view.get("bursts")}
@@ -472,8 +473,10 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
         raise LookupError(f"unknown market {wanted!r}")
     return {"tool": "node_status", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
             **_served(snap), "source": source, "node": snap.get("node_status"), "markets": markets,
-            "states": {"LIVE": "applied through a recent watermark", "STALE": "no watermark lately (heartbeats don't count)",
-                       "BEHIND": "the source block is old", "UNKNOWN": "clock skew: ages can't be bounded",
+            "states": {"LIVE": "the node feed's delay (5 s average of the latest watermark's age) is within its limit",
+                       "BEHIND": "delayed: the node feed's 5 s average delay is above the delayed limit",
+                       "STALE": "the node feed's 5 s average delay is above the stale limit (heartbeats don't count)",
+                       "UNKNOWN": "clock skew: ages can't be bounded",
                        "INVALID": "not recovered since a gap, new session or incomplete snapshot",
                        "REPLAY": "a recording, never current"}}
 

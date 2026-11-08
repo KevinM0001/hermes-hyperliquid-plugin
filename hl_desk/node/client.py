@@ -21,6 +21,20 @@ from .flow import NodeFlow
 from .proto import CLIENT_DEFAULTS, FAMILIES, KIND_FAMILY, SNAPSHOT_KINDS, STATE_FAMILIES, VERSION, VIEW_FAMILIES
 from .triggers import NodeTriggers, TriggerError
 
+
+def delay_state(delay_ms, limits: dict) -> tuple[str, str | None]:
+    """A family's state from the market's averaged node-feed delay (client.delay), with its reason."""
+    win = limits.get("delay_window_ms", 5_000) / 1000
+    if not isinstance(delay_ms, (int, float)):
+        return "STALE", "the node feed's delay isn't known"
+    if delay_ms > limits["stale_after_ms"]:
+        return "STALE", (f"the node feed's delay is {delay_ms / 1000:.1f} s ({win:g} s average; stale above "
+                         f"{limits['stale_after_ms'] / 1000:g} s); heartbeats don't count")
+    if delay_ms > limits["delayed_after_ms"]:
+        return "BEHIND", (f"the node feed's delay is {delay_ms / 1000:.1f} s ({win:g} s average; delayed above "
+                          f"{limits['delayed_after_ms'] / 1000:g} s)")
+    return "LIVE", None
+
 # Clock skew is judged on the worst offset (receipt wall time minus publication time) among the lines accepted in
 # the last SKEW_WINDOW_MS: a delayed line, whose offset is large, never clears a skew seen moments before it.
 SKEW_WINDOW_MS = 10_000
@@ -78,6 +92,7 @@ class MarketFeed:
         self.run_start: int | None = None       # first seq of the current contiguous run (the gap boundary)
         self.expected_start: int | None = None  # from hello.markets[m].start_seq
         self.book: NodeBook | None = None
+        self.wm_hist: deque = deque()                # (receipt mono ns, receipt wall ms - block time ms) per timed watermark
         self.triggers: NodeTriggers | None = None
         self.depth: dict | None = None
         self.bands: dict | None = None
@@ -373,6 +388,10 @@ class FeedClient:
             mf.counters["watermarks_without_time"] += 1
             mf.note("watermark without a block time: freshness not advanced", seq=seq)
             return
+        mf.wm_hist.append((mono_ns, wall_ms - bt))
+        keep_ns = (self.cfg["delay_window_ms"] + 60_000) * 1_000_000
+        while len(mf.wm_hist) > 2 and mf.wm_hist[1][0] < mono_ns - keep_ns:
+            mf.wm_hist.popleft()
         if isinstance(block, int):
             mf.flow.on_watermark(block, bt)
             fl = mf.fam["flow"]
@@ -638,7 +657,8 @@ class FeedClient:
         out = {"family": fam, "watermark_block": f.wm_block, "watermark_block_time_ms": f.wm_block_time_ms,
                "applied_through": f.applied_through,
                # the limits the state was judged by, so a reader holding this status can keep aging it
-               "stale_after_ms": self.cfg["stale_after_ms"], "max_source_age_ms": self.cfg["max_source_age_ms"]}
+               "delay_window_ms": self.cfg["delay_window_ms"], "delayed_after_ms": self.cfg["delayed_after_ms"],
+               "stale_after_ms": self.cfg["stale_after_ms"]}
         if not f.valid:
             return out | {"state": "INVALID", "reason": f.reason}
         if fam == "book" and mf.crossed is not None:
@@ -659,15 +679,39 @@ class FeedClient:
             return out | {"state": "STALE", "reason": "the last watermark carried no source time, so its age can't be bounded"}
         since_ms = (now_mono_ns - f.wm_recv_mono_ns) / 1e6
         out["watermark_age_ms"] = round(since_ms)
-        if since_ms > self.cfg["stale_after_ms"]:
-            return out | {"state": "STALE",
-                          "reason": f"no watermark for {since_ms / 1000:.1f} s (limit {self.cfg['stale_after_ms'] / 1000:.1f} s); "
-                                    "heartbeats don't count"}
-        if f.wm_block_time_ms is not None:
-            src_age = (f.wm_recv_wall_ms - f.wm_block_time_ms) + since_ms
-            out["source_age_ms"] = round(src_age)
-            if src_age > self.cfg["max_source_age_ms"]:
-                return out | {"state": "BEHIND",
-                              "reason": f"source block is {src_age / 1000:.1f} s old (limit "
-                                        f"{self.cfg['max_source_age_ms'] / 1000:.1f} s)"}
-        return out | {"state": "LIVE", "reason": None}
+        out["source_age_ms"] = round((f.wm_recv_wall_ms - f.wm_block_time_ms) + since_ms)
+        d = self.delay(market, now_mono_ns)
+        out["delay_ms"] = d["delay_ms"]
+        state, reason = delay_state(d["delay_ms"], self.cfg)
+        return out | {"state": state, "reason": reason}
+
+    def delay(self, market: str, now_mono_ns: int | None = None) -> dict:
+        """The node feed's delay for a market: the age of its latest watermark (receipt wall time minus block time,
+        plus the time since receipt), averaged exactly over the last delay_window_ms (or since the first watermark,
+        if that is shorter), and its current value. Heartbeats don't count: a silent feed's delay keeps growing."""
+        now_mono_ns = time.monotonic_ns() if now_mono_ns is None else now_mono_ns
+        mf = self.markets.get(market)
+        win = self.cfg["delay_window_ms"]
+        base = {"window_ms": win, "delayed_after_ms": self.cfg["delayed_after_ms"],
+                "stale_after_ms": self.cfg["stale_after_ms"]}
+        allh = list(mf.wm_hist) if mf is not None else []
+        if not allh:
+            return base | {"delay_ms": None, "current_ms": None, "reason": "no timed watermark from this source yet"}
+        hist = [h for h in allh if h[0] <= now_mono_ns]
+        if not hist:
+            # Judged at a moment before the first watermark's receipt (another clock): its age is its receipt delay.
+            return base | {"delay_ms": round(allh[0][1]), "current_ms": round(allh[0][1]), "covered_ms": 0}
+        lo = now_mono_ns - win * 1_000_000
+        total, covered = 0.0, 0.0
+        for i, (r, off) in enumerate(hist):
+            end = hist[i + 1][0] if i + 1 < len(hist) else now_mono_ns
+            a, b = max(r, lo), end
+            if b <= a:
+                continue
+            # delay(t) = off + (t - r) on [a, b]; integrate it (ms x ms)
+            span = (b - a) / 1e6
+            total += span * (off + ((a - r) + (b - r)) / 2e6)
+            covered += span
+        cur = hist[-1][1] + (now_mono_ns - hist[-1][0]) / 1e6
+        avg = total / covered if covered > 0 else cur
+        return base | {"delay_ms": round(avg), "current_ms": round(cur), "covered_ms": round(covered)}

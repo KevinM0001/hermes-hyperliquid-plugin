@@ -217,6 +217,18 @@ def _liquidation_bursts(mf, ps: PanelState, opts: dict) -> None:
 
 # --- views -------------------------------------------------------------------------
 
+def node_delay(client, market: str, now_mono_ns=None) -> dict:
+    """The node feed's delay for the market on screen (the tab's counter): the latest watermark's age averaged over
+    the last 5 s, its current value, and the state it gives (LIVE, BEHIND as "delayed", STALE). A replay has no
+    delay: it runs on its own clock."""
+    from .client import delay_state
+    if client.mode == "REPLAY":
+        return {"available": False, "reason": "a replay runs on its own clock: no live delay"}
+    d = client.delay(market, now_mono_ns)
+    state, reason = delay_state(d.get("delay_ms"), d | {"delay_window_ms": d["window_ms"]})
+    return {"available": d.get("delay_ms") is not None, "state": state, "reason": reason or d.get("reason")} | d
+
+
 def provenance(client, market: str) -> dict:
     return {"source": client.source, "mode": client.mode, "epoch": client.epoch, "session": client.session,
             "replay_session": client.replay_session if client.mode == "REPLAY" else None,
@@ -478,6 +490,7 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
     mf = client.markets.get(market)
     fam = families(client, market, now_wall_ms, now_mono_ns)
     base = {"provenance": provenance(client, market), "families": fam,
+            "delay": node_delay(client, market, now_mono_ns),
             "connection": dict(client.connection),
             "replay": dict(client.replay) if (client.mode == "REPLAY" and client.replay) else None}
     if mf is None:

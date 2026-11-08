@@ -17800,11 +17800,11 @@
   //   ladder's numbers; live and replay never share a panel, and the replay is never started by the tab.
 
   const NODE_FAMILIES = ["book", "triggers", "depth", "bands", "flow"];
-  const FAMILY_TONE = { LIVE: "ok", REPLAY: "replay", STALE: "warn", BEHIND: "warn", UNKNOWN: "info", INVALID: "bad" };
+  const FAMILY_TONE = { LIVE: "ok", REPLAY: "replay", STALE: "warn", BEHIND: "warn", DELAYED: "warn", UNKNOWN: "info", INVALID: "bad" };
   const FAMILY_LEGEND = [
-    ["LIVE", "applied through a watermark that arrived within its age limit, from a recent source block"],
-    ["STALE", "no freshness-advancing watermark within the limit; heartbeats don't count"],
-    ["BEHIND", "watermarks arrive, but the source block they name is older than the limit"],
+    ["LIVE", "the node feed's delay (the latest watermark's age, 5 s average) is within its limit"],
+    ["DELAYED", "the node feed's 5 s average delay is above the delayed limit (state BEHIND in the data)"],
+    ["STALE", "the node feed's 5 s average delay is above the stale limit; heartbeats don't count"],
     ["UNKNOWN", "clock skew: this machine's clock can't bound the ages"],
     ["INVALID", "not usable (no snapshot yet, a gap, a new producer epoch, a crossed book) until a fresh snapshot"],
     ["REPLAY", "played back from a recording, never current"]
@@ -17817,6 +17817,8 @@
   const HEAT_RGB = { bid: "76,154,255", ask: "255,154,77" };
 
   function famTone(s) { return FAMILY_TONE[s] || "dim"; }
+  // BEHIND is shown as DELAYED: since Nov 8 it means the node feed's averaged delay is above the delayed limit.
+  function famLabel(s) { return s === "BEHIND" ? "DELAYED" : (s || "?"); }
   function famOk(f) { return !!f && (f.state === "LIVE" || f.state === "REPLAY"); }
   // A view from a configured node source always names its provenance; the "no node feed" placeholder doesn't.
   function nodeOn(v) { return !!(v && v.provenance); }
@@ -17885,7 +17887,7 @@
     const f = props.f;
     if (!f) return h("span", { className: "hd-chip hd-tone-dim" }, props.name + ": not in snapshot");
     return h("span", { className: "hd-chip hd-tone-" + famTone(f.state), title: famTitle(props.name, f) },
-      h("span", { className: "hd-dot", "aria-hidden": "true" }), props.name + " \u00b7 " + (f.state || "?"));
+      h("span", { className: "hd-dot", "aria-hidden": "true" }), props.name + " \u00b7 " + famLabel(f.state));
   }
 
   function FamChips(props) {
@@ -17965,6 +17967,30 @@
   }
 
   // ---- node status strip (connection, producer, families, configuration)
+
+  // The node feed's delay for the market on screen, at the top of the tab (Kevin, Nov 8): the age of the latest
+  // watermark averaged over the last 5 s, from each snapshot (about once a second), with the state it gives. A fixed
+  // row, always present, so nothing below it moves; the note on the right says when the snapshot on screen has aged
+  // past a limit (the next snapshot replaces it in place; a delay never blanks the page).
+  function DelayBar(props) {
+    const d = props.delay;
+    const live = props.nodeOn && d && d.available;
+    const label = live ? famLabel(d.state) : null;
+    const value = live ? (d.delay_ms / 1000).toFixed(1) + " s" : "\u2013";
+    const why = !props.nodeOn ? "no node feed configured" : !d ? "the node delay isn't in this snapshot" :
+      d.available ? null : (d.reason || "not available");
+    return h("div", { className: "hd-delaybar", role: "status", "aria-live": "off" },
+      h("span", { className: "hd-delaybar-k" }, "Node feed delay"),
+      h("b", { className: cx("hd-delaybar-v", live && "hd-tone-text-" + famTone(d.state)) }, value),
+      h("span", { className: "hd-delaybar-state" }, live ? h("span", { className: "hd-chip hd-tone-" + famTone(d.state), title: d.reason || "" },
+        h("span", { className: "hd-dot", "aria-hidden": "true" }), label) : null),
+      h("span", { className: "hd-delaybar-sub hd-dim" }, live
+        ? "latest watermark's age, " + (d.window_ms / 1000) + " s average \u00b7 now " + (d.current_ms / 1000).toFixed(1) +
+          " s \u00b7 delayed above " + (d.delayed_after_ms / 1000) + " s, stale above " + (d.stale_after_ms / 1000) + " s"
+        : why),
+      h("span", { className: cx("hd-delaybar-note", props.aged && "hd-tone-text-warn"), title: props.aged || "" },
+        props.aged ? "Snapshot on screen: " + props.aged : ""));
+  }
 
   function NodeStrip(props) {
     const ns = props.ns;
@@ -19578,13 +19604,14 @@
     return h("div", { className: "hd-kv" }, h("span", { className: "hd-dim" }, props.k), " ", h("b", { className: "hd-num" }, props.children));
   }
 
-  // <pure:snapshotValidity> Whether a served snapshot may still be shown as current. Its age is the age the backend
-  // reported when serving it plus all the time since the tab sent the request, so delivery delay and the time it
-  // stays on screen count (an upper bound). It is withheld once that age passes the latest-snapshot limit, or once
+  // <pure:snapshotValidity> Whether a served snapshot is still current. Its age is the age the backend reported
+  // when serving it plus all the time since the tab sent the request, so delivery delay and the time it stays on
+  // screen count (an upper bound). It is no longer current once that age passes the latest-snapshot limit, or once
   // any status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) would no longer
-  // be fresh: progress age past its max age, or source age plus the clock bound past its source max age. The same
-  // holds for every node family it shows as LIVE (node panels, node buckets, wallet splits): watermark age past
-  // the stale limit, or source age past the source limit.
+  // be fresh: progress age past its max age, or source age plus the clock bound past its source max age; or once a
+  // node family it shows as LIVE would be past the delayed limit by its averaged delay. Since Nov 8 (Kevin) the tab
+  // never blanks on this: the snapshot stays on screen, the delay bar says it has aged and why, and the next
+  // snapshot replaces it in place. Only "no snapshot at all" shows the empty view.
   function snapshotValidity(data, requestedPerf, nowPerf, latestMaxS) {
     const served = (data && data.served) || {};
     if (served.latest !== true) {
@@ -19619,11 +19646,10 @@
         }
       }
     }
-    // Node families age the same way. A family LIVE when the snapshot was built stops being LIVE once its last
-    // watermark is older than its stale limit or its source block older than its source limit, counting the
-    // snapshot's age when served and all the time since the tab asked for it; then every node value built on it
-    // (node panels, the Flow Deck's node buckets, wallet splits) would no longer be current. REPLAY families run
-    // on the replay's own clock and aren't aged.
+    // Node families age the same way. A family LIVE when the snapshot was built stops being LIVE once the node
+    // feed's averaged delay passes its delayed limit, counting the snapshot's age when served and all the time since
+    // the tab asked for it; then every node value built on it (node panels, the Flow Deck's node buckets, wallet
+    // splits) would no longer be current. REPLAY families run on the replay's own clock and aren't aged.
     const nodes = [];
     const nlive = (m.node && m.node.live) || {};
     Object.keys(nlive.families || {}).forEach(function (k) { nodes.push([(m.market || "market") + " node " + k, nlive.families[k]]); });
@@ -19642,23 +19668,15 @@
     for (let i = 0; i < nodes.length; i++) {
       const label = nodes[i][0], st = nodes[i][1];
       if (!st || st.state !== "LIVE") continue;
-      if (typeof st.watermark_age_ms !== "number" || typeof st.stale_after_ms !== "number") {
-        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but its watermark age or limit isn't in " +
+      if (typeof st.delay_ms !== "number" || typeof st.delayed_after_ms !== "number") {
+        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but its delay or limit isn't in " +
           "the snapshot, so it isn't shown as current" };
       }
-      const wmAge = st.watermark_age_ms / 1000 + age;
-      if (wmAge > st.stale_after_ms / 1000) {
-        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now its last watermark is about " +
-          wmAge.toFixed(1) + " s old (limit " + (st.stale_after_ms / 1000) + " s; heartbeats don't count), so the snapshot isn't shown as current" };
-      }
-      if (typeof st.source_age_ms !== "number" || typeof st.max_source_age_ms !== "number") {
-        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but its source age or limit isn't in " +
-          "the snapshot, so its age can't be bounded and it isn't shown as current" };
-      }
-      const srcAge = st.source_age_ms / 1000 + age;
-      if (srcAge > st.max_source_age_ms / 1000) {
-        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now its source block is about " +
-          srcAge.toFixed(1) + " s old (limit " + (st.max_source_age_ms / 1000) + " s), so the snapshot isn't shown as current" };
+      // The 5 s average can grow no faster than time passes: its value now is at most this.
+      const delay = st.delay_ms / 1000 + age;
+      if (delay > st.delayed_after_ms / 1000) {
+        return { ok: false, age: age, reason: label + " was LIVE when the snapshot was built, but by now the node feed's delay is " +
+          "up to " + delay.toFixed(1) + " s (5 s average; delayed above " + (st.delayed_after_ms / 1000) + " s)" };
       }
     }
     return { ok: true, age: age, reason: null };
@@ -19883,6 +19901,7 @@
     const alive = useRef(false);
     const newest = useRef({});
     const shown = useRef(null);   // {data, requestedPerf}: the snapshot on screen and when the tab asked for it
+    const [aged, setAged] = useState(null);   // why the snapshot on screen is no longer current (shown in place)
 
     const poll = useCallback(function (force) {
       if (!alive.current || document.hidden) return;
@@ -19899,15 +19918,10 @@
           const prev = newest.current[name];
           if (isNum(prev) && isNum(data.built_at_ms) && data.built_at_ms < prev) return; // an older answer arriving late
           newest.current[name] = data.built_at_ms;
-          // An answer that arrives already too old (a slow delivery) is withheld on arrival, never shown.
+          // An answer that arrives already aged (a slow delivery) is still shown, in place, with the delay bar
+          // saying why it isn't current: a delay never blanks the page (Kevin, Nov 8).
           const v = snapshotValidity(data, requestedPerf, performance.now(), LATEST_MAX_S);
-          if (!v.ok) {
-            shown.current = null;
-            setResp(null);
-            setNoSnap({ error: v.reason });
-            setPollErr(null);
-            return;
-          }
+          setAged(v.ok ? null : v.reason);
           shown.current = { data: data, requestedPerf: requestedPerf };
           setResp(data);
           setNoSnap(null);
@@ -19920,6 +19934,7 @@
         } else {
           // No current snapshot (collector stopped, not publishing, or not running): never keep old values on screen.
           shown.current = null;
+          setAged(null);
           setResp(null);
           setNoSnap(data || { error: "empty answer from the snapshot route" });
           setPollErr(null);
@@ -19931,20 +19946,16 @@
       });
     }, []);
 
-    // The snapshot on screen keeps aging: withhold it, and say why, as soon as it is too old or any status it
-    // shows as fresh would no longer be fresh (snapshotValidity). Runs while the page is hidden too, so a return
-    // to the tab never shows an old snapshot.
+    // The snapshot on screen keeps aging: once it is too old, or a status it shows as fresh would no longer be
+    // fresh (snapshotValidity), the delay bar says so, in place, about once a second. The page is never blanked
+    // for a delay (Kevin, Nov 8); the next snapshot replaces this one in place.
     useEffect(function () {
       const id = setInterval(function () {
         const s = shown.current;
         if (s === null) return;
         const v = snapshotValidity(s.data, s.requestedPerf, performance.now(), LATEST_MAX_S);
-        if (!v.ok) {
-          shown.current = null;
-          setResp(null);
-          setNoSnap({ error: v.reason });
-        }
-      }, 250);
+        setAged(v.ok ? null : v.reason);
+      }, 1000);
       return function () { clearInterval(id); };
     }, []);
 
@@ -20056,6 +20067,7 @@
         resp: resp, noSnap: noSnap, selected: market, onMarket: chooseMarket,
         busy: busy, action: action, onControl: control
       }),
+      h(DelayBar, { delay: nlive && nlive.delay, nodeOn: nodeOn(nlive), aged: aged }),
       m ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market }) : null,
       m ? h(Fragment, null,
         h("div", { className: "hd-row hd-row-a" },

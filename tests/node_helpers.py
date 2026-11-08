@@ -34,7 +34,7 @@ XYZ = FIX / "xyz-2markets-66s.jsonl.gz"
 EXECS = FIX / "execs-4markets-120s.jsonl.gz"
 RESTART = FIX / "restart-xyz-XYZ100.ndjson.gz"
 OPTS = {"liq_burst_count": 2, "liq_burst_usd": 1_000_000}
-NO_AGE = {"stale_after_ms": 10 ** 12, "max_source_age_ms": 10 ** 15}
+NO_AGE = {"stale_after_ms": 10 ** 12, "delayed_after_ms": 10 ** 15}
 
 
 def read_recording(path: Path) -> tuple[dict, list[tuple[int, dict]]]:

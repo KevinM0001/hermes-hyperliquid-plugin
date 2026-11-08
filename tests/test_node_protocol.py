@@ -309,7 +309,7 @@ def test_trigger_cancelled_during_a_gap_with_its_snapshot_delayed_or_dropped(sur
     # the wait, and the same snapshot then reaches the client from outside the stream (a relay cache) first.
     snap_seq = trig_snap[0][1]["seq"]
     plugin = surfaces([SP])
-    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "max_source_age_ms": 10 ** 9}))
+    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "delayed_after_ms": 10 ** 9}))
     _start(c, h)
     for rx, m in ms:
         if m["seq"] != 456 and m["seq"] < snap_seq:
@@ -517,7 +517,7 @@ def test_ladder_stops_are_unavailable_while_the_triggers_are(surfaces):
 def test_old_backlog_delivered_at_normal_speed_reads_behind(surfaces):
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "max_source_age_ms": 5_000}))
+    c = plugin.attach(client(cfg={"delayed_after_ms": 5_000, "stale_after_ms": 10 ** 12}))
     _start(c, h)
     lag = 10 * 60 * 1000                                       # received 10 minutes after the blocks
     for rx, m in ms[:300]:
@@ -527,27 +527,58 @@ def test_old_backlog_delivered_at_normal_speed_reads_behind(surfaces):
         if any(m2["kind"] == "watermark" for _, m2 in ms[:ms.index((rx, m)) + 1]):
             assert all(f["state"] in ("BEHIND", "INVALID") for f in v["families"].values()), v["families"]
     st = v["families"]["book"]
-    assert st["state"] == "BEHIND" and st["source_age_ms"] > 5_000
+    assert st["state"] == "BEHIND" and st["source_age_ms"] > 5_000 and st["delay_ms"] > 5_000
     assert plugin.last["node_book"]["ladder"]["available"] is False and "BEHIND" in plugin.last["node_book"]["ladder"]["reason"]
 
 
+def _avg_delay(watermarks, t, window=5_000):
+    """The node feed's delay at t, counted here in exact fractions: over (t - window, t], each instant's latest
+    watermark received at or before it, aged by (the instant minus its block time), averaged over the covered time."""
+    from fractions import Fraction
+    total, covered = Fraction(0), 0
+    got = [(rx, bt) for rx, bt in watermarks if rx <= t]
+    for i, (rx, bt) in enumerate(got):
+        a, b = max(rx, t - window), (got[i + 1][0] if i + 1 < len(got) else t)
+        if b > a:
+            total += (b - a) * (Fraction(a + b, 2) - bt)
+            covered += b - a
+    return float(total / covered)
+
+
 def test_frozen_producer_with_live_heartbeats_reads_stale(surfaces):
+    """Heartbeats keep arriving, blocks don't. Lines are received 400 ms after their blocks (published at 300 ms),
+    a steady feed. After the freeze, the latest watermark's age keeps growing by exactly the time passed, and its
+    5 s average (the node feed's delay) grows with it, both as counted here independently; the families read STALE
+    exactly once the average passes the stale limit, set 2 s above the delay the feed had while it ran, and the
+    ladder is then withheld."""
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "max_source_age_ms": 10 ** 9}))
-    _start(c, h)
-    for rx, m in ms[:300]:
-        c.on_line(m, rx, rx * 10 ** 6)
-        plugin.read(XY, rx)
-    rx = ms[299][0]
-    last_wm = max(r for r, m in ms[:300] if m["kind"] == "watermark")
-    assert plugin.read(XY, rx)["families"]["book"]["state"] == "LIVE"
-    for k in range(1, 6):                                      # heartbeats keep arriving, blocks don't
-        t = rx + k * 1000
+    c = plugin.attach(client(cfg={"delayed_after_ms": 10 ** 12, "stale_after_ms": 10 ** 12}))
+    start = ms[0][1]["block_time_ms"]
+    c.on_line(dict(hello_from(h), pub_ms=start + 300), start + 400, (start + 400) * 10 ** 6)
+    wms = []
+    for _, m in ms[:300]:
+        now = m["block_time_ms"] + 400
+        c.on_line(dict(m, pub_ms=m["block_time_ms"] + 300), now, now * 10 ** 6)
+        if m["kind"] == "watermark" and m.get("block_time_ms"):
+            wms.append((now, m["block_time_ms"]))
+    v = plugin.read(XY, now)
+    d0, cur0 = v["families"]["book"]["delay_ms"], v["delay"]["current_ms"]
+    assert v["families"]["book"]["state"] == "LIVE" and abs(d0 - _avg_delay(wms, now)) <= 1 and d0 < 1_000
+    c.cfg["stale_after_ms"] = d0 + 2_000
+    prev, states = d0, []
+    for k in range(1, 9):                                      # heartbeats keep arriving, blocks don't
+        t = now + k * 1000
         c.on_line({"v": 2, "control": "heartbeat", "epoch": c.epoch, "session": c.session, "pub_ms": t}, t, t * 10 ** 6)
         v = plugin.read(XY, t)
-        assert v["families"]["book"]["state"] == ("STALE" if t - last_wm > 2_000 else "LIVE")
-    assert "heartbeats don't count" in v["families"]["book"]["reason"]
+        st = v["families"]["book"]
+        assert v["delay"]["current_ms"] == cur0 + k * 1000          # heartbeats don't count
+        assert st["delay_ms"] > prev and abs(st["delay_ms"] - _avg_delay(wms, t)) <= 1
+        assert st["state"] == ("STALE" if st["delay_ms"] > d0 + 2_000 else "LIVE")
+        prev = st["delay_ms"]
+        states.append(st["state"])
+    assert states[0] == "LIVE" and states[-1] == "STALE"
+    assert "heartbeats don't count" in st["reason"]
     assert plugin.last["node_book"]["ladder"]["available"] is False
 
 
@@ -555,7 +586,7 @@ def test_lost_final_event(surfaces):
     h, ms = _xyz_market(XY)
     assert ms[-1][1]["kind"] == "watermark"
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "max_source_age_ms": 10 ** 9}))
+    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "delayed_after_ms": 10 ** 9}))
     _start(c, h)
     for rx, m in ms[:-1]:                                     # the final watermark never arrives
         c.on_line(m, rx, rx * 10 ** 6)
@@ -576,14 +607,16 @@ def test_lost_final_event(surfaces):
 
 
 def test_quiet_market_stays_live_on_watermarks(surfaces):
-    """xyz:XYZ100 has 25 s with no execution (92 watermarks): flow stays LIVE, the tape doesn't change, and the
-    activity buckets over the quiet span are available and zero, never unavailable or stale."""
+    """xyz:XYZ100 has 25 s with no execution (92 watermarks): flow stays LIVE on its watermarks alone (its stale limit
+    is 2 s above the recording's largest receipt delay, which a 25 s silence without watermarks would pass), the
+    tape doesn't change, and the activity buckets over the quiet span are available and zero, never unavailable."""
     h, ms = _xyz_market(XY)
     ex = [m["block_time_ms"] for _, m in ms if m["kind"] == "execs" and m["body"].get("execs")]
     quiet_len, q0, q1 = max((b - a, a, b) for a, b in zip(ex, ex[1:]))
     assert quiet_len > 20_000
+    worst = max(rx - m["block_time_ms"] for rx, m in ms if m["kind"] == "watermark" and m.get("block_time_ms"))
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "max_source_age_ms": 10 ** 9}))
+    c = plugin.attach(client(cfg={"delayed_after_ms": 10 ** 12, "stale_after_ms": worst + 2_000}))
     _start(c, h)
     tape = None
     watermarks = 0
@@ -611,7 +644,7 @@ def test_a_retired_sessions_line_never_changes_freshness(surfaces):
     current session's clock relationship: the families stay UNKNOWN, through chat and tab."""
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "max_source_age_ms": 10 ** 9}))
+    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "delayed_after_ms": 10 ** 9}))
     _start(c, h)
     for rx, m in ms:
         c.on_line(m, rx, rx * 10 ** 6)
@@ -641,7 +674,7 @@ def test_a_duplicate_or_delayed_line_never_clears_clock_skew(surfaces):
     Only once no skewed line has been seen for the whole window does the clock relationship recover."""
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "max_source_age_ms": 10 ** 9}))
+    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "delayed_after_ms": 10 ** 9}))
     _start(c, h)
     for rx, m in ms:
         c.on_line(dict(m, pub_ms=rx + 2_500), rx, rx * 10 ** 6)     # received 2.5 s "before" publication
@@ -668,11 +701,12 @@ def test_a_watermark_without_a_source_time_never_makes_a_family_live(surfaces):
     """Review 6, B1. PROTOCOL.md 2.1 lets block_time_ms be null when the node record had no parseable time. Such a
     watermark can't bound the source's age: (a) after the first snapshots it leaves the families STALE, never
     LIVE, through chat and tab, with the ladder withheld; the first timed watermark then makes them LIVE.
-    (b) Once LIVE, null-time watermarks don't refresh freshness: past the 2 s limit the families read STALE."""
+    (b) Once LIVE, null-time watermarks don't refresh the delay: it keeps growing, and past the stale limit (2 s
+    above the delay at the last timed watermark) the families read STALE with the ladder withheld."""
     h, ms = _xyz_market(XY)
     first_wm = next(i for i, (_, m) in enumerate(ms) if m["kind"] == "watermark")
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 2_000, "max_source_age_ms": 10 ** 9}))
+    c = plugin.attach(client(cfg={"delayed_after_ms": 10 ** 12, "stale_after_ms": 10 ** 12}))
     _start(c, h)
     for rx, m in ms[:first_wm + 1]:
         m = dict(m, block_time_ms=None) if m["kind"] == "watermark" else m
@@ -687,21 +721,27 @@ def test_a_watermark_without_a_source_time_never_makes_a_family_live(surfaces):
         c.on_line(m, rx, rx * 10 ** 6)
     v = plugin.read(XY, ms[nxt][0])
     assert v["families"]["book"]["state"] == "LIVE" and plugin.last["node_book"]["ladder"]["bids"]
-    # (b) later null-time watermarks, received promptly for 3 s: freshness isn't refreshed by them
-    later = [(rx, m) for rx, m in ms[nxt + 1:] if ms[nxt][0] < rx <= ms[nxt][0] + 3_000]
+    # (b) later null-time watermarks, received promptly for 8 s: the delay isn't refreshed by them
+    limit = v["families"]["book"]["delay_ms"] + 2_000
+    c.cfg["stale_after_ms"] = limit
+    later = [(rx, m) for rx, m in ms[nxt + 1:] if ms[nxt][0] < rx <= ms[nxt][0] + 8_000]
+    prev, stale = v["families"]["book"]["delay_ms"], False
     for rx, m in later:
         c.on_line(dict(m, block_time_ms=None) if m["kind"] == "watermark" else m, rx, rx * 10 ** 6)
-        v = plugin.read(XY, rx)
-        if rx - ms[nxt][0] > 2_000:
-            assert v["families"]["book"]["state"] == "STALE"
+        st = plugin.read(XY, rx)["families"]["book"]
+        assert st["delay_ms"] >= prev
+        prev = st["delay_ms"]
+        assert st["state"] == ("STALE" if st["delay_ms"] > limit else "LIVE")
+        if st["state"] == "STALE":
+            stale = True
             assert plugin.last["node_book"]["ladder"]["available"] is False
-    assert any(rx - ms[nxt][0] > 2_000 for rx, _ in later)
+    assert stale and any(m["kind"] == "watermark" for _, m in later)
 
 
 def test_clock_skew_reads_unknown(surfaces):
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
-    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "max_source_age_ms": 10 ** 9}))
+    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "delayed_after_ms": 10 ** 9}))
     _start(c, h)
     for rx, m in ms[:200]:
         t = m["pub_ms"] - 2_500                               # this machine's clock is 2.5 s behind the producer's

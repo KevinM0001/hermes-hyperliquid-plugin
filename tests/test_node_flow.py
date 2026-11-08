@@ -199,13 +199,18 @@ def test_public_mode_keeps_its_public_trades_bursts(surfaces):
 
 
 def test_latest_reads_withhold_node_fill_results_once_their_flow_lapses(surfaces, monkeypatch):
-    """Review 7, B1, for results built from node fills: the Flow Deck card's buckets (hl_alerts) and the wallet
-    split (hl_wallets) are available in the latest snapshot when built, with the node fills LIVE; read 2.5 s later,
-    past the 2 s watermark limit, they are withheld with the reason, through chat and the tab's tool route."""
+    """Review 7, B1, for results built from node fills, with Kevin's Nov 8 delay rule: the Flow Deck card's buckets
+    (hl_alerts) and the wallet split (hl_wallets) are available in the latest snapshot when built, with the node
+    fills LIVE; read 2.5 s later, past the stale limit by their delay bound (set here 2 s above the delay they had
+    when built), they are withheld with the reason, through chat and the tab's tool route."""
     from hl_desk import runtime, tools
     e = _flip_buy()
-    plugin, (card, wal) = _plugin_run(surfaces, [{"execs": [e]}], client_cfg={"stale_after_ms": 2_000, "max_source_age_ms": 5_000})
+    _, (probe, _) = _plugin_run(surfaces, [{"execs": [e]}])
+    d = probe["freshness"]["delay_ms"]                  # this feed's delay when built (it was silent ~50 s before)
+    plugin, (card, wal) = _plugin_run(surfaces, [{"execs": [e]}],
+                                      client_cfg={"delayed_after_ms": d + 1_000, "stale_after_ms": d + 2_000})
     assert card["available"] and card["freshness"]["state"] == "LIVE" and wal["available"]
+    assert card["freshness"]["delay_ms"] == d
 
     def latest(tool, extra=None):
         monkeypatch.setattr(runtime.time, "time", lambda: (NOW + 2_500) / 1000)

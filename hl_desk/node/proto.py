@@ -26,8 +26,12 @@ DECIMAL_RE = re.compile(r"^-?[0-9]+(\.[0-9]+)?$")
 CLIENT_DEFAULTS = {
     "max_snapshot_bytes": 64 * 1024 * 1024,
     "snapshot_timeout_ms": 10_000,
-    "stale_after_ms": 2_000,
-    "max_source_age_ms": 5_000,
+    # Freshness (Kevin, Nov 8: no toggling): a family's state comes from the node feed's delay, the age of the
+    # market's latest watermark (now minus its block time) averaged over the last delay_window_ms. It reads BEHIND
+    # ("delayed") above delayed_after_ms and STALE above stale_after_ms, both well above the normal delay.
+    "delay_window_ms": 5_000,
+    "delayed_after_ms": 10_000,
+    "stale_after_ms": 30_000,
     "skew_tolerance_ms": 1_000,
     "buffer_messages": 50_000,       # book/trigger deltas kept since the last gap, for snapshot catch-up
 }
