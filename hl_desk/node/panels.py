@@ -513,14 +513,15 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
 
 # --- integration with the public panels (one stream per metric) ---------------------------------
 
-def _flow_ok(client, market):
-    st = client.family_status(market, "flow")
+def _flow_ok(client, market, now_wall_ms=None, now_mono_ns=None):
+    st = client.family_status(market, "flow", now_wall_ms, now_mono_ns)
     return st["state"] in ("LIVE", "REPLAY"), st
 
 
-def flow_meta(client, market: str) -> dict:
-    """Provenance and the flow family's freshness, for any result built from node fills."""
-    return {"provenance": provenance(client, market), "freshness": _flow_ok(client, market)[1]}
+def flow_meta(client, market: str, now_wall_ms=None, now_mono_ns=None) -> dict:
+    """Provenance and the flow family's freshness (judged at the snapshot's build time when given), for any result
+    built from node fills."""
+    return {"provenance": provenance(client, market), "freshness": _flow_ok(client, market, now_wall_ms, now_mono_ns)[1]}
 
 
 def stream_key(client) -> tuple | None:
@@ -531,12 +532,13 @@ def stream_key(client) -> tuple | None:
             client.replay_session if client.mode == "REPLAY" else None)
 
 
-def deck_buckets(client, market: str, start_ms: int, end_ms: int) -> dict:
+def deck_buckets(client, market: str, start_ms: int, end_ms: int, now_wall_ms=None, now_mono_ns=None) -> dict:
     """Flow Deck activity buckets over (start_ms, end_ms], from node fills only."""
     mf = client.markets.get(market) if client else None
     if mf is None:
-        return {"available": False, "reason": "no node feed for this market"} | (flow_meta(client, market) if client else {})
-    ok, st = _flow_ok(client, market)
+        return {"available": False, "reason": "no node feed for this market"} | (
+            flow_meta(client, market, now_wall_ms, now_mono_ns) if client else {})
+    ok, st = _flow_ok(client, market, now_wall_ms, now_mono_ns)
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:
         return meta | {"available": False, "reason": f"node fills {st['state']}: {st.get('reason')}"}
@@ -554,12 +556,13 @@ def deck_buckets(client, market: str, start_ms: int, end_ms: int) -> dict:
                    "coverage": cov, **_jsonable_activity(a)}
 
 
-def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int) -> dict:
+def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int, now_wall_ms=None, now_mono_ns=None) -> dict:
     """Each listed wallet's own split over (start_ms, end_ms], from node fills only."""
     mf = client.markets.get(market) if client else None
     if mf is None:
-        return {"available": False, "reason": "no node feed for this market"} | (flow_meta(client, market) if client else {})
-    ok, st = _flow_ok(client, market)
+        return {"available": False, "reason": "no node feed for this market"} | (
+            flow_meta(client, market, now_wall_ms, now_mono_ns) if client else {})
+    ok, st = _flow_ok(client, market, now_wall_ms, now_mono_ns)
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:
         return meta | {"available": False, "reason": f"node fills {st['state']}: {st.get('reason')}"}

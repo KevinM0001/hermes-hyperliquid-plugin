@@ -7,6 +7,7 @@ never against the module's own helpers.
 from __future__ import annotations
 
 import copy
+import json
 import os
 import re
 from decimal import Decimal
@@ -67,7 +68,7 @@ NOW = T0 + 111_200                           # snapshots are built here: card wi
 SESSION = "0" * 31 + "1"
 
 
-def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000, history=None):
+def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000, history=None, client_cfg=None):
     """Feed exec bodies to the plugin's live node client as protocol v2 lines (each followed by a watermark), next
     to a complete public Flow Deck card and a wallet panel listing W over the same span. After every line, read
     the card's activity buckets (hl_alerts) and the wallet panel's node split (hl_wallets), through chat and the
@@ -80,7 +81,8 @@ def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000,
     for k in range(1, 112):                  # public trades: W buys every second (so the wallet panel lists W)
         t = T0 + k * 1000
         ms.on_trades([trade(SP, t, 6800.0, 0.01, "B", W, B, k)], k * NS, t)
-    c = plugin.attach(client())
+    plugin.desk.collector = {"state": "connected", "note": "offline test feed"}
+    c = plugin.attach(client(cfg=client_cfg))
     c.on_line({"v": 2, "control": "hello", "epoch": 7, "session": SESSION, "started_ms": T0 - 20_000,
                "pub_ms": T0 - 20_000, "mode": "LIVE", "markets": {SP: {"start_seq": 1, "snapshot": "pending"}}},
               T0 - 19_950, 0)
@@ -157,6 +159,31 @@ def test_burst_node_buckets_through_the_plugin(surfaces):
     plugin.read(SP, NOW, (NOW - T0) * 10 ** 6)
     (b,) = [e for e in plugin.last["events"] if e.get("type") == "burst"]
     assert b["node_activity"]["available"] is False and b["node_activity"]["provenance"]["epoch"] == 8
+
+
+def test_latest_reads_withhold_node_fill_results_once_their_flow_lapses(surfaces, monkeypatch):
+    """Review 7, B1, for results built from node fills: the Flow Deck card's buckets (hl_alerts) and the wallet
+    split (hl_wallets) are available in the latest snapshot when built, with the node fills LIVE; read 2.5 s later,
+    past the 2 s watermark limit, they are withheld with the reason, through chat and the tab's tool route."""
+    from hl_desk import runtime, tools
+    e = _flip_buy()
+    plugin, (card, wal) = _plugin_run(surfaces, [{"execs": [e]}], client_cfg={"stale_after_ms": 2_000, "max_source_age_ms": 5_000})
+    assert card["available"] and card["freshness"]["state"] == "LIVE" and wal["available"]
+
+    def latest(tool, extra=None):
+        monkeypatch.setattr(runtime.time, "time", lambda: (NOW + 2_500) / 1000)
+        via_chat = json.loads(tools.run_tool(tool, {"market": SP, **(extra or {})}, plugin.rt))
+        if tool == "hl_alerts":
+            via_tab = plugin.http.get(f"/api/plugins/hyperliquid-desk/tool/{tool}", params={"market": SP}).json()
+            strip = lambda r: {k: v for k, v in r.items() if k not in ("served", "historical")}
+            assert strip(via_chat) == strip(via_tab)
+        return via_chat
+    ab = latest("hl_alerts")["cards"][SP]["card"]["activity_buckets"]
+    assert ab["available"] is False and "node fills STALE" in ab["reason"] and "by the time this was served" in ab["reason"]
+    assert all(ab[k]["value"] is None for k in ("new_long", "cover", "new_short", "exit"))
+    assert not any(k.endswith("_pct") for k in ab)
+    split = latest("hl_wallets", {"window_min": 5})["panel"]["node_activity_split"]
+    assert split["available"] is False and "node fills STALE" in split["reason"] and "wallets" not in split
 
 
 def _v(metric):

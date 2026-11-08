@@ -501,6 +501,10 @@ def run_tool(name: str, args: dict | None, rt) -> str:
         snap, err = rt.snapshot(args.get("snapshot_id"))
         if snap is None:
             return _error(name, err or "no snapshot available", collector=rt.status().get("collector"))
+        # Node results in the latest snapshot are re-judged at serving time: a node family past its freshness limit
+        # by now isn't served as LIVE, and nothing built on it is served (historical reads are as of build time).
+        from .node.serving import age_snapshot_for_serving
+        snap = age_snapshot_for_serving(snap)
         return _dumps(HANDLERS[name](snap, args, rt))
     except (LookupError, ValueError) as exc:
         return _error(name, str(exc).strip("'\""))

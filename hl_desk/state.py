@@ -301,12 +301,13 @@ class MarketState:
         node_client = getattr(self, "node_client", None)
         node_view = getattr(self, "node_view", None) or {}
         deck = {"card": self.deck.card(r_tr), "events": self.deck.events_list()}
-        deck["card"]["activity_buckets"] = self._node_card_buckets(deck["card"], node_client)
-        deck["events"] = self._node_events(deck["events"], node_client, node_view.get("live"))
+        now = (built_ms, now_ns)          # node fills are judged at this snapshot's build time, as the node views are
+        deck["card"]["activity_buckets"] = self._node_card_buckets(deck["card"], node_client, now)
+        deck["events"] = self._node_events(deck["events"], node_client, node_view.get("live"), now)
         wallet_panels = {}
         for n in WALLET_WINDOWS_MIN:
             wallet_panels[f"{n}m"] = self._wallet_panel(n, r_tr)
-            self._node_wallet_splits(wallet_panels[f"{n}m"], node_client)
+            self._node_wallet_splits(wallet_panels[f"{n}m"], node_client, now)
         chart = self._chart(top, ctx_block, ladder)
         unavailable = [{"field": v["field"], "status": v["status"], "reason": v["reason"]}
                        for v in fr.values() if v["status"] != "fresh"]
@@ -332,7 +333,7 @@ class MarketState:
                 "separation": "live and replay are separate partitions; replay is never drawn over live prices or mixed "
                               "into current metrics"}
 
-    def _node_card_buckets(self, card: dict, client) -> dict:
+    def _node_card_buckets(self, card: dict, client, now=(None, None)) -> dict:
         from .node.panels import deck_buckets
         base = self.deck._buckets()
         if client is None:
@@ -342,27 +343,32 @@ class MarketState:
             from .node.panels import flow_meta
             why = (card.get("regime") or {}).get("reason") or "the card's 90 s window isn't complete yet"
             return {k: na(why, "USD") for k in ("new_long", "cover", "new_short", "exit")} | {
-                "stream": "node fills", "available": False, "reason": why} | flow_meta(client, self.market)
+                "stream": "node fills", "available": False, "reason": why} | flow_meta(client, self.market, *now)
         # The card's window is [start, end]; node fills are counted over the same block-time span.
-        b = deck_buckets(client, self.market, card["window_start_ms"] - 1, card["window_end_ms"])
+        b = deck_buckets(client, self.market, card["window_start_ms"] - 1, card["window_end_ms"], *now)
         return _bucket_metrics(b, "the card's 90 s window") | {"hook": base.get("hook")}
 
-    def _node_events(self, events: list, client, live_view: dict | None) -> list:
-        from .node.panels import deck_buckets, stream_key
+    def _node_events(self, events: list, client, live_view: dict | None, now=(None, None)) -> list:
+        from .node.panels import deck_buckets, flow_meta, stream_key
         # Published events are shared with earlier snapshots, so they're never edited: each is copied with its
-        # node buckets. Available buckets are cached per event and input stream (source, mode, epoch, session); an
-        # unavailable result is recomputed at every build, so it recovers once the node fills cover the window.
+        # node buckets. Available buckets are cached per event and input stream (source, mode, epoch, session) and
+        # served with the node fills' freshness as of this build; while the node fills aren't usable, or a result
+        # is unavailable, it is recomputed at every build (so it recovers once the node fills cover the window).
         cache = self.__dict__.setdefault("_burst_node_cache", {})
+        meta = flow_meta(client, self.market, *now) if client is not None else None
+        usable = meta is not None and meta["freshness"].get("state") in ("LIVE", "REPLAY")
         out = []
         for ev in events:
             if ev.get("type") == "burst":
                 key = (ev.get("at_ms"), ev.get("side"), stream_key(client))
-                m = cache.get(key)
-                if m is None:
+                m = cache.get(key) if usable else None
+                if m is not None:
+                    m = dict(m) | meta
+                else:
                     if client is None:
                         m = {"available": False, "reason": "needs node mode: no node feed configured"}
                     else:
-                        b = deck_buckets(client, self.market, ev["window_start_ms_exclusive"], ev["window_end_ms"])
+                        b = deck_buckets(client, self.market, ev["window_start_ms_exclusive"], ev["window_end_ms"], *now)
                         side = "buying" if ev.get("side") == "buying" else "selling"
                         m = _bucket_metrics(b, "the burst's 60 s window", only=side)
                         if b.get("available"):
@@ -376,7 +382,7 @@ class MarketState:
         out.sort(key=lambda e: e.get("at_ms") or 0, reverse=True)
         return out
 
-    def _node_wallet_splits(self, panel: dict, client) -> None:
+    def _node_wallet_splits(self, panel: dict, client, now=(None, None)) -> None:
         if not panel.get("window"):
             return
         users = [x["address"] for side in ("buyers", "sellers") for x in ((panel.get(side) or {}).get("listed") or [])]
@@ -385,7 +391,7 @@ class MarketState:
             return
         from .node.panels import wallet_buckets
         w = panel["window"]
-        panel["node_activity_split"] = wallet_buckets(client, self.market, users, w["start_exclusive_ms"], w["end_ms"])
+        panel["node_activity_split"] = wallet_buckets(client, self.market, users, w["start_exclusive_ms"], w["end_ms"], *now)
 
     def _mid_for(self, t: int) -> tuple[float | None, str | None]:
         """(mid, reason): the fast book's mid closest to and not after t, within 1.5 s. A malformed best level

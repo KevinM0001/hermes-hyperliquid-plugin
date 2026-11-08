@@ -296,6 +296,62 @@ def test_the_tab_withholds_node_values_once_their_freshness_lapses(harness):
         assert _tab_validity(other, 2_100)["ok"] is True
 
 
+def _latest(plugin, monkeypatch, tool, market, read_at_ms):
+    """A tool read of the LATEST snapshot (no snapshot_id) at read_at_ms, through chat and the tab's tool route."""
+    from hl_desk import runtime, tools
+    monkeypatch.setattr(runtime.time, "time", lambda: read_at_ms / 1000)
+    via_chat = json.loads(tools.run_tool(tool, {"market": market}, plugin.rt))
+    via_tab = plugin.http.get(f"/api/plugins/hyperliquid-desk/tool/{tool}", params={"market": market}).json()
+    strip = lambda r: {k: v for k, v in r.items() if k not in ("served", "historical")}
+    assert strip(via_chat) == strip(via_tab)
+    return via_chat
+
+
+@pytest.mark.parametrize("publish_after,read_after", [(1_900, 200), (0, 3_000)])
+def test_latest_node_tool_reads_are_judged_at_serving_time(surfaces, monkeypatch, publish_after, read_after):
+    """Review 7, B1. A snapshot whose node book is LIVE when built (watermark 1.9 s old, or fresh), read as the latest
+    snapshot 0.2 s (or 3 s) later, past the 2 s watermark limit: node_book, node_status and node_stops don't call
+    it LIVE and withhold every number built on it, as the client itself then reads STALE. Within the limit it stays
+    LIVE with its ages advanced; a historical read (by snapshot_id) stays as of its build time."""
+    plugin = surfaces([XY])
+    plugin.desk.collector = {"state": "connected", "note": "offline recorded feed"}
+    c = plugin.attach(FeedClient("unix:/run/feed.sock", "LIVE", {"stale_after_ms": 2_000, "max_source_age_ms": 5_000}))
+    c.listeners.append(lambda ev: panels.on_client_event(ev, OPTS))
+    h, msgs = read_recording(XYZ)
+    ms = by_market(msgs, XY)[:300]
+    start = ms[0][1]["block_time_ms"]
+    c.on_line(dict(hello_from(h), pub_ms=start + 300), start + 400, (start + 400) * 10 ** 6)
+    for _, m in ms:
+        now = m["block_time_ms"] + 400                          # received 400 ms after the block, published at 300
+        c.on_line(dict(m, pub_ms=m["block_time_ms"] + 300), now, now * 10 ** 6)
+    built = now + publish_after
+    view = plugin.read(XY, built)
+    assert view["families"]["book"]["state"] == "LIVE" and view["families"]["triggers"]["state"] == "LIVE"
+    sid = plugin.last["snapshot"]["snapshot_id"]
+    read_at = built + read_after
+    assert c.family_status(XY, "book", read_at, read_at * 10 ** 6)["state"] == "STALE"   # what the client says now
+    book = _latest(plugin, monkeypatch, "node_book", XY, read_at)
+    assert book["ok"] and book["served"]["latest"] is True
+    assert book["families"]["book"]["state"] == "STALE" and "by the time this was served" in book["families"]["book"]["reason"]
+    for k in ("ladder", "walls", "thinning"):
+        assert book[k]["available"] is False and "book STALE" in book[k]["reason"], k
+    assert book["tape"]["available"] is False
+    status = _latest(plugin, monkeypatch, "node_status", XY, read_at)
+    assert all(f["state"] != "LIVE" for f in status["markets"][XY]["families"].values())
+    stops = _latest(plugin, monkeypatch, "node_stops", XY, read_at)
+    assert stops["stops"]["available"] is False and "triggers STALE" in stops["stops"]["reason"]
+    # within the limit: still LIVE, its ages advanced by the time since it was built
+    if publish_after == 0:
+        ok = _latest(plugin, monkeypatch, "node_book", XY, built + 500)
+        fb = ok["families"]["book"]
+        assert fb["state"] == "LIVE" and fb["aged_by_ms"] == 500 and ok["ladder"]["bids"]
+        assert fb["watermark_age_ms"] == view["families"]["book"]["watermark_age_ms"] + 500
+    # a historical read is as of its build time, and says so
+    hist = json.loads(__import__("hl_desk.tools", fromlist=["run_tool"]).run_tool(
+        "node_book", {"market": XY, "snapshot_id": sid}, plugin.rt))
+    assert hist["families"]["book"]["state"] == "LIVE" and hist["served"]["latest"] is False and "historical" in hist
+
+
 def test_deck_card_buckets_count_node_fills_only(harness):
     """Step 13: the card's numbers count public trades; its activity buckets count node fills over the same window,
     each percentage over the node fills' own aggressive notional. Neither stream is added to the other."""
