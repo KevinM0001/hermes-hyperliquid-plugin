@@ -80,19 +80,31 @@ def withheld_card(card: dict, reason: str) -> dict:
     return out
 
 
+def _aged_ages(f: dict, age_s: float) -> dict:
+    out = dict(f, aged_by_s=round(age_s, 3))
+    for a in ("progress_age_s", "source_age_s", "last_message_age_s"):
+        if _num(f.get(a)):
+            out[a] = round(f[a] + age_s, 3)
+    return out
+
+
 def age_market(ms: dict, age_s: float, when: str) -> dict:
-    """A public market block re-judged age_s after it was built; unchanged when nothing has lapsed."""
+    """A public market block re-judged age_s after it was built: every fresh status shows its ages as of now, and a
+    lapsed one reads stale or delayed with every value built on it withheld. Unchanged at age 0."""
     fr0 = ms.get("freshness") or {}
-    lapses = {k: v for k in fr0 if (v := lapse(fr0[k], age_s))}
-    if not lapses:
+    if not _num(age_s) or age_s <= 0:
         return ms
+    lapses = {k: v for k in fr0 if (v := lapse(fr0[k], age_s))}
     out = dict(ms)
     fr, why = dict(fr0), {}
+    for k, f in fr0.items():                     # still fresh: its ages as of now
+        if isinstance(f, dict) and f.get("status") == "fresh" and k not in lapses:
+            fr[k] = _aged_ages(f, age_s)
+    if not lapses:
+        out["freshness"] = fr
+        return out
     for k, (status, reason) in lapses.items():
-        f = dict(fr0[k], status=status, reason=f"{reason}, {when}", aged_by_s=round(age_s, 3))
-        for a in ("progress_age_s", "source_age_s", "last_message_age_s"):
-            if _num(fr0[k].get(a)):
-                f[a] = round(fr0[k][a] + age_s, 3)
+        f = dict(_aged_ages(fr0[k], age_s), status=status, reason=f"{reason}, {when}")
         fr[k] = f
         why[k] = f"{f['field']} {status}: {f['reason']}"
     out["freshness"] = fr

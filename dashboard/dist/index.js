@@ -19693,17 +19693,6 @@
     if (typeof served.age_s !== "number" || typeof requestedPerf !== "number") return null;
     return served.age_s + Math.max(0, performance.now() - requestedPerf) / 1000;
   }
-  // The statuses an aged view shows (public fields, node families, deck trades), to re-render only on a change.
-  function agedKey(view) {
-    const m = (view && view.market) || {};
-    const parts = [];
-    Object.keys(m.freshness || {}).forEach(function (k) { parts.push(k + ":" + (m.freshness[k] || {}).status); });
-    const fams = (m.node && m.node.live && m.node.live.families) || {};
-    Object.keys(fams).forEach(function (k) { parts.push("node." + k + ":" + (fams[k] || {}).state); });
-    Object.keys((view && view.deck) || {}).forEach(function (k) { parts.push("deck." + k + ":" + ((view.deck[k] || {}).trades_freshness || {}).status); });
-    return parts.join("|");
-  }
-
   // <pure:ageShown> The snapshot on screen, aged to `ageS` seconds after it was built (Codex h1 review 1, B2): the
   // same rules the backend applies when it serves a latest snapshot (hl_desk/serving_public.py for public fields,
   // hl_desk/node/serving.py for node results). A public field fresh at build time that has lapsed by now reads stale
@@ -19711,7 +19700,7 @@
   // the build uses; a node family LIVE at build time whose delay bound has passed its limit reads DELAYED or STALE,
   // with the node values built on it withheld. The page keeps its layout: values turn "unavailable" in place.
   function ageShown(data, ageS) {
-    if (!data || typeof ageS !== "number" || !(ageS >= 0)) return data;
+    if (!data || typeof ageS !== "number" || !(ageS > 0)) return data;
     const when = "while on screen (the snapshot is about " + ageS.toFixed(1) + " s old)";
     const NUM = function (x) { return typeof x === "number" && isFinite(x); };
     const NA = function (reason, unit) { const o = { value: null, reason: reason }; if (unit !== undefined) o.unit = unit; return o; };
@@ -19847,8 +19836,17 @@
         fr[k] = agedFresh(fr0[k], l);
         why[k] = fr[k].field + " " + fr[k].status + ": " + fr[k].reason;
       });
+      Object.keys(fr0).forEach(function (k) {         // still fresh: its ages as of now
+        if (fr0[k] && fr0[k].status === "fresh" && !why[k]) {
+          const o = Object.assign({}, fr0[k], { aged_by_s: Math.round(ageS * 1000) / 1000 });
+          ["progress_age_s", "source_age_s", "last_message_age_s"].forEach(function (a) {
+            if (NUM(fr0[k][a])) o[a] = Math.round((fr0[k][a] + ageS) * 1000) / 1000;
+          });
+          fr[k] = o;
+        }
+      });
       const keys = Object.keys(why);
-      if (!keys.length) return ms;
+      if (!keys.length) return Object.assign({}, ms, { freshness: fr });
       const out = Object.assign({}, ms, { freshness: fr });
       out.unavailable = (ms.unavailable || []).concat(keys.map(function (k) { return { field: fr[k].field, status: fr[k].status, reason: fr[k].reason }; }));
       const drop = {};
@@ -19924,6 +19922,14 @@
       Object.keys(data.deck).forEach(function (k) {
         let x = deckNode(data.deck[k]);
         const l = lapse(x.trades_freshness);
+        if (!l && x.trades_freshness && x.trades_freshness.status === "fresh") {
+          const tf0 = x.trades_freshness;
+          const tf = Object.assign({}, tf0, { aged_by_s: Math.round(ageS * 1000) / 1000 });
+          ["progress_age_s", "source_age_s", "last_message_age_s"].forEach(function (a) {
+            if (NUM(tf0[a])) tf[a] = Math.round((tf0[a] + ageS) * 1000) / 1000;
+          });
+          x = Object.assign({}, x, { trades_freshness: tf });
+        }
         if (l) {
           const tf = agedFresh(x.trades_freshness, l);
           x = Object.assign({}, x, { trades_freshness: tf, card: x.card ? withheldCard(x.card, tf.field + " " + tf.status + ": " + tf.reason) : x.card });
@@ -20177,7 +20183,7 @@
           const v = snapshotValidity(data, requestedPerf, performance.now(), LATEST_MAX_S);
           setAged(v.ok ? null : v.reason);
           const view = ageShown(data, shownAge(data, requestedPerf));
-          shown.current = { data: data, requestedPerf: requestedPerf, key: agedKey(view) };
+          shown.current = { data: data, requestedPerf: requestedPerf };
           setResp(view);
           setNoSnap(null);
           setPollErr(null);
@@ -20210,13 +20216,8 @@
         if (s === null) return;
         const v = snapshotValidity(s.data, s.requestedPerf, performance.now(), LATEST_MAX_S);
         setAged(v.ok ? null : v.reason);
-        // Re-age what is on screen; re-render only when a status actually changes (nothing moves otherwise).
-        const view = ageShown(s.data, shownAge(s.data, s.requestedPerf));
-        const key = agedKey(view);
-        if (key !== s.key) {
-          s.key = key;
-          setResp(view);
-        }
+        // Re-age what is on screen: statuses and their ages as of now, in place (the layout doesn't move).
+        setResp(ageShown(s.data, shownAge(s.data, s.requestedPerf)));
       }, 1000);
       return function () { clearInterval(id); };
     }, []);

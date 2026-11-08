@@ -118,7 +118,8 @@ def test_b2_the_tab_withholds_lapsed_values_in_place(surfaces):
     """Codex's reproduction in the tab: a real tab payload (the snapshot route's answer), held 14 s. The tab's own
     ageShown turns the fast book stale with the reason and withholds the top of book and its price lines; past 15 s
     the 20-level book's ladder and depth, past 30 s the trades-built flow values, card and wallet panels, in the
-    shapes the panels already render as unavailable; at 0.5 s nothing changes. The Python and tab rules agree."""
+    shapes the panels already render as unavailable; at 0.5 s nothing is withheld (fresh ages
+    advance). The Python and tab rules agree."""
     from hl_desk.serving_public import age_market
     plugin = surfaces(["BTC"])
     _feed(plugin)
@@ -128,7 +129,12 @@ def test_b2_the_tab_withholds_lapsed_values_in_place(surfaces):
     m0 = payload["market"]
     assert m0["freshness"]["book_fast"]["status"] == "fresh" and m0["book"]["top"]["best_bid"]["value"] == 100.0
     same = _age_shown(payload, 0.5)
-    assert same["market"]["freshness"] == m0["freshness"] and same["market"]["book"] == m0["book"]
+    assert same["market"]["book"] == m0["book"]                              # nothing lapsed: values kept
+    for k, f in m0["freshness"].items():                                     # statuses kept, fresh ages as of now
+        g = same["market"]["freshness"][k]
+        assert g["status"] == f["status"]
+        if f["status"] == "fresh":
+            assert abs(g["progress_age_s"] - (f["progress_age_s"] + 0.5)) < 1e-6 and g["aged_by_s"] == 0.5
     late = _age_shown(payload, 14.0)["market"]
     fr = late["freshness"]
     assert fr["book_fast"]["status"] == "stale" and "while on screen" in fr["book_fast"]["reason"]
@@ -159,5 +165,5 @@ def test_b2_the_app_shows_the_aged_view_on_arrival_and_while_shown():
     assert poll.index("const view = ageShown(data, shownAge(data, requestedPerf));") < poll.index("setResp(view);")
     tick = src[src.index("    // The snapshot on screen keeps aging:"):]
     tick = tick[:tick.index("}, []);")]
-    assert "ageShown(s.data, shownAge(s.data, s.requestedPerf))" in tick and "setResp(view);" in tick
+    assert "setResp(ageShown(s.data, shownAge(s.data, s.requestedPerf)));" in tick
     assert "setResp(null)" not in tick
