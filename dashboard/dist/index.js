@@ -19469,7 +19469,7 @@
     return h(Panel, {
       id: "deck", className: "hd-p-deck", title: "Flow Deck",
       label: "Alerts position: Flow Deck",
-      sub: "Each market's regime over a 90 s window, ported from hl_deck; regime changes and burst alerts below (and, in node mode, liquidation alerts from node fills). The agent can explain any card or event (hl_alerts).",
+      sub: "Each market's regime over a 90 s window, ported from hl_deck; regime changes and burst alerts below. In node mode, burst alerts come from node fills, ranked against Nov 3 to 7, and liquidation alerts are added. The agent can explain any card or event (hl_alerts).",
       badges: h(Prov, { mode: r.mode, source: g(deck, names[0], "provenance", "source"), what: "trades" })
     },
     h("div", { className: "hd-deck-cards" }, names.length ? names.map(function (n) {
