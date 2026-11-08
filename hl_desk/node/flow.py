@@ -193,9 +193,14 @@ def activity_buckets(execs: list[Execution]) -> dict:
     buy = {"new_long": ZERO, "cover": ZERO}
     sell = {"new_short": ZERO, "exit": ZERO}
     agg_buy = agg_sell = ZERO
-    unclassified = {"buy": ZERO, "sell": ZERO, "no_single_taker": ZERO}
+    unclassified = {"buy": ZERO, "sell": ZERO, "no_single_taker": ZERO, "uncertain": ZERO}
     reasons = {"buy": set(), "sell": set()}
     for e in execs:
+        if not e.complete or e.conflict:
+            # Its participants' records are missing or disagree (price, size, time or role), or a repeat of it
+            # disagreed: its side, size and effects aren't known exactly, so it is never split.
+            unclassified["uncertain"] += e.notional
+            continue
         tk = _taker(e)
         if tk is None:
             unclassified["no_single_taker"] += e.notional
@@ -218,13 +223,19 @@ def activity_buckets(execs: list[Execution]) -> dict:
 
     def side_out(buckets: dict, denom: Decimal, unc: Decimal, why: set) -> dict:
         if unc > 0:
-            reason = "position effect missing for part of this side: " + "; ".join(sorted(why))
+            reason = "part of this side's aggressive notional can't be classified: " + "; ".join(sorted(why))
             return {"available": False, "reason": reason, "unclassified_usd": unc, "aggressive_usd": denom,
                     "buckets": {k: None for k in buckets}, "classified_usd": {k: v for k, v in buckets.items()}}
         pct = {k: (v / denom * 100 if denom > 0 else None) for k, v in buckets.items()}
         return {"available": True, "reason": None if denom > 0 else "no aggressive notional on this side",
                 "unclassified_usd": unc, "aggressive_usd": denom, "buckets": dict(buckets), "pct": pct}
 
+    if unclassified["uncertain"] > 0:
+        why = ("an execution in this window is incomplete or conflicting (its participants' records are missing or "
+               "disagree), so its side, size and effects aren't known exactly")
+        for side in ("buy", "sell"):
+            reasons[side].add(why)
+            unclassified[side] += unclassified["uncertain"]
     if unclassified["no_single_taker"] > 0:
         # An execution whose aggressive side can't be told (no single taker, or the aggressor missing) could belong to
         # either side: neither side's buckets are complete, so both are unavailable, never scaled.
@@ -235,7 +246,8 @@ def activity_buckets(execs: list[Execution]) -> dict:
         unclassified["sell"] += unclassified["no_single_taker"]
     return {"buying": side_out(buy, agg_buy, unclassified["buy"], reasons["buy"]),
             "selling": side_out(sell, agg_sell, unclassified["sell"], reasons["sell"]),
-            "no_single_taker_usd": unclassified["no_single_taker"], "executions": len(execs)}
+            "no_single_taker_usd": unclassified["no_single_taker"], "uncertain_usd": unclassified["uncertain"],
+            "executions": len(execs)}
 
 
 def wallet_split(execs: list[Execution], user: str) -> dict:
@@ -248,8 +260,8 @@ def wallet_splits(execs: list[Execution], users: set) -> dict:
     sold notional. A missing effect, side or role makes that split unavailable, never scaled to 100%. So does
     a missing identity: an execution missing a participant's record or address could be any listed wallet's, so
     while one is in the window every split is unavailable."""
-    unidentified = sum((e.notional for e in execs
-                        if not e.complete or len(e.participants) < 2 or any(not p.user for p in e.participants)), ZERO)
+    unidentified = sum((e.notional for e in execs if not e.complete or e.conflict or len(e.participants) < 2
+                        or any(not p.user for p in e.participants)), ZERO)
     acc = {u: {"full": {"new_long": ZERO, "cover": ZERO, "new_short": ZERO, "exit": ZERO},
                "aggr": {"new_long": ZERO, "cover": ZERO, "new_short": ZERO, "exit": ZERO},
                "tot": {"bought": ZERO, "sold": ZERO, "aggr_bought": ZERO, "aggr_sold": ZERO},
@@ -292,8 +304,9 @@ def wallet_splits(execs: list[Execution], users: set) -> dict:
     def split(b: dict, bought: Decimal, sold: Decimal, unc: Decimal, label: str, reasons: set) -> dict:
         if unidentified > 0:
             return {"label": label, "available": False, "unidentified_usd": unidentified,
-                    "reason": "an execution in this window is missing a participant's record or address, so this "
-                              "wallet's fills may be incomplete", "bought_usd": bought, "sold_usd": sold}
+                    "reason": "an execution in this window is missing a participant's record or address, or its "
+                              "records disagree, so this wallet's fills may be incomplete", "bought_usd": bought,
+                    "sold_usd": sold}
         if unc > 0:
             return {"label": label, "available": False, "unclassified_usd": unc,
                     "reason": "position effect missing for part of this wallet's fills: " + "; ".join(sorted(reasons)),

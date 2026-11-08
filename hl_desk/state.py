@@ -489,6 +489,8 @@ def _bucket_metrics(b: dict, window_label: str, only: str | None = None) -> dict
                 continue
             for k in ks:
                 out[k] = na(reason, "USD")
+        if b.get("unclassified_usd") is not None:
+            out["unclassified_usd"] = val(b["unclassified_usd"], "USD")
         return out | {"available": False, "reason": reason}
     out["available"] = True
     out["window"] = b.get("window")
@@ -508,6 +510,7 @@ def _bucket_metrics(b: dict, window_label: str, only: str | None = None) -> dict
                 out[f"{k}_pct"] = na(sd["reason"], f"% of aggressive {side} notional")
         out[f"{side}_unclassified_usd"] = val(sd["unclassified_usd"], "USD")
     out["no_single_taker_usd"] = val(b.get("no_single_taker_usd"), "USD")
+    out["uncertain_usd"] = val(b.get("uncertain_usd"), "USD")
     out["population"] = ("each bucket counts the aggressive (taker) side's own position effects; percentages divide by "
                          "that side's aggressive notional over the same node fills; not a change in open interest")
     return out

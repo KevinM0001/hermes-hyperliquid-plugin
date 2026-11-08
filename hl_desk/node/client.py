@@ -163,9 +163,6 @@ class FeedClient:
             self.mode = "REPLAY"
             self.retired, self.epoch, self.session = set(), None, None
             self._new_partition("the source serves a REPLAY")
-        if isinstance(obj.get("pub_ms"), int):
-            off = wall_ms - obj["pub_ms"]
-            self.skew = {"bad": off < -self.cfg["skew_tolerance_ms"], "last_offset_ms": off}
         if self.mode == "REPLAY" and not self._replay_session_ok(obj):
             return
         if "control" in obj:
@@ -174,6 +171,13 @@ class FeedClient:
             self._market_line(obj, wall_ms, mono_ns)
         else:
             self.counters["malformed"] += 1
+            return
+        # The clock relationship is learned only from lines of the current producer session, after the line was
+        # accepted for it: a retired or foreign session's line never changes the current session's freshness.
+        if (isinstance(obj.get("pub_ms"), int) and self.epoch is not None
+                and obj.get("epoch") == self.epoch and obj.get("session") == self.session):
+            off = wall_ms - obj["pub_ms"]
+            self.skew = {"bad": off < -self.cfg["skew_tolerance_ms"], "last_offset_ms": off}
 
     def _replay_session_ok(self, obj: dict) -> bool:
         rs = obj.get("replay_session")
@@ -511,7 +515,9 @@ class FeedClient:
                     run_start=mf.run_start)
             return "rejected"
         later = [b for b in mf.buffer if b[0] > through]
-        # Catch up off to the side through every later message of the family, then swap.
+        # Catch up off to the side through every later message of the family, then swap. The state then stands
+        # at the last of those messages, not at the snapshot's boundary: an older snapshot can never replace it.
+        applied = through
         try:
             for seq, kind, body, block, bt in later:
                 if KIND_FAMILY.get(kind) != fam or kind in SNAPSHOT_KINDS:
@@ -520,14 +526,15 @@ class FeedClient:
                     state.apply_delta(body.get("changes") or [], bt)
                 else:
                     state.apply_delta(body.get("changes") or [], body.get("excluded"))
+                applied = seq
         except (BookError, TriggerError, KeyError, TypeError, ValueError) as exc:
             mf.counters["snapshots_rejected"] += 1
             mf.note("snapshot catch-up failed", family=fam, error=str(exc))
             return "rejected"
-        self._swap(mf, fam, state, through)
+        self._swap(mf, fam, state, through, last_change=applied)
         return "swapped"
 
-    def _swap(self, mf: MarketFeed, fam: str, state, through: int) -> None:
+    def _swap(self, mf: MarketFeed, fam: str, state, through: int, last_change: int | None = None) -> None:
         if fam == "book":
             if mf.book is not None:
                 state.changes = mf.book.changes          # keep the labelled change history across a swap
@@ -541,7 +548,8 @@ class FeedClient:
         if not was_valid:
             f.since_seq = mf.last_seq
         f.applied_through = mf.last_seq
-        f.last_change_seq = max(through, f.last_change_seq or 0) if was_valid else through
+        lc = through if last_change is None else max(through, last_change)
+        f.last_change_seq = max(lc, f.last_change_seq or 0) if was_valid else lc
         mf.counters["snapshots_swapped"] += 1
         if fam == "book":
             self._check_crossed(mf, mf.last_seq, from_snapshot=True)

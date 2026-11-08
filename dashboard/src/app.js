@@ -1006,12 +1006,14 @@
 
   function stopsTitle(st, label) {
     if (!st) return label + "\nno next level is shown after this one, so there is no range to count";
+    if (st.available === false) return label + "\nunavailable: " + (st.reason || "trigger state not usable");
     return label + "\n" + qi(st.orders) + " orders, " + qz(st.sz) + " stated size" +
       (st.unknown_size_orders ? "; " + qi(st.unknown_size_orders) + " of the orders have no stated size (whole-position TP/SL)" : "");
   }
 
   function stopsCell(st) {
     if (!st) return h(Unavailable, { reason: "no next level shown after this one, so there is no range to count", compact: true });
+    if (st.available === false) return h(Unavailable, { reason: st.reason || "trigger state not usable", compact: true });
     if (!isNum(st.orders)) return missing();
     if (st.orders === 0) return h("span", { className: "hd-dim" }, "0");
     return h(Fragment, null, intf(st.orders), h("span", { className: "hd-dim" }, " \u00b7 "), isNum(st.sz) ? sz(st.sz) : missing(),

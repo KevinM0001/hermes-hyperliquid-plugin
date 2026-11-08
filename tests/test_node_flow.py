@@ -201,13 +201,36 @@ def test_executions_without_a_single_taker_or_unreadable_leave_both_sides_unavai
     no_taker = _exec(12, "100", "2", 0, "B", [_p(A, "B", "maker", {"cover": "0", "new_long": "2"}),
                                                _p(B, "A", "maker", {"exit": "2", "new_short": "0"})])
     _, (card, _) = _plugin_run(surfaces, [{"execs": [ok, no_taker]}])
-    assert card["available"] is True
+    assert card["available"] is False and "no single identified taker" in card["reason"]
     for k in ("new_long", "cover", "new_short", "exit"):
         assert card[k]["value"] is None and "no single identified taker" in card[k]["reason"], k
-    assert _v(card["no_single_taker_usd"]) == 200
+    assert _v(card["unclassified_usd"]) == 200
     unreadable = {"tid": 13, "px": "100", "time_ms": 0, "aggressor": "B", "complete": True, "participants": []}  # no sz
     _, (card, _) = _plugin_run(surfaces, [{"execs": [ok]}, {"execs": [unreadable]}])
     assert card["available"] is False and "couldn't be read" in card["reason"]
+
+
+def test_an_incomplete_execution_never_gives_a_split(surfaces):
+    """Review 4, B4. The producer marks an execution incomplete when its participants' records disagree. Here the
+    buy-maker record is 4 at 100 (the execution's size) while the sell taker's own effect is exit 2, new short 8
+    (a size of 10): split as known, the selling percentages would add up to 250%. The card, its burst and the
+    wallet split are unavailable, with the reason and the unclassified notional."""
+    e = dict(_exec(91, "100", "4", 0, "A", [_p(W, "B", "maker", {"cover": "0", "new_long": "4"}),
+                                            _p(B, "A", "taker", {"exit": "2", "new_short": "8"})]), complete=False)
+    hist = []
+    _, (card, wal) = _plugin_run(surfaces, [{"execs": [e]}], desk_cfg={"burst_min_usd": {SP: 4_000.0}},
+                                 history=hist)
+    assert card["available"] is False and "incomplete or conflicting" in card["reason"]
+    assert _v(card["unclassified_usd"]) == 400
+    assert all(card[k]["value"] is None for k in ("new_long", "cover", "new_short", "exit"))
+    assert not any(k.endswith("_pct") for k in card)
+    burst = next(ev for ev in hist[-1][1]["events"] if ev.get("type") == "burst")
+    assert burst["node_activity"]["available"] is False and "incomplete or conflicting" in burst["node_activity"]["reason"]
+    assert wal["wallets"][W]["full"]["available"] is False
+    conflicting = dict(_exec(92, "100", "4", 0, "B", [_p(A, "B", "taker", {"cover": "0", "new_long": "4"}),
+                                                      _p(B, "A", "maker", {"exit": "4", "new_short": "0"})]), conflict=True)
+    _, (card, _) = _plugin_run(surfaces, [{"execs": [conflicting]}])
+    assert card["available"] is False and "incomplete or conflicting" in card["reason"]
 
 
 def test_a_sequence_gap_between_contributing_fills_through_the_plugins_card(surfaces):

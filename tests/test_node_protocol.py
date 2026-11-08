@@ -422,6 +422,98 @@ def test_snapshot_through_100_after_event_101_with_and_without_the_events_betwee
     assert plugin.read(XY, rx_x)["book"]["valid"] and _levels(plugin.last["node_book"]["ladder"]) == truth_ladder
 
 
+def _trig_rows_of(tr):
+    return [[g.oid, g.side, g.kind, str(g.trigger_px), str(g.sz), g.position_tpsl, g.user, g.time_ms]
+            for g in tr.orders.values()]
+
+
+@pytest.mark.parametrize("family,mk", [("book", XY), ("triggers", SP)])
+def test_a_second_older_snapshot_never_undoes_a_catch_up(surfaces, family, mk):
+    """Review 4, B1. A gap before 300; the real state at 300 is offered and caught up through the buffered events
+    to the stream's position; the family is LIVE at the next watermark. A second snapshot, the real state at 400,
+    then arrives (from a cache): the family changed after 400 (for the triggers, SP500's only trigger event, seq
+    456), so it is older than the caught-up state: rejected, and nothing rolls back."""
+    h, ms = _xyz_market(mk)
+    changed = [m["seq"] for _, m in ms if m["kind"] == ("book_delta" if family == "book" else "trig_delta")]
+    assert any(400 < q < 480 for q in changed)
+    wi = next(i for i, (_, m) in enumerate(ms) if m["seq"] >= 480 and m["kind"] == "watermark")
+    ref = client()
+    _start(ref, h)
+    rows = {}
+    for rx, m in ms[:wi + 1]:
+        ref.on_line(m, rx, rx * 10 ** 6)
+        if m["seq"] in (300, 400):
+            rows[m["seq"]] = (_rows_of(ref.markets[mk].book) if family == "book" else _trig_rows_of(ref.markets[mk].triggers))
+    state_of = (lambda c: c.markets[mk].book) if family == "book" else (lambda c: c.markets[mk].triggers)
+    truth = state_of(ref).snapshot_rows()
+    plugin = surfaces([mk])
+    c = plugin.attach(client())
+    _start(c, h)
+    for rx, m in ms[:wi]:
+        if m["seq"] != 100:
+            c.on_line(m, rx, rx * 10 ** 6)
+            plugin.read(mk, rx)
+    extra = (next(m for _, m in ms if m["kind"] == "trig_snapshot")["body"].get("excluded"),) if family == "triggers" else ()
+    cov = None
+    assert c.offer_snapshot(mk, family, 300, rows[300], cov, *extra) == "swapped"
+    assert state_of(c).snapshot_rows() == truth                       # caught up to the stream's position
+    rx, m = ms[wi]
+    c.on_line(m, rx, rx * 10 ** 6)
+    v = plugin.read(mk, rx)
+    assert v["families"][family]["state"] == "LIVE"
+    before = {k: plugin.last[k] for k in ("node_book", "node_stops")}
+    assert c.offer_snapshot(mk, family, 400, rows[400], cov, *extra) == "rejected"
+    assert state_of(c).snapshot_rows() == truth                       # nothing rolled back
+    v = plugin.read(mk, rx)
+    assert v["families"][family]["state"] == "LIVE"
+    key, part = ("node_book", "ladder") if family == "book" else ("node_stops", "stops")
+    assert plugin.last[key][part] == before[key][part]
+
+
+def test_ladder_stops_are_unavailable_while_the_triggers_are(surfaces):
+    """Review 4, B2. After a gap the book recovers from the real state at 300 and goes LIVE while the triggers stay
+    INVALID: every node_book ladder row then says the stops to the next level are unavailable, with the reason,
+    never 0, until the in-stream 60 s trigger snapshot makes the triggers usable again."""
+    h, ms = _xyz_market(XY)
+    wi = next(i for i, (_, m) in enumerate(ms) if m["seq"] >= 480 and m["kind"] == "watermark")
+    ref = client()
+    _start(ref, h)
+    for rx, m in ms:
+        ref.on_line(m, rx, rx * 10 ** 6)
+        if m["seq"] == 300:
+            rows = _rows_of(ref.markets[XY].book)
+            break
+    plugin = surfaces([XY])
+    c = plugin.attach(client())
+    _start(c, h)
+    for rx, m in ms[:wi]:
+        if m["seq"] != 100:
+            c.on_line(m, rx, rx * 10 ** 6)
+    assert c.offer_snapshot(XY, "book", 300, rows) == "swapped"
+    first = next(m for _, m in ms if m["kind"] == "trig_snapshot" and m["seq"] > ms[wi][1]["seq"])
+    trig_snap_end = first["seq"] + first["body"]["parts"] - 1
+    usable_again = False
+    for rx, m in ms[wi:]:
+        c.on_line(m, rx, rx * 10 ** 6)
+        v = plugin.read(XY, rx)
+        lad = plugin.last["node_book"]["ladder"]
+        if v["families"]["book"]["state"] != "LIVE":
+            continue
+        rows_shown = [r for side in ("bids", "asks") for r in lad[side]]
+        stops = [r["stops_to_next_level"] for r in rows_shown if r["stops_to_next_level"] is not None]
+        assert len(stops) == len(rows_shown) - 2                       # only each side's last row has no range
+        tst = v["families"]["triggers"]["state"]
+        if tst != "LIVE":                                    # INVALID until the snapshot's last part, then STALE
+            assert m["seq"] <= trig_snap_end or tst == "STALE"   # until the next watermark
+            assert lad["stops_available"] is False and f"triggers {tst}" in lad["stops_reason"]
+            assert all(st == {"available": False, "reason": lad["stops_reason"]} for st in stops)
+            assert plugin.last["node_stops"]["stops"]["available"] is False
+        else:
+            usable_again = True
+            assert lad["stops_available"] is True and all(isinstance(st.get("orders"), int) for st in stops)
+    assert usable_again
+
+
 def test_old_backlog_delivered_at_normal_speed_reads_behind(surfaces):
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
@@ -511,6 +603,35 @@ def test_quiet_market_stays_live_on_watermarks(surfaces):
     b = panels.deck_buckets(c, XY, q0, q1 - 1)
     assert b["available"] and b["executions"] == 0
     assert all(b["buying"]["buckets"][k] == 0 for k in ("new_long", "cover"))
+
+
+def test_a_retired_sessions_line_never_changes_freshness(surfaces):
+    """Review 4, B3. A new producer session whose lines arrive on a clock 2.5 s behind reads UNKNOWN (clock skew).
+    A delayed watermark of the retired session (an older publication time) is ignored and must not touch the
+    current session's clock relationship: the families stay UNKNOWN, through chat and tab."""
+    h, ms = _xyz_market(XY)
+    plugin = surfaces([XY])
+    c = plugin.attach(client(cfg={"stale_after_ms": 10 ** 9, "max_source_age_ms": 10 ** 9}))
+    _start(c, h)
+    for rx, m in ms:
+        c.on_line(m, rx, rx * 10 ** 6)
+    old_epoch, old_session = c.epoch, c.session
+    new = {"epoch": old_epoch + 1, "session": "f" * 32}
+    t = ms[-1][0] + 1
+    c.on_line(dict(hello_from(h), **new, pub_ms=t + 2_500), t, t * 10 ** 6)
+    for rx, m in ms:
+        c.on_line(dict(m, **new, pub_ms=rx + 2_500), rx, rx * 10 ** 6)   # received 2.5 s "before" publication
+        v = plugin.read(XY, rx)
+    assert v["families"]["book"]["state"] == "UNKNOWN" and "clock skew" in v["families"]["book"]["reason"]
+    before = plugin.last["node_status"]["markets"][XY]["families"]
+    late = next(m for _, m in ms if m["kind"] == "watermark")              # the old session's, published long ago
+    assert (late["epoch"], late["session"]) == (old_epoch, old_session)
+    ignored = c.counters["retired_ignored"]
+    c.on_line(late, rx, rx * 10 ** 6)
+    v = plugin.read(XY, rx)
+    assert c.counters["retired_ignored"] == ignored + 1 and c.epoch == old_epoch + 1
+    assert plugin.last["node_status"]["markets"][XY]["families"] == before
+    assert all(f["state"] == "UNKNOWN" for f in v["families"].values())
 
 
 def test_clock_skew_reads_unknown(surfaces):

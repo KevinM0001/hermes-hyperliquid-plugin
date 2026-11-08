@@ -241,8 +241,13 @@ def book_validity(mf, fam_status: dict) -> tuple[bool, str | None]:
     return True, None
 
 
-def ladder(mf, client, levels: int = LADDER_LEVELS) -> dict:
+def ladder(mf, client, trig_status: dict | None = None, levels: int = LADDER_LEVELS) -> dict:
     book: NodeBook = mf.book
+    # The stops column comes from the trigger family: while it isn't usable (invalid, stale, behind or of unknown
+    # age), every row says so with the reason, never 0 (which would read as no waiting interest).
+    tst = trig_status or {"state": "INVALID", "reason": "trigger state not given"}
+    stops_ok = mf.triggers is not None and tst["state"] in ("LIVE", "REPLAY")
+    stops_na = None if stops_ok else {"available": False, "reason": f"triggers {tst['state']}: {tst.get('reason')}"}
     now = mf.block_time_ms
     since = (now or 0) - CHANGE_WINDOW_MS
     recent = book.changes_since(since)
@@ -254,7 +259,7 @@ def ladder(mf, client, levels: int = LADDER_LEVELS) -> dict:
     # Waiting triggers sorted by price once, for the per-row "stops to the next level" counts.
     import bisect
     trig = sorted(((g.trigger_px, g.position_tpsl, g.sz) for g in mf.triggers.orders.values()),
-                  key=lambda x: x[0]) if mf.triggers is not None else []
+                  key=lambda x: x[0]) if stops_ok else []
     tpx = [x[0] for x in trig]
     out = {}
     for side in ("B", "A"):
@@ -283,8 +288,8 @@ def ladder(mf, client, levels: int = LADDER_LEVELS) -> dict:
                 "oldest_order_time_ms": st["oldest_order_time_ms"],
                 "change_10s": {"added": num(c["added"]), "absorbed": num(c["absorbed"]), "pulled": num(c["pulled"]),
                                "unknown": num(c["unknown"])},
-                "stops_to_next_level": ({"orders": stops_n, "sz": num(stops_sz), "unknown_size_orders": stops_unk}
-                                        if nxt is not None else None)})
+                "stops_to_next_level": (None if nxt is None else dict(stops_na) if stops_na is not None else
+                                        {"orders": stops_n, "sz": num(stops_sz), "unknown_size_orders": stops_unk})})
         out["bids" if side == "B" else "asks"] = rows
     return out | {
         "labels": {"largest_order_sz": "largest order size at this level",
@@ -295,6 +300,7 @@ def ladder(mf, client, levels: int = LADDER_LEVELS) -> dict:
                                  "unknown = not explained by a record (never called moved)",
                    "stops_to_next_level": "waiting stop/take-profit orders whose trigger price lies between this level "
                                           "and the next one shown (conditional interest)"},
+        "stops_available": stops_na is None, "stops_reason": None if stops_na is None else stops_na["reason"],
         "book_time_ms": now, "levels_per_side": {"bids": len(book.levels["B"]), "asks": len(book.levels["A"])},
         "best_bid": fmt(book.best("B")), "best_ask": fmt(book.best("A")), "mid": fmt(book.mid())}
 
@@ -482,7 +488,7 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
         "since_seq": mf.crossed["since_seq"], "best_bid": fmt(mf.crossed["best_bid"]),
         "best_ask": fmt(mf.crossed["best_ask"]), "since_block_time_ms": mf.crossed["since_block_time_ms"]},
         "book_time_ms": mf.block_time_ms}
-    base["ladder"] = ladder(mf, client) if ok else {"available": False, "reason": why}
+    base["ladder"] = ladder(mf, client, fam["triggers"]) if ok else {"available": False, "reason": why}
     base["walls"] = walls(mf, ps) if ok else {"available": False, "reason": why}
     base["thinning"] = (thinning(mf) | {"book_time_ms": mf.block_time_ms, "freshness": fam["book"]["state"]}) if ok else {
         "available": False, "reason": why, "note": THIN_NOTE}
@@ -538,6 +544,12 @@ def deck_buckets(client, market: str, start_ms: int, end_ms: int) -> dict:
     if not cov["covers"]:
         return meta | {"available": False, "reason": cov["reason"], "coverage": cov}
     a = activity_buckets(execs)
+    unknown_side = a["uncertain_usd"] + a["no_single_taker_usd"]
+    if unknown_side > 0:
+        # An execution whose side, size or effects aren't known exactly (incomplete, conflicting, or without a
+        # single taker) could belong to either side: no split of this window is exact, so none is shown.
+        return meta | {"available": False, "coverage": cov, "unclassified_usd": num(unknown_side),
+                       "reason": "unclassified notional in this window: " + a["buying"]["reason"].split(": ", 1)[-1]}
     return meta | {"available": True, "stream": "node fills", "window": {"start_ms": start_ms, "end_ms": end_ms},
                    "coverage": cov, **_jsonable_activity(a)}
 
