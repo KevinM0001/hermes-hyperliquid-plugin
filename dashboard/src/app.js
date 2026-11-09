@@ -783,11 +783,34 @@
   // ------------------------------------------------------------------ price chart (Lightweight Charts)
 
   const LINE_STYLE = { best_bid: "bid", best_ask: "ask", mark: "mark", oracle: "oracle", largest_bid_level: "bidlvl", largest_ask_level: "asklvl" };
+  // Volume bars: the buy and sell colours at 50 % (the palette's rule), by the candle's close against its open.
+  const VOL_UP = "rgba(24, 229, 137, 0.5)";
+  const VOL_DOWN = "rgba(255, 69, 77, 0.5)";
+
+  // The readout at the chart's top left: the candle under the crosshair, or the latest one when the pointer is away.
+  // Every number is the snapshot's own (open, high, low, close, volume_usd, complete); the change is close minus open.
+  function ChartReadout(props) {
+    const k = props.k;
+    if (!k || !isNum(k.close)) return null;
+    const up = !isNum(k.open) || k.close >= k.open;
+    const cls = "hd-ro-v " + (up ? "hd-ro-up" : "hd-ro-down");
+    const chg = isNum(k.open) ? k.close - k.open : null;
+    const chgPct = isNum(k.open) && k.open !== 0 ? (k.close - k.open) / k.open * 100 : null;
+    function cell(label, v) { return h("span", { className: "hd-ro-cell" }, label + " ", h("b", { className: cls }, isNum(v) ? px(v) : "?")); }
+    return h("div", { className: "hd-chart-readout", "aria-label": "Candle readout" },
+      h("span", { className: "hd-ro-t" }, hms(k.time * 1000) + " UTC" + (props.hovering ? "" : " (latest)") + (k.complete === false ? " partial" : "")),
+      cell("O", k.open), cell("H", k.high), cell("L", k.low), cell("C", k.close),
+      chg !== null ? h("span", { className: cls }, signOf(chg, true) + num(Math.abs(chg), 8) +
+        (chgPct !== null ? " (" + signOf(chgPct, true) + num(Math.abs(chgPct), 2, 2) + "%)" : "")) : null,
+      h("span", { className: "hd-ro-cell" }, "Vol ", h("b", { className: "hd-ro-v" }, isNum(k.volume_usd) ? usd(k.volume_usd) : "unavailable")));
+  }
 
   function lineOptions(pl, key) {
     const style = LINE_STYLE[pl.kind];
     const LS = LWC.LineStyle;
-    const o = { price: pl.price, title: pl.label || key, lineWidth: 1, axisLabelVisible: true, lineVisible: true };
+    // No title box on the line (Kevin, Nov 9: the boxes moved around and hid the candles); the price sits on the axis
+    // and the legend under the chart names each line.
+    const o = { price: pl.price, title: "", lineWidth: 1, axisLabelVisible: true, lineVisible: true };
     if (style === "bid") { o.color = C.bid; o.lineStyle = LS.Solid; }
     else if (style === "ask") { o.color = C.ask; o.lineStyle = LS.Solid; }
     else if (style === "mark") { o.color = C.mark; o.lineStyle = LS.Dotted; }
@@ -804,6 +827,7 @@
     const boxRef = useRef(null);
     const api = useRef(null);
     const [failure, setFailure] = useState(LWC ? null : "Lightweight Charts isn't loaded (dist/index.js should carry it)");
+    const [hover, setHover] = useState(null);
 
     // Create the chart once; destroy it on unmount.
     useEffect(function () {
@@ -818,7 +842,7 @@
             attributionLogo: true
           },
           grid: { vertLines: { color: C.grid }, horzLines: { color: C.grid } },
-          rightPriceScale: { borderColor: C.border },
+          rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.08, bottom: 0.24 } },
           timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: true },
           crosshair: { mode: LWC.CrosshairMode.Normal },
           localization: { locale: "en-US" }
@@ -828,7 +852,21 @@
           priceLineVisible: false, lastValueVisible: true
         });
         const markers = typeof LWC.createSeriesMarkers === "function" ? LWC.createSeriesMarkers(series, []) : null;
-        api.current = { chart: c, series: series, lines: {}, markers: markers, market: null, decimals: null };
+        // Volume bars in the bottom fifth, on their own hidden scale, under the candles' margin.
+        const vol = c.addSeries(LWC.HistogramSeries, {
+          priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false
+        });
+        c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
+        api.current = { chart: c, series: series, vol: vol, lines: {}, markers: markers, market: null, decimals: null, byTime: {}, hoverT: null };
+        // The readout follows the crosshair: the candle under it, or none (the latest is shown then).
+        c.subscribeCrosshairMove(function (param) {
+          const a2 = api.current;
+          if (!a2) return;
+          const k = param && param.seriesData ? param.seriesData.get(a2.series) : null;
+          const cand = k && isNum(k.time) ? a2.byTime[k.time] || null : null;
+          const t = cand ? cand.time : null;
+          if (t !== a2.hoverT) { a2.hoverT = t; setHover(cand); }
+        });
       } catch (e) {
         setFailure("chart could not be created: " + errText(e));
       }
@@ -846,6 +884,14 @@
         const candles = (chart.candles || []).filter(function (k) {
           return isNum(k.time) && isNum(k.open) && isNum(k.high) && isNum(k.low) && isNum(k.close);
         }).map(function (k) { return { time: k.time, open: k.open, high: k.high, low: k.low, close: k.close }; });
+        const byTime = {};
+        (chart.candles || []).forEach(function (k) { if (isNum(k.time)) byTime[k.time] = k; });
+        a.byTime = byTime;
+        if (a.vol) {
+          a.vol.setData(candles.filter(function (k) { return isNum((byTime[k.time] || {}).volume_usd); }).map(function (k) {
+            return { time: k.time, value: byTime[k.time].volume_usd, color: k.close >= k.open ? VOL_UP : VOL_DOWN };
+          }));
+        }
         const lines = (chart.price_lines || []).filter(function (pl) { return isNum(pl.price); });
         const vals = [];
         candles.forEach(function (k) { vals.push(k.open, k.high, k.low, k.close); });
@@ -898,12 +944,16 @@
     const gaps = chart.gaps || [];
     const lines = chart.price_lines || [];
     const nCandles = (chart.candles || []).length;
+    const latest = nCandles ? chart.candles[nCandles - 1] : null;
     return h(Panel, {
       id: "chart", className: "hd-p-chart", title: "Price chart",
       label: "Price chart (in the mockup's heatmap position)",
       why: h(Fragment, null,
         h("p", null, (isNum(chart.candle_s) ? chart.candle_s + " s candles" : "Candles") + " from public trades, times in UTC. " +
-          "Best bid and ask, mark, oracle and the largest returned levels are drawn as price lines; a gap marker sits on the first candle after a coverage gap, and no candle spans a gap."),
+          "Best bid and ask, mark, oracle and the largest returned levels are drawn as price lines; a gap marker sits on the first candle after a coverage gap, and no candle spans a gap. " +
+          "The bars under the candles are each candle's traded notional in USD (the snapshot's volume_usd), in the buy colour when the candle closed at or above its open. " +
+          "The readout at the top left follows the crosshair; with the pointer away it shows the latest candle. " +
+          "The price lines carry no label on the chart: each shows its price on the axis and is named in the legend below."),
         chart.candles_note ? h("p", null, "The snapshot's note: " + chart.candles_note + ".") : null),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" }),
       status: h(Fragment, null,
@@ -913,6 +963,7 @@
     },
     h("div", { className: "hd-chart-wrap" },
       h("div", { className: "hd-chart", ref: boxRef, role: "img", "aria-label": "Candlestick chart of " + m.market }),
+      !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" }, "No candles in this snapshot: no trades in the current coverage segment yet.") : null),
     h("div", { className: "hd-legend-lines" }, lines.length ? lines.map(function (pl, i) {
@@ -3521,13 +3572,16 @@
         h(Ladder, { m: m, nodeOn: non })) : null,
       m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market }) : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,
       m ? h(Fragment, null,
-        h(SectionHead, { title: "Book", note: non ? "the node's order-level book, then the public book's observed depth" : "the public book's observed depth (the chart and ladder are above)" }),
+        h(SectionHead, { title: "Book", note: non ? "the node's order-level book; the public book's observed depth is folded at the end" : "the public book's observed depth, folded (the chart and ladder are above)" }),
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(StopsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(ThinningPanel, { v: nlive })) : null,
-        h("div", { className: "hd-row hd-row-a" },
+        // The observed depth is out of the main view (Kevin, Nov 9): folded, with its data one click away.
+        h("details", { className: "hd-foldcard", "data-panel": "depth-fold" },
+          h("summary", null, "Observed depth",
+            h("span", { className: "hd-foldcard-note" }, "folded: open it for the bands and the observed depth per book kind, with their freshness and reasons")),
           h(DepthPanel, { m: m })),
         h(SectionHead, { title: "Flow", note: "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
         h("div", { className: "hd-row hd-row-b" },
