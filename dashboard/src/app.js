@@ -1878,7 +1878,7 @@
         : "No replay loaded. Start one with the controls above; nothing replays by itself.");
     }
     const mode = g(v, "provenance", "mode") || "REPLAY";
-    const fam = h(ReplayBox, { title: "Families", mode: mode },
+    const fam = h(ReplayBox, { title: "Families", mode: mode, wide: true },
       h("div", { className: "hd-chips" }, h(FamChips, { fams: v.families })), h(FamNotes, { fams: v.families }),
       h("div", { className: "hd-small hd-dim", title: g(v, "provenance", "stream") }, h(NodeStatus, { v: { provenance: v.provenance }, fams: [] })));
     if (v.available === false) return h("div", { className: "hd-replay-grid" }, fam, h(ReplayBox, { title: props.market, mode: mode }, h(Unavailable, { reason: v.reason, block: true })));
@@ -1898,7 +1898,7 @@
     const hg = heatGate(v);
     return h("div", { className: "hd-replay-grid" },
       fam,
-      h(ReplayBox, { title: "Ladder summary (L4)", mode: mode },
+      h(ReplayBox, { title: "Ladder summary (L4)", mode: mode, wide: true },
         lg || h(Fragment, null,
           h("div", { className: "hd-small" },
             h(KV, { k: "best bid" }, h(DPx, { v: lad.best_bid, className: "hd-bid" })), h(KV, { k: "best ask" }, h(DPx, { v: lad.best_ask, className: "hd-ask" })),
