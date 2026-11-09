@@ -127,3 +127,9 @@ the merged code at 21:06Z (public live, the runner's node feed connected, no rec
 
 Everything shown is the snapshot's or the route's own data; the tab computes nothing. The interval buttons poll the
 plugin's candles route for the selected interval only.
+
+## Ask Hermes in the page (2026-11-09, 21:30Z)
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `97-hermes-panel-in-page.png` | The "Hermes says · BTC" panel after one Ask: the question with the snapshot ID, the session's model (the dashboard's), the streamed reply. On the isolated review Hermes the reply is the agent's own error ("Hermes is not connected to any AI provider yet"), which proves the path end to end: socket, session, prompt, streamed answer; with a provider key the same panel carries the commentary | the panel's Ask Hermes button pressed, 12 s later |
