@@ -2962,10 +2962,15 @@
     const state = [];
     const ab = g(d, "card", "activity_buckets") || {};
     if (ab.available === true) {
+      // Read like the original deck: buy = new longs opening + shorts covering; sell = new shorts opening + longs closing.
+      // The largest of the four is named in words (a comparison of the plugin's numbers, not a forecast).
       const part = function (k, label) { const v = valueOf(ab[k]); return v === null ? label + " unavailable" : label + " " + usd(v); };
+      const WORDS = { new_long: "new longs opening", cover: "shorts covering", new_short: "new shorts opening", exit: "longs closing" };
+      let top = null;
+      ["new_long", "cover", "new_short", "exit"].forEach(function (k) { const v = valueOf(ab[k]); if (v !== null && (top === null || v > valueOf(ab[top]))) top = k; });
       state.push({ key: "s-split", tag: "FLOW SPLIT", tone: "info",
-        text: (ab.window_label || "node fills over the card's window") + ": " + part("new_long", "new longs") + " \u00b7 " + part("cover", "covers") +
-          " \u00b7 " + part("new_short", "new shorts") + " \u00b7 " + part("exit", "exits") + " (the venue's Open/Close tags on taker fills: risk added versus risk unwound)" });
+        text: "buy: " + part("new_long", "new-long") + " \u00b7 " + part("cover", "cover") + " | sell: " + part("new_short", "new-short") + " \u00b7 " + part("exit", "exit") +
+          (top ? " | largest: " + WORDS[top] : "") + " (" + (ab.window_label || "node fills over the card's window") + "; the venue's Open/Close tags on taker fills)" });
     }
     const nl = g(m, "node", "live");
     if (nl && !nodeGate(nl, "thinning", true)) {
