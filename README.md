@@ -90,8 +90,9 @@ With a node feed, the tab's node panels and the `node_status`, `node_book` and `
   - **Liquidity thinning.** Depth per 0.5% band out to 10% from the price, in dollars and dollars per $1 of price, with the sharpest drop called out. What's resting right now. Orders can be added or pulled at any moment; this isn't a forecast.
   - **Heatmap.** The 15-minute history starts when the book became valid and is marked partial until it covers 15 minutes.
 - **Waiting stops** are conditional interest: orders that do nothing unless the price reaches them.
+  - **Checked against the venue only at restart.** The engine compares its waiting-stop set with the venue's only when it restarts (its rebase check). During a run nothing compares them, so a stop the venue has already ended can stay shown until the next restart. The stops panel and `node_stops` (`venue_check`) say so.
+  - **Whole-position TP/SL orders have no stated size** (the venue gives 0). Each band counts them (`unknown_size_orders`), and its stated size is then a lower bound; a band made only of them shows its size as unknown, never 0.
   - Each band shows its order count beside its size, and says so when one order makes up most of it.
-  - Whole-position TP/SL orders have no stated size and are counted apart.
   - Every waiting trigger is accounted for, in a band or outside the range. The engine leaves out trailing stops (their current trigger price isn't established) and reports how many.
 - **Liquidations** count once each, for the liquidated trader, whose own position effect says long or short. A burst of them (by default 2 within 60 s, or $1M) raises its own alert.
 - **Replay** runs only when you start it: `/hl replay start [file]`, then `pause`, `resume`, `seek <time>`, `speed <x>`, `restart` and `stop` (or the tab's replay controls).

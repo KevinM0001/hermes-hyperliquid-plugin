@@ -258,7 +258,7 @@ def _tab_validity(payload: dict, elapsed_ms: float) -> dict:
     fn = re.search(r"// <pure:snapshotValidity>.*?\n(.*?)  // </pure:snapshotValidity>", src, re.S).group(1)
     script = fn + "\nprocess.stdout.write(JSON.stringify(snapshotValidity(" + json.dumps(payload) + \
         ", 1000, " + str(1000 + elapsed_ms) + ", 5)));\n"
-    return json.loads(subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True).stdout)
+    return json.loads(subprocess.run(["node", "-"], input=script, capture_output=True, text=True, timeout=30, check=True).stdout)
 
 
 @pytest.mark.skipif(__import__("shutil").which("node") is None, reason="needs node to run the tab's pure function")

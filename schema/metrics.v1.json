@@ -1027,7 +1027,7 @@
     },
     "node.stops_band": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
-      "formula": "waiting stop/take-profit orders grouped by trigger price into [k*width, (k+1)*width) per kind and side, within 2% of the book mid: orders, stated size (sum of sizes of orders with a size), whole-position orders (size unknown, counted), the largest order and its share of the stated size; dominated when one order is more than 50% of it. Everything outside the range is counted below/above (or under no reference price)",
+      "formula": "waiting stop/take-profit orders grouped by trigger price into [k*width, (k+1)*width) per kind and side, within 2% of the book mid: orders, stated size (sum of sizes of orders with a size), whole-position orders (size unknown, counted), the largest order and its share of the stated size; dominated when one order is more than 50% of it. Everything outside the range is counted below/above (or under no reference price); stated size is a lower bound (sz_lower_bound, with sz_note) when the band holds whole-position TP/SL orders (unknown_size_orders, no stated size), and unknown (sz null with sz_reason) when every order in it is one, never 0 (Node Project review B2, Nov 9). The set is checked against the venue only when the engine restarts (venue_check)",
       "units": "orders; coin",
       "inputs": [
         "trig_snapshot",
@@ -1331,6 +1331,7 @@
     "1.2.0 (burst calibration, Kevin's choice A): node-mode bursts on node fills with the calibration's rule (alerts.burst.node_mode), automatic thresholds from a dated calibration with a manual override, and a rank against the calibration's reference; the public-trades burst rule is unchanged and is public mode's",
     "1.2.0 also (Kevin, Nov 8, node-mode flicker): node.family_state comes from the node feed's delay, the latest watermark's age averaged over 5 s, LIVE up to 10 s, BEHIND (shown as DELAYED) above it, STALE above 30 s; the tab never blanks for a delay",
     "1.2.0 also (Codex h1 review 1): public statuses are re-judged at a latest snapshot's served age, and the tab ages what it shows the same way, withholding lapsed values in place",
-    "1.2.0 also (Codex h1 review 2): book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)"
+    "1.2.0 also (Codex h1 review 2): book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)",
+    "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check"
   ]
 }

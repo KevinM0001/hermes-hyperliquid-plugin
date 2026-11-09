@@ -1034,10 +1034,21 @@
 
   // ---- node ladder (L4)
 
+  // A trigger group's stated size: unknown (never 0) when every order is a whole-position TP/SL, and a lower bound
+  // when some are (they have no stated size).
+  function stopSize(r) {
+    if (r && r.sz === null && r.unknown_size_orders) {
+      return h("span", { className: "hd-na", title: r.sz_reason || "" }, "unknown (" + intf(r.unknown_size_orders) + " whole-position)");
+    }
+    if (r && r.sz_lower_bound) return h("span", { title: r.sz_note || "" }, "\u2265 ", zsz(r.sz));
+    return zsz(r ? r.sz : null);
+  }
+
   function stopsTitle(st, label) {
     if (!st) return label + "\nno next level is shown after this one, so there is no range to count";
     if (st.available === false) return label + "\nunavailable: " + (st.reason || "trigger state not usable");
-    return label + "\n" + qi(st.orders) + " orders, " + qz(st.sz) + " stated size" +
+    return label + "\n" + qi(st.orders) + " orders, " + (st.sz === null ? "stated size unknown" : qz(st.sz) + " stated size" +
+      (st.sz_lower_bound ? " (a lower bound)" : "")) +
       (st.unknown_size_orders ? "; " + qi(st.unknown_size_orders) + " of the orders have no stated size (whole-position TP/SL)" : "");
   }
 
@@ -1046,7 +1057,8 @@
     if (st.available === false) return h(Unavailable, { reason: st.reason || "trigger state not usable", compact: true });
     if (!isNum(st.orders)) return missing();
     if (st.orders === 0) return h("span", { className: "hd-dim" }, "0");
-    return h(Fragment, null, intf(st.orders), h("span", { className: "hd-dim" }, " \u00b7 "), isNum(st.sz) ? sz(st.sz) : missing(),
+    return h(Fragment, null, intf(st.orders), h("span", { className: "hd-dim" }, " \u00b7 "),
+      st.sz === null && st.unknown_size_orders ? h("span", { className: "hd-na" }, "size unknown") : (isNum(st.sz) ? sz(st.sz) : missing()),
       st.unknown_size_orders ? h("span", { className: "hd-dim" }, " +" + intf(st.unknown_size_orders) + " no size") : null);
   }
 
@@ -1172,7 +1184,7 @@
   function stopCells(r) {
     return [
       h("td", { key: "o", className: "hd-r" }, isNum(r.orders) ? intf(r.orders) : missing()),
-      h("td", { key: "z", className: "hd-r" }, zsz(r.sz)),
+      h("td", { key: "z", className: "hd-r" }, stopSize(r)),
       h("td", { key: "u", className: "hd-r" }, isNum(r.unknown_size_orders) ? (r.unknown_size_orders ? intf(r.unknown_size_orders) : h("span", { className: "hd-dim" }, "0")) : missing()),
       h(SizeCheckCell, { key: "c", r: r })
     ];
@@ -1250,7 +1262,9 @@
     const st = gate ? null : v.stops;
     return h(Panel, {
       id: "waiting-stops", className: "hd-p-stops hd-p-stops-node", title: "Waiting stops", nodeHook: "waiting-stops",
-      sub: st && st.label ? st.label : "conditional interest: waiting stop and take-profit orders, which do nothing unless the price reaches them",
+      sub: h(Fragment, null, st && st.label ? st.label : "conditional interest: waiting stop and take-profit orders, which do nothing unless the price reaches them",
+        h("div", { className: "hd-small hd-tone-text-warn", title: (st && st.venue_check) || "" },
+          "Checked against the venue only at restart: during a run, nothing compares this set with the venue's.")),
       badges: h(NodeProv, { v: v, what: "triggers" }),
       status: h(NodeStatus, { v: v, fams: ["triggers", "book"] })
     },

@@ -35,6 +35,7 @@ THIN_NOTE = "What's resting right now. Orders can be added or pulled at any mome
 DOMINANT_SHARE = Decimal("0.5")
 LIQ_WINDOW_MS = 60_000
 TAPE_ROWS = 30
+VENUE_CHECK = ("checked against the venue only at restart: the engine compares its waiting-stop set with the venue's only when it restarts (its rebase check); during a run nothing compares them, so a stop the venue has already ended can stay shown until the next restart")
 STOPS_ROWS_RANGE_BPS = 200          # band rows shown within 2% of the mid; everything beyond is counted below/above
 BOOK_PANEL_FAMILIES = ("book",)
 
@@ -305,7 +306,8 @@ def ladder(mf, client, trig_status: dict | None = None, levels: int = LADDER_LEV
                 "change_10s": {"added": num(c["added"]), "absorbed": num(c["absorbed"]), "pulled": num(c["pulled"]),
                                "unknown": num(c["unknown"])},
                 "stops_to_next_level": (None if nxt is None else dict(stops_na) if stops_na is not None else
-                                        {"orders": stops_n, "sz": num(stops_sz), "unknown_size_orders": stops_unk})})
+                                        {"orders": stops_n, **stated_size(stops_sz, stops_n - stops_unk, stops_unk),
+                                         "unknown_size_orders": stops_unk})})
         out["bids" if side == "B" else "asks"] = rows
     return out | {
         "labels": {"largest_order_sz": "largest order size at this level",
@@ -321,6 +323,18 @@ def ladder(mf, client, trig_status: dict | None = None, levels: int = LADDER_LEV
         "best_bid": fmt(book.best("B")), "best_ask": fmt(book.best("A")), "mid": fmt(book.mid())}
 
 
+def stated_size(sz, sized: int, unknown: int) -> dict:
+    """A trigger group's stated size: whole-position TP/SL orders have none (the venue gives 0), so the sum of the
+    sized orders is a lower bound when any are present, and unknown, never 0, when every order is one."""
+    if unknown and not sized:
+        return {"sz": None, "sz_reason": f"unknown: all {unknown} orders are whole-position TP/SL with no stated size"}
+    out = {"sz": num(sz)}
+    if unknown:
+        out |= {"sz_lower_bound": True,
+                "sz_note": f"a lower bound: {unknown} whole-position TP/SL orders here have no stated size"}
+    return out
+
+
 def stop_bands(mf, client) -> dict:
     tr = mf.triggers
     ref = mf.book.mid() if (mf.book is not None and mf.crossed is None) else None
@@ -331,7 +345,8 @@ def stop_bands(mf, client) -> dict:
     def row(r):
         lg = r.get("largest")
         return {"lo": fmt(r.get("lo")), "hi": fmt(r.get("hi")), "kind": r.get("kind"), "side": r.get("side"),
-                "orders": r["orders"], "sized_orders": r["sized_orders"], "sz": num(r["sz"]),
+                "orders": r["orders"], "sized_orders": r["sized_orders"],
+                **stated_size(r["sz"], r["sized_orders"], r["position_tpsl_orders"]),
                 "unknown_size_orders": r["position_tpsl_orders"],
                 "largest_order": None if lg is None else {"sz": num(lg["sz"]), "user": lg["user"],
                                                            "share_pct": round(float(lg["share"]) * 100, 2) if lg["share"] is not None else None},
@@ -341,6 +356,7 @@ def stop_bands(mf, client) -> dict:
 
     return {"label": "conditional interest: waiting stop and take-profit orders, which do nothing unless the price "
                      "reaches them",
+            "venue_check": VENUE_CHECK,
             "ref_px": fmt(b["ref_px"]), "ref_px_reason": None if ref is not None else "no valid uncrossed book mid",
             "width": fmt(width), "range_bps": rng, "lo": fmt(b["lo"]), "hi": fmt(b["hi"]),
             "rows": [row(r) for r in b["rows"]],

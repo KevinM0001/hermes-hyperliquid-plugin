@@ -26,7 +26,7 @@ def _run_live_account_state(cases: dict) -> dict:
     fn = re.search(r"// <pure:liveAccountState>.*?\n(.*?)  // </pure:liveAccountState>", src, re.S).group(1)
     script = fn + "\nconst cases = " + json.dumps(cases) + ";\nconst out = {};\n" + \
         "for (const k in cases) { out[k] = liveAccountState(...cases[k]); }\nprocess.stdout.write(JSON.stringify(out));\n"
-    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True)
+    r = subprocess.run(["node", "-"], input=script, capture_output=True, text=True, timeout=30, check=True)
     return json.loads(r.stdout)
 
 

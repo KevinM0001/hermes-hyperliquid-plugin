@@ -109,7 +109,7 @@ def _age_shown(payload: dict, age_s: float) -> dict:
     src = (ROOT / "dashboard" / "src" / "app.js").read_text()
     fn = re.search(r"// <pure:ageShown>.*?\n(.*?)  // </pure:ageShown>", src, re.S).group(1)
     script = fn + "\nprocess.stdout.write(JSON.stringify(ageShown(" + json.dumps(payload) + ", " + json.dumps(age_s) + ")));\n"
-    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True)
+    r = subprocess.run(["node", "-"], input=script, capture_output=True, text=True, timeout=30, check=True)
     return json.loads(r.stdout)
 
 

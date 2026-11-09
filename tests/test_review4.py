@@ -41,7 +41,7 @@ def test_open_wallet_account_expires_after_its_limit():
     script = _live_account_state_js() + "\nconst cases = " + json.dumps(cases) + ";\n" + \
         "const out = {}; for (const k in cases) { out[k] = liveAccountState(...cases[k]); }\n" + \
         "process.stdout.write(JSON.stringify(out));\n"
-    r = subprocess.run(["node", "-e", script], capture_output=True, text=True, timeout=30, check=True)
+    r = subprocess.run(["node", "-"], input=script, capture_output=True, text=True, timeout=30, check=True)
     out = json.loads(r.stdout)
     assert out["at_open"]["status"] == "fresh" and out["at_open"]["expired"] is False
     assert out["after_9s"]["status"] == "fresh" and abs(out["after_9s"]["age"] - 9.465) < 1e-9
