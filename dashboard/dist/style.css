@@ -614,7 +614,7 @@
 .hd-table td.hd-sizecheck { white-space: normal; min-width: 180px; color: #FBE3A6; line-height: 1.35; }
 .hd-sizecheck b { font-weight: 700; }
 .hd-sizecheck-sum { font-size: 12px; color: #FBE3A6; padding: 6px 8px; border-left: 3px solid var(--hd-warn); background: rgba(242,193,78,0.06); }
-.hd-venue-check { font-size: 11px; color: #FBE3A6; }
+.hd-venue-check { display: block; font-size: 11px; color: #FBE3A6; }
 
 /* wall watch */
 .hd-walls td { font-size: 11px; padding: 3px 6px; }

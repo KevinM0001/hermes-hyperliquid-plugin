@@ -1291,7 +1291,8 @@
       status: h(NodeStatus, { v: v, fams: ["book", "triggers"] }),
       flush: true
     },
-    h(FamNotes, { fams: v && v.families, names: ["book", "triggers"], pad: true }),
+    // A withheld panel's box already names the family and its reason, so the family notes are shown only with values.
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["book", "triggers"], pad: true }),
     gate ? h("div", { className: "hd-pad" }, gate) : h(NodeLadderTable, { lad: lad, centreKey: g(v, "provenance", "market") }),
     lad ? h("div", { className: "hd-note" },
       "Full book: " + (isNum(lps.bids) ? intf(lps.bids) : "?") + " bid levels, " + (isNum(lps.asks) ? intf(lps.asks) : "?") + " ask levels; the " +
@@ -1399,12 +1400,12 @@
       id: "waiting-stops", className: "hd-p-stops hd-p-stops-node", title: "Waiting stops", nodeHook: "waiting-stops",
       why: h("p", null, "Conditional interest: waiting stop and take-profit orders, which do nothing unless the price reaches them. Rows are price bands around the reference price (the node book mid); a band whose stated size is mostly one order is highlighted."),
       sub: h(Fragment, null, st && st.label ? st.label : null,
-        h("div", { className: "hd-venue-check", title: (st && st.venue_check) || "" },
+        h("span", { className: "hd-venue-check", title: (st && st.venue_check) || "" },
           "Checked against the venue only at restart: during a run, nothing compares this set with the venue's.")),
       badges: h(NodeProv, { v: v, what: "triggers" }),
       status: h(NodeStatus, { v: v, fams: ["triggers", "book"] })
     },
-    h(FamNotes, { fams: v && v.families, names: ["triggers", "book"] }),
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["triggers", "book"] }),
     gate || h(StopsBody, { st: st }));
   }
 
@@ -1469,7 +1470,7 @@
       badges: h(NodeProv, { v: v, what: "L4 orders" }),
       status: h(NodeStatus, { v: v, fams: ["book"] })
     },
-    h(FamNotes, { fams: v && v.families, names: ["book"] }),
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["book"] }),
     gate || h(WallsBody, { wl: v.walls, bookMs: g(v, "book", "book_time_ms") }));
   }
 
@@ -1545,7 +1546,7 @@
       status: h(NodeStatus, { v: v, fams: ["flow"] }),
       flush: true
     },
-    h(FamNotes, { fams: v && v.families, names: ["flow"], pad: true }),
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["flow"], pad: true }),
     tp ? h("div", { className: "hd-pad hd-pad-tight" }, h(TapeCoverage, { c: tp.coverage })) : null,
     gate ? h("div", { className: "hd-pad" }, gate) : h(NodeTapeTable, { rows: tp.rows }));
   }
@@ -1621,7 +1622,7 @@
           " \u00b7 freshness " + (th.freshness || "not in snapshot")) : null
       })
     },
-    h(FamNotes, { fams: v && v.families, names: ["book"] }),
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["book"] }),
     th && th.note ? h("div", { className: "hd-thin-note" }, th.note) : null,
     gate || h(Fragment, null,
       h("div", { className: "hd-small" },
@@ -1848,7 +1849,7 @@
       badges: h(NodeProv, { v: v, what: "book history" }),
       status: h(NodeStatus, { v: v, fams: ["book"] })
     },
-    h(FamNotes, { fams: v && v.families, names: ["book"] }),
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["book"] }),
     gate || h(Fragment, null, h(HeatCanvas, { hist: hs, height: 340 }), h(HeatPartial, { hs: hs })));
   }
 
