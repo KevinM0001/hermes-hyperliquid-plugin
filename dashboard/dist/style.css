@@ -85,6 +85,8 @@
 .hd-note-row:last-child { border-bottom: 0; }
 .hd-note-t { color: var(--hd-muted); font-size: 11.5px; }
 .hd-note-text { color: var(--hd-text-2); min-width: 0; line-height: 1.35; }
+.hd-note-state .hd-note-text { color: var(--hd-text); }
+.hd-notes-foot { font-size: 11px; color: var(--hd-muted); padding-top: 6px; }
 @media (max-width: 720px) { .hd-note-row { grid-template-columns: 1fr; } }
 .hd-row-m .hd-p-chart > .hd-card-body { flex: 1 1 auto; }
 .hd-row-m .hd-chart-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 480px; }

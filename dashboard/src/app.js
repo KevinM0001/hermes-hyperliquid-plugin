@@ -2954,25 +2954,65 @@
     });
     notes.sort(function (a, b) { return b.t - a.t; });
     const shown = notes.slice(0, 6);
+    // State lines (the plugin's current numbers as of this snapshot, never a forecast): the activity split of node
+    // fills over the card's window (the venue's own Open/Close tags: risk added versus risk unwound), and where the
+    // resting depth thins sharpest on each side of the price (the node book). Node mode only.
+    const state = [];
+    const ab = g(d, "card", "activity_buckets") || {};
+    if (ab.available === true) {
+      const part = function (k, label) { const v = valueOf(ab[k]); return v === null ? label + " unavailable" : label + " " + usd(v); };
+      state.push({ key: "s-split", tag: "FLOW SPLIT", tone: "info",
+        text: (ab.window_label || "node fills over the card's window") + ": " + part("new_long", "new longs") + " \u00b7 " + part("cover", "covers") +
+          " \u00b7 " + part("new_short", "new shorts") + " \u00b7 " + part("exit", "exits") + " (the venue's Open/Close tags on taker fills: risk added versus risk unwound)" });
+    }
+    const nl = g(m, "node", "live");
+    if (nl && !nodeGate(nl, "thinning", true)) {
+      const th = nl.thinning;
+      [["bids_below", "bid", "below"], ["asks_above", "ask", "above"]].forEach(function (x) {
+        const dd = th && th[x[0]] ? th[x[0]].sharpest_drop : null;
+        if (!dd) return;
+        state.push({ key: "s-thin-" + x[1], tag: x[1] === "bid" ? "BID DEPTH" : "ASK DEPTH", tone: "warn",
+          text: "resting " + x[1] + " depth thins sharpest at " + (dpx(dd.at_price) || "?") +
+            (isNum(dd.distance_pct) ? " (" + pct(dd.distance_pct, 1) + " " + x[2] + " the current price)" : "") + ": " +
+            (dd.empty_band ? "an empty band after " + bandPct(dd.from_band_pct)
+              : (isNum(dd.times_thinner) ? num(dd.times_thinner, 2, 2) + "\u00d7 thinner than the band before, in $ per $1 of price" : "ratio not in snapshot")) });
+      });
+    }
     return h(Panel, {
       id: "flow-notes", className: "hd-p-notes", title: "Flow notes \u00b7 " + name,
       label: "Flow notes for " + name,
       why: h("p", null, "The plugin's own plain-English texts for this market, newest first: regime changes (with how long the previous regime held), " +
         "burst alerts (the aggressive side and the notional within 60 s; the wallets behind it are in the Flow Deck panel), liquidation bursts " +
-        "(node mode) and large prints at or above the threshold. Nothing is generated here: each line is the snapshot's text, or its numbers " +
-        "formatted. 'ask' copies a question about that line for Hermes and opens the chat."),
+        "(node mode) and large prints at or above the threshold. In node mode two kinds of state line come first: the split of node fills into " +
+        "new longs, covers, new shorts and exits over the card's window (the venue's own Open/Close tags), and where the resting depth thins " +
+        "sharpest on each side of the price. Nothing is generated or computed here: each line is the snapshot's text, or its numbers formatted; " +
+        "none of it is a forecast. 'ask' copies a question about that line for Hermes and opens the chat."),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "deck events + trades" }),
       status: h(Fragment, null, h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
         notes.length ? h("span", { className: "hd-dim" }, listCount("newest", shown.length, "notes", notes.length, "in this snapshot")) : null)
     },
-    shown.length ? h("ul", { className: "hd-notes" }, shown.map(function (n) {
-      return h("li", { key: n.key, className: "hd-note-row" },
-        h("span", { className: "hd-num hd-note-t" }, hms(n.t) + " UTC"),
-        h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
-        h("span", { className: "hd-note-text", title: n.text }, n.text),
-        r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
-          " event at " + hms(n.t) + " UTC: " + n.text + " Use the hyperliquid commentary skill." }) : null);
-    })) : h("div", { className: "hd-empty" }, "No regime change, burst or large print for " + name + " in the current coverage yet."));
+    state.length || shown.length ? h(Fragment, null,
+      h("ul", { className: "hd-notes" },
+        state.map(function (n) {
+          return h("li", { key: n.key, className: "hd-note-row hd-note-state" },
+            h("span", { className: "hd-num hd-note-t" }, "now"),
+            h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
+            h("span", { className: "hd-note-text", title: n.text }, n.text),
+            r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
+              " reading: " + n.text + " Use the hyperliquid commentary skill." }) : null);
+        }),
+        shown.map(function (n) {
+          return h("li", { key: n.key, className: "hd-note-row" },
+            h("span", { className: "hd-num hd-note-t" }, hms(n.t) + " UTC"),
+            h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
+            h("span", { className: "hd-note-text", title: n.text }, n.text),
+            r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
+              " event at " + hms(n.t) + " UTC: " + n.text + " Use the hyperliquid commentary skill." }) : null);
+        })),
+      h("div", { className: "hd-note hd-notes-foot" }, "Descriptions, not signals: regimes and bursts are heuristic classifications of window numbers; " +
+        "they establish no cause and predict nothing. The depth and flow lines are the node book and node fills as of this snapshot."))
+      : h("div", { className: "hd-empty" }, "No regime change, burst or large print for " + name + " in the current coverage yet" +
+        (nl ? "; the node state lines appear once the node book and fills are usable." : ".")));
   }
 
   // ------------------------------------------------------------------ wallets
