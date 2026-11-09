@@ -17863,7 +17863,9 @@
   // candle, volume in the coin's units). The tab polls that route only for the selected interval.
   const INTERVALS = [["15s", 15], ["1m", 60], ["5m", 300], ["15m", 900], ["30m", 1800], ["1h", 3600], ["4h", 14400], ["1d", 86400]];
   function intervalSeconds(iv) { for (let i = 0; i < INTERVALS.length; i++) if (INTERVALS[i][0] === iv) return INTERVALS[i][1]; return 60; }
-  function intervalPollMs(iv) { return Math.min(60000, Math.max(5000, intervalSeconds(iv) * 250)); }
+  // The route never touches the venue on the request path (measured by the plugin: about 1 ms), and the websocket
+  // updates the in-progress candle about once a second, so short intervals poll every 2 s, long ones every 15 s.
+  function intervalPollMs(iv) { const sec = intervalSeconds(iv); return sec <= 300 ? 2000 : (sec <= 3600 ? 5000 : 15000); }
   function coinOf(market) { const t = String(market || ""); const i = t.lastIndexOf(":"); return i >= 0 ? t.slice(i + 1) : t; }
 
   // The readout at the chart's top left: the candle under the crosshair, or the latest one when the pointer is away.
