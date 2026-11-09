@@ -18746,7 +18746,7 @@
   // sentences quoted verbatim, the exclusions it counted and the census of the waiting set. Everything is
   // market.node.live.stops.{map, clusters, exclusions, census} and thinning (schema 1.3.0); nothing is computed here.
   // Every notional and ratio is a lower bound where orders report no size; a null is shown with its reason, never 0.
-  function sig2(v) { return isNum(v) ? String(Number(v.toPrecision(2))) : "?"; }
+  function walkPct(v) { return isNum(v) ? String(v) + "%" : "?"; }     // as served (4 significant figures), never re-rounded
   function countOf(x) { return isNum(x) ? x : (x && isNum(x.orders) ? x.orders : null); }
   const CAT_LABEL = { sell_stop_on_fall: "sell stops", buy_take_profit_on_fall: "buy take-profits", buy_stop_on_rise: "buy stops", sell_take_profit_on_rise: "sell take-profits" };
   function catText(by) {
@@ -18764,8 +18764,8 @@
       "resting depth in the band " + (th && isNum(th.depth_usd) ? usd(th.depth_usd) : "?") + (th && isNum(th.cumulative_from_price_usd) ? ", from the price out to it " + usd(th.cumulative_from_price_usd) : ""),
       "triggers: " + intf(b.orders) + " orders from " + intf(b.accounts) + " accounts, " + intf(b.unknown_size_orders) + " with no stated size" + (isNum(b.notional_usd) ? "; stated notional " + (b.lower_bound ? "at least " : "") + usd(b.notional_usd) : "; " + (b.notional_reason || "no stated notional")),
       catText(b.by_category)];
-    if (b.largest_order && isNum(b.largest_order.notional_usd)) lines.push("largest order " + usd(b.largest_order.notional_usd) + " at " + dpx(b.largest_order.trigger_px) + (isNum(b.largest_order.share_pct) ? " (" + num(b.largest_order.share_pct, 1, 1) + "% of the band)" : ""));
-    lines.push(isNum(w.ratio_pct) ? "walk: " + (w.lower_bound ? "at least " : "") + sig2(w.ratio_pct) + "% of the " + usd(w.depth_at_and_beyond_usd) + " resting at and beyond the band" + (isNum(w.depth_between_usd) ? "; " + usd(w.depth_between_usd) + " rests between the price and the band" : "")
+    if (b.largest_order && isNum(b.largest_order.notional_usd)) lines.push("largest order " + usd(b.largest_order.notional_usd) + " at " + dpx(b.largest_order.trigger_px) + (isNum(b.largest_order.share_pct) ? " (" + num(b.largest_order.share_pct, 1, 1) + "% of the band's stated notional)" : ""));
+    lines.push(isNum(w.ratio_pct) ? "walk: " + (w.lower_bound ? "at least " : "") + walkPct(w.ratio_pct) + " of the " + usd(w.depth_at_and_beyond_usd) + " resting at and beyond the band" + (isNum(w.depth_between_usd) ? "; " + usd(w.depth_between_usd) + " rests between the price and the band" : "")
       : "walk: " + (w.ratio_reason || "not given"));
     return lines.join("\n");
   }
@@ -18776,8 +18776,8 @@
     const isFall = side.fires_on === "fall";
     return h("div", { className: "hd-thin-side hd-smap-side" },
       h("div", { className: "hd-wt-title" }, h("b", { className: isFall ? "hd-ask" : "hd-bid" }, side.label || (isFall ? "Sell-side triggers" : "Buy-side triggers")),
-        h("span", { className: "hd-dim" }, isFall ? " fire on a fall, into the bids below" : " fire on a rise, into the asks above",
-          isNum(side.members) ? " \u00b7 " + intf(side.members) + " orders in these bands" : "", isNum(side.depth_total_usd) ? " \u00b7 " + usd(side.depth_total_usd) + " resting out to 10%" : "")),
+        h("span", { className: "hd-dim", title: typeof side.members === "string" ? side.members : "" }, isFall ? " fire on a fall, into the bids below" : " fire on a rise, into the asks above",
+          isNum(side.depth_total_usd) ? " \u00b7 " + usd(side.depth_total_usd) + " resting out to 10%" : "")),
       h("div", { className: "hd-scroll" },
         h("table", { className: "hd-table hd-thin hd-smap" },
           h("thead", null, h("tr", null,
@@ -18800,7 +18800,7 @@
                 h("span", { className: cx("hd-bar hd-bar-trig", b.lower_bound && "hd-bar-lb"), style: { width: tW + "%" }, "aria-hidden": "true" }),
                 h("span", { className: "hd-barval" }, isNum(b.notional_usd) ? h(Fragment, null, (b.lower_bound ? "\u2265 " : "") + usd(b.notional_usd), h0(b))
                   : h("span", { className: "hd-dim" }, b.orders ? intf(b.orders) + " unsized" : "none"))),
-              h("td", { className: "hd-r hd-num" }, isNum(w.ratio_pct) ? (w.lower_bound ? "\u2265 " : "") + sig2(w.ratio_pct) + "%" : h("span", { className: "hd-dim" }, b.orders ? "?" : "")));
+              h("td", { className: "hd-r hd-num" }, isNum(w.ratio_pct) ? (w.lower_bound ? "\u2265 " : "") + walkPct(w.ratio_pct) : h("span", { className: "hd-dim" }, b.orders ? "?" : "")));
           })))));
   }
   function h0(b) { return b.unknown_size_orders ? h("span", { className: "hd-smap-unsized" }, " " + intf(b.unknown_size_orders) + "/" + intf(b.orders) + " unsized") : null; }
@@ -18835,9 +18835,9 @@
       h("div", { className: "hd-subhead" }, c.label || "Census of the waiting set"),
       h("div", { className: "hd-small hd-smap-kvs" },
         censusKv("waiting triggers", isNum(c.triggers_total) ? intf(c.triggers_total) : null, c.triggers_total_reason, isNum(c.triggers_through_seq) ? "through seq " + c.triggers_through_seq : null),
-        censusKv("with no stated size", isNum(c.unsized_total) ? intf(c.unsized_total) + (isNum(c.triggers_total) && c.triggers_total > 0 ? " (" + num(c.unsized_total / c.triggers_total * 100, 0) + "%)" : "") : null, c.unsized_total_reason),
+        censusKv("with no stated size", isNum(c.unsized_total) ? intf(c.unsized_total) : null, c.unsized_total_reason),
         censusKv("within \u00b110% (engine's bands view)", isNum(w10) ? intf(w10) + (isNum(u10) ? ", " + intf(u10) + " unsized" : "") : null, c.within_10pct_reason, bv ? "ref " + dpx(bv.ref_px) + (isNum(bv.block) ? " at block " + bv.block : "") : null),
-        censusKv("outside \u00b110%", isNum(out) ? intf(out) : null, c.outside_reason, bv && bv.outside ? intf(bv.outside.below) + " below, " + intf(bv.outside.above) + " above" : null),
+        censusKv("outside \u00b110%", isNum(out) ? intf(out) : null, c.outside_reason, bv && bv.outside ? intf(countOf(bv.outside.below)) + " below, " + intf(countOf(bv.outside.above)) + " above" : null),
         censusKv("executable orders now", isNum(c.executable_orders_total) ? intf(c.executable_orders_total) : null, c.executable_orders_total_reason),
         censusKv("executable within \u00b110%", ew && isNum(ew.orders) ? intf(ew.orders) : null, c.executable_within_10pct_reason, ew ? "ref " + dpx(ew.ref_px) + " (" + (ew.ref_px_source || "") + ")" : null),
         censusKv("executable per trigger, now", isNum(c.executable_to_trigger_ratio) ? num(c.executable_to_trigger_ratio, 2, 2) : null, c.executable_to_trigger_ratio_reason),
@@ -18881,7 +18881,7 @@
         : h(Unavailable, { reason: (mp && mp.reason) || "stop map not in this snapshot", block: true }),
       h("div", { className: "hd-subhead" }, "Clusters"),
       st.clusters && st.clusters.length ? h("ol", { className: "hd-smap-clusters" }, st.clusters.map(function (c) {
-        return h("li", { key: c.rank, title: bandTip(c, null) }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text);
+        return h("li", { key: c.fires_on + ":" + c.k, title: bandTip(c, null) }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text);
       })) : h("div", { className: "hd-small hd-dim" }, st.clusters_reason || (st.clusters ? "No band has a stated notional, so nothing ranks." : "clusters not in this snapshot")),
       ok ? h("div", { className: "hd-thin-pair hd-smap-pair" },
         h(StopMapSide, { side: mp.sides.fall, th: th && th.bids_below, depthMax: depthMax, trigMax: trigMax, ranked: ranked }),
@@ -18921,7 +18921,7 @@
           h("div", { className: "hd-ofm-dn" }, ofmSeg("hd-bg-ask", b.open_short_usd, scale), ofmSeg("hd-bg-ask hd-ofm-close", b.close_long_usd, scale), ofmSeg("hd-bg-ask hd-ofm-flip", b.flip_to_short_usd, scale)),
           h("div", { className: "hd-ofm-t" }, hm(b.start_ms), b.in_progress ? h("span", { className: "hd-ofm-now" }, " now") : null, b.complete === false && !b.in_progress ? h("span", { className: "hd-dim" }, " part") : null));
       }),
-      scale > 0 ? h("div", { className: "hd-ofm-scale" }, "full height = " + usd(scale) + " of taker flow in one bucket") : null);
+      scale > 0 ? h("div", { className: "hd-ofm-scale" }, "full height = " + usd(scale) + ", the largest single side (buys or sells) of one bucket") : null);
   }
   function OfmTable(props) {
     const bks = props.buckets || [];
@@ -18929,7 +18929,7 @@
       ["net", function (b) { return usd(b.net_usd, true); }], ["open long", function (b) { return usd(b.open_long_usd); }], ["close short", function (b) { return usd(b.close_short_usd); }],
       ["open short", function (b) { return usd(b.open_short_usd); }], ["close long", function (b) { return usd(b.close_long_usd); }], ["flips", function (b) { return usd(b.flip_usd); }],
       ["fills", function (b) { return intf(b.fills); }], ["accounts", function (b) { return intf(b.accounts); }],
-      ["covered", function (b) { return isNum(b.coverage_s) ? intf(b.coverage_s) + " s" : "?"; }]];
+      ["covered", function (b) { return isNum(b.coverage_s) ? num(b.coverage_s, 1) + " s" : "?"; }]];
     return h("div", { className: "hd-scroll" }, h("table", { className: "hd-table hd-ofm-table" },
       h("thead", null, h("tr", null, cols.map(function (c) { return h("th", { key: c[0], className: c[0] === "start" ? "" : "hd-r" }, c[0]); }))),
       h("tbody", null, bks.map(function (b, i) {
@@ -18943,7 +18943,7 @@
     const holes = w.uncovered || [];
     return h("div", { className: "hd-ofm-win" },
       h("span", null, "window ", h("b", null, hm(w.start_ms) + " to " + hm(w.end_ms) + " UTC"), " \u00b7 " + intf(w.buckets) + " buckets of " + intf((w.bucket_s || 0) / 60) + " min"),
-      h("span", null, "covered by node fills: ", h("b", null, isNum(w.coverage_s) ? (w.coverage_s >= 120 ? intf(w.coverage_s / 60) + " min" : intf(w.coverage_s) + " s") : "?"),
+      h("span", null, "covered by node fills: ", h("b", null, isNum(w.coverage_s) ? (w.coverage_s >= 120 ? num(w.coverage_s / 60, 1) + " min" : num(w.coverage_s, 1) + " s") : "?"),
         w.complete ? " \u00b7 complete" : holes.length ? " \u00b7 " + intf(holes.length) + (holes.length === 1 ? " hole: " : " holes: ") + holes.map(function (u) { return hm(u.start_ms) + " to " + hm(u.end_ms) + (u.why ? " (" + u.why + ")" : ""); }).join("; ") : ""));
   }
   function OfmBody(props) {
@@ -19427,7 +19427,7 @@
           h(ThinDrop, { d: g(v, "thinning", "asks_above", "sharpest_drop"), side: "ask" }))),
       h(ReplayBox, { title: "Stop map (clusters)", mode: mode, wide: true },
         sg || h(Fragment, null,
-          v.stops.clusters && v.stops.clusters.length ? h("ol", { className: "hd-smap-clusters" }, v.stops.clusters.map(function (c) { return h("li", { key: c.rank }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text); }))
+          v.stops.clusters && v.stops.clusters.length ? h("ol", { className: "hd-smap-clusters" }, v.stops.clusters.map(function (c) { return h("li", { key: c.fires_on + ":" + c.k }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text); }))
             : h("div", { className: "hd-small hd-dim" }, v.stops.clusters_reason || "no clusters in this replay view"),
           v.stops.map && v.stops.map.available === false ? h("div", { className: "hd-small hd-dim" }, v.stops.map.reason) : null)),
       h(ReplayBox, { title: "Order flow map", mode: mode, wide: true },
@@ -20578,7 +20578,7 @@
       onKeyDown: function (e) { if (e.key === "Enter" || e.key === " ") props.onSelect(); } },
       h("div", { className: "hd-whead" },
         h("span", { className: "hd-wsym" }, name),
-        h("span", { className: "hd-num hd-wpx", title: w.price_label || "" }, isNum(w.price) ? px(w.price) : h("span", { className: "hd-dim" }, w.price_reason ? "price unavailable" : "")),
+        h("span", { className: "hd-num hd-wpx", title: w.price_label || w.price_reason || "" }, isNum(w.price) ? px(w.price) : h("span", { className: "hd-dim" }, w.price_reason ? "price unavailable" : "")),
         v ? h("span", { className: "hd-chip hd-tone-" + (WATCH_TONE[v.tone] || "dim"), title: v.rule || "" }, v.label)
           : h("span", { className: "hd-chip hd-tone-dim", title: w.verdict_reason || "" }, "no verdict"),
         h("span", { className: "hd-wwhy" }, v ? v.text : (w.verdict_reason || ""))),
@@ -20924,7 +20924,19 @@
       if (lapsed("bands") && out.stops && out.stops.census && typeof out.stops.census === "object") {
         out.stops = Object.assign({}, out.stops, { census: censusWithheld(out.stops.census, why("bands"), CENSUS_BANDS_KEYS) });
       }
-      if (lapsed("triggers") && out.stops) out.stops = { available: false, reason: why("triggers") };
+      if (lapsed("triggers") && out.stops) {
+        const wt = why("triggers");
+        out.stops = { available: false, reason: wt };
+        const lad = out.ladder;
+        if (lad && Array.isArray(lad.bids)) {              // the ladder's stops column follows the trigger family too
+          const ageRows = function (rows) {
+            return (rows || []).map(function (r) {
+              return Object.assign({}, r, { stops_to_next_level: r.stops_to_next_level === null || r.stops_to_next_level === undefined ? r.stops_to_next_level : { available: false, reason: wt } });
+            });
+          };
+          out.ladder = Object.assign({}, lad, { stops_available: false, stops_reason: wt, bids: ageRows(lad.bids), asks: ageRows(lad.asks) });
+        }
+      }
       if (lapsed("flow") && out.tape) out.tape = { available: false, reason: "node fills " + fams.flow.state + ": " + fams.flow.reason,
         coverage: (view.tape || {}).coverage };
       // The Order Flow Map goes with the tape: buckets, totals, shares and readings withheld; the window, provenance
@@ -21081,7 +21093,7 @@
       let changed = false;
       if (tr) {
         ["flow", "wave", "taker_per_hour", "top_wallet_1h"].forEach(function (k) {
-          if (o[k] !== null && o[k] !== undefined) { o[k] = null; o[k + "_reason"] = tr; changed = true; }
+          o[k] = null; o[k + "_reason"] = tr; changed = true;      // an already-withheld part takes the lapse reason too
         });
       }
       const priceReason = (bk && w.price_from === "book_fast") ? bk : ((tr && w.price_from === "last_trade") ? tr : null);
@@ -21182,12 +21194,21 @@
           });
           x = Object.assign({}, x, { trades_freshness: tf });
         }
+        let tr = null;
         if (l) {
           const tf = agedFresh(x.trades_freshness, l);
-          const tr = tf.field + " " + tf.status + ": " + tf.reason;
+          tr = tf.field + " " + tf.status + ": " + tf.reason;
           x = Object.assign({}, x, { trades_freshness: tf, card: x.card ? withheldCard(x.card, tr) : x.card });
-          if (x.watch) x = Object.assign({}, x, { watch: ageWatch(x.watch, tr, null) });
         }
+        // The fast book's own freshness travels with the summary (book_fast_freshness) for the watch row's price.
+        let bkr = null;
+        const lb = x.book_fast_freshness ? lapse(x.book_fast_freshness) : null;
+        if (lb) {
+          const bf = agedFresh(x.book_fast_freshness, lb);
+          bkr = bf.field + " " + bf.status + ": " + bf.reason;
+          x = Object.assign({}, x, { book_fast_freshness: bf });
+        }
+        if (x.watch && (tr || bkr)) x = Object.assign({}, x, { watch: ageWatch(x.watch, tr, bkr) });
         d[k] = x;
       });
       out.deck = d;

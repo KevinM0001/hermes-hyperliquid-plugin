@@ -103,6 +103,7 @@ def _deck_summary(snap: dict) -> dict:
     out = {}
     for name, ms in snap["markets"].items():
         out[name] = {"provenance": ms["provenance"], "trades_freshness": ms["freshness"]["trades"],
+                     "book_fast_freshness": ms["freshness"].get("book_fast"),     # the watch row's price source
                      "card": ms["deck"]["card"], "events": ms["deck"]["events"], "bursts": ms["deck"].get("bursts"),
                      "watch": ms["deck"].get("watch")}
     return out
