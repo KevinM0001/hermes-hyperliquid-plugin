@@ -1,0 +1,4 @@
+start: clicked Start
+node data after 2.5 s; observing 15.0 s
+stop: clicked Stop
+stopped at 20.9 s after Start

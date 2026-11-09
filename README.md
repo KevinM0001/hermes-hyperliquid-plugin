@@ -35,7 +35,7 @@ Open the dashboard (`hermes dashboard`) and choose the **Hyperliquid Desk** tab.
 - **Provenance on everything.** Every result carries its mode (`LIVE`, `REPLAY` or `SYNTHETIC`), its source, the market, the snapshot ID and its coverage (since when trades were observed, and the gaps).
 - **Freshness is separate from provenance.** A value is **fresh** only when its feed is still advancing (its progress signal advanced within a receipt-age limit, on the monotonic clock) **and** its source timestamp is recent, judged against the local clock with a known error bound. That bound is the kernel's maximum clock error when the system clock is NTP-synchronized (Linux), or the `clock_error_bound_ms` setting. A feed that advances but runs behind is **delayed**. With no known clock bound, or no source timestamp, a value is **unverified**, never fresh. Statuses are re-checked every second even when nothing arrives, and a connected socket or a ping never makes data fresh. The thresholds are in `schema/metrics.v1.json` and are tested.
 - **Null with a reason, never zero.** Missing, partial, stale, unverified or warming-up values are `null` with the reason shown next to them.
-- **Definitions live in one versioned schema**, `schema/metrics.v1.json` (v1.0.0). For every metric and alert rule it gives the formula, units, inputs, side convention, window, threshold, reset rule and completeness rule.
+- **Definitions live in one versioned schema**, `schema/metrics.v1.json` (v1.2.0). For every metric and alert rule it gives the formula, units, inputs, side convention, window, threshold, reset rule and completeness rule.
 
 ## What is sampled, unverified or unavailable
 

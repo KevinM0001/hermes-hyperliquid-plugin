@@ -31,7 +31,11 @@ Also keep a manual override per market, and rank each live burst against the ref
 | `cc6507a65cf413c53c85ed1b1c65dc50aed4c376` | Validation, after the pre-review (handoff-check) found records that could still be counted or re-arm: an executions message that can't be read; an execution without its own integer tid and time; more than two fill records (`duplicates`); a line that can't be assigned to a market, for every market. The rank label for the very top keeps PLAN's form, and the schema's refresh note is corrected. |
 | `138e22aa9deff4114e0eb2a52d0b6f5bb3395d73` | Kevin's node-mode flicker fix: the tab never blanks for a delay; the node feed's delay (5 s average) as a counter at the top and as the basis of the DELAYED and STALE labels (see "Node-mode flicker") |
 | `70c25532e194ba62872c9248825e304db7e19c86` | After the flicker pre-review: the delay under clock skew, a gap restarts the averaged delay, DELAYED wording, poll failures in the delay bar, docs |
-| this commit | This report and the official logs (`evidence/logs/burst-calibration/`); no code |
+| `56c65e39edf8660a198f3deccb74682eaa21b5d8` | The first evidence commit: this report and the logs at `70c2553`. Codex h1 review 1 reviewed it: REVISE, B1 and B2 blocking, D1 and D2 deferred. |
+| `c0be2a068fdd7c17c237a7a446958ecfe0fa6046` | Fix for h1 review 1 B1 and B2: public statuses re-judged at serving (`hl_desk/serving_public.py`), and the tab ages what it shows the same way (`app.js` `ageShown`), withholding lapsed values in place |
+| `5dda388285da449f1aad3d8100b0b0bebc9c0122` | Follow-up after the browser rerun: statuses still fresh show their ages as of now |
+| `edc5a6c6e425931b2ac04dce775f488369a15d43` | Every status shows its ages as of now (final code) |
+| this commit | This report updated, `evidence/review-response-56c65e39edf8660a198f3deccb74682eaa21b5d8.md`, the official logs at `edc5a6c` (`evidence/logs/burst-calibration/`), and D1: README now names schema v1.2.0 (folded in at Kevin's request, Nov 9). No code. |
 
 - Author and committer of every commit: `KevinM0001 <210251245+KevinM0001@users.noreply.github.com>`. No other email appears in any commit object.
 - Nothing was pushed. `v1-public-btc` is still `593211d`. The review never creates or moves it.
@@ -90,7 +94,7 @@ Three of PLAN's checks map onto the feed differently:
 - **The reference** is `burst-reference-20261108T100453Z.json.gz`: the source file gzipped, byte for byte (4,406,949 → 1,693,330 bytes). Its sha256 is checked against the calibration's on load.
 - **The rank** is count(reference sums ≥ burst sum) / reference count, with ties counted as at or above, as "a top x% minute, Nov 3 to 7". A sum above every reference minute reads "a top 0% minute, Nov 3 to 7 (larger than every minute in the reference)". If either file can't be read, the rank is unavailable with the reason (the file name and the error), never estimated; without the calibration file, the automatic threshold is unavailable too.
 - **Where the metadata goes.** Each threshold (in `deck.bursts`, `node_status` and every burst event) carries source, label, version, dated, measured_utc, target and achieved rate. `schema/metrics.v1.json` `alerts.burst.config` and `alerts.burst.node_mode.calibration` carry the version, dates and each market's threshold and achieved rate, as PLAN.md asks; a test checks them against the shipped file.
-- **When it loads.** The calibration is loaded once, when a node source first starts. Thresholds are fixed per stream: a change (a new version, or a manual threshold) takes effect at the next collector start. That restart is a gap: a new segment with its 60 s warm-up and no window from before it. As after any gap, a window whose sum is at or above the new threshold fires once at its first complete evaluation. Whether that meets PLAN's "changing a threshold alone never creates a burst" is Kevin's call; the plugin has no way to change a threshold without a restart.
+- **When it loads.** The calibration is loaded once, when a node source first starts. Thresholds are fixed per stream: a change (a new version, or a manual threshold) takes effect at the next collector start. That restart is a gap: a new segment with its 60 s warm-up and no window from before it. As after any gap, a window whose sum is at or above the new threshold fires once at its first complete evaluation. Kevin ruled on Nov 9 that this is acceptable: a threshold change applies at a collector restart, a restart is a gap, and gaps re-arm by design ("changing a threshold alone never creates a burst, except through the restart that applies it"). The plugin has no way to change a threshold without a restart. Updating PLAN.md's wording is outside this session's write permission and is left to Kevin.
 
 ## How a user sets a market's threshold manually and switches back to automatic
 
@@ -114,30 +118,30 @@ The rank of a manual-threshold burst is still against the Nov 3 to 7 reference. 
 - `config unset` removed one market, and unsetting the last one removed the empty map;
 - the tab then showed the manual labels, and after unsetting all three, the automatic labels.
 
-## Official checks at `70c2553` (the final code; logs in `evidence/logs/burst-calibration/`)
+## Official checks at `edc5a6c` (the final code; logs in `evidence/logs/burst-calibration/`)
 
 | Check | Result | Log |
 | --- | --- | --- |
-| Tests, Python 3.14.9 | 289 passed, 0 skipped, 0 failed | `pytest-py3.14.log` |
-| Tests, Python 3.12.3 | 289 passed, 0 skipped, 0 failed | `pytest-py3.12.log` |
-| Dashboard bundle check | `dashboard/dist/index.js is up to date (1024630 bytes, sha256 5bdccb30…)` | `build-dashboard-check.log` |
+| Tests, Python 3.14.9 | 293 passed, 0 skipped, 0 failed | `pytest-py3.14.log` |
+| Tests, Python 3.12.3 | 293 passed, 0 skipped, 0 failed | `pytest-py3.12.log` |
+| Dashboard bundle check | `dashboard/dist/index.js is up to date (1039091 bytes, sha256 33bbbd7e…)` | `build-dashboard-check.log` |
 | `plugins doctor . --ci` (Hermes v0.23.0) | runtime discovery, manifest parsing, import and registration passed; 9 tools | `plugins-doctor.log` |
 | `plugins validate . --install-deps` | Validation passed | `plugins-validate.log` |
 
 - **Nothing skipped.** `HL_DECK_SOURCE`, `HL_DECK_LIVE_LOG` and `BURST_CALIBRATION_SOURCE` were set, so the hl_deck checks and the check of the shipped files against the calibration run ran.
-- **Where they ran.** Hermes ran from its own install, with an isolated home under `~/contest/engine-run/burst-cal/hermes-home`. That home got its own `hermes pm install` dependency environment, so no other Hermes home was written. The tests ran from the clean checkout at `70c2553`; the run checked HEAD and an empty `git status` before and after.
+- **Where they ran.** Hermes ran from its own install, with an isolated home under `~/contest/engine-run/burst-cal/hermes-home`. That home got its own `hermes pm install` dependency environment, so no other Hermes home was written. The tests ran from the clean checkout at `edc5a6c`; the run checked HEAD and an empty `git status` before and after. The only later change is the README fix (D1) in the evidence commit, which no test reads.
 - **An earlier full run** (at `cc6507a`) had 287 passed and 1 failed on both Pythons, with the same failure each time: `tests/test_review2.py::test_long_data_dir_gets_a_short_private_socket` (`assert (105 <= 100)`).
   - That test stands in for the system temp folder with `tempfile.mkdtemp`, which follows `TMPDIR`. The in-scope `TMPDIR` used then made the socket path 105 characters long, against the 100-character limit.
   - With a shorter `TMPDIR`, the same commit passed all 288 on Python 3.14. The runs above used the shorter one.
   - Logs: `pytest-py3.14-cc6507a-long-tmpdir.log` and `pytest-py3.12-cc6507a-long-tmpdir.log`.
   - The failed test left two empty temp folders under `~/contest/engine-run/burst-cal/tmp`; they were left in place.
 - **Log substitutions.** The committed logs are copies with the home path written as `~`, the user name in pytest's temp folder as `<user>`, and the paths given for `hl_deck.py` and the deck's live log as `<hl_deck.py>` and `<a copy of the deck live log>`. The originals are in `~/contest/engine-run/burst-cal/official/`.
-- **Tab-check logs.** The independent burst count (`tab-independent-check.log`), the tab text from the burst cases (`tab-*.txt`), and the live and recorded observer samples (`live-run-*.{log,jsonl}`, `recorded-observer-*`) are in the same folder. The screenshots stay in `~/contest/engine-run/burst-cal/tab/`, because they show local paths.
+- **Tab-check logs.** The independent burst count (`tab-independent-check.log`), the tab text from the burst cases (`tab-*.txt`), the live and recorded observer samples (`live-run-*.{log,jsonl}`, `recorded-observer-*`) and the B2 browser reproduction (`repro-b2-edc5a6c.log`) are in the same folder. The screenshots stay in `~/contest/engine-run/burst-cal/tab/`, because they show local paths.
 
 ## Tab check (offline, recorded node data only)
 
 - **Setup.**
-  - The plugin at `70c2553` (the final code), installed by `git archive` into the isolated Hermes home, with the dashboard started with `--isolated`. Case (c) was last run at `cc6507a`; the label code hasn't changed since.
+  - The plugin at `70c2553`, installed by `git archive` into the isolated Hermes home, with the dashboard started with `--isolated`. Case (a), and the recorded-feed flicker check, were run again at `edc5a6c` (the final code) with the same results (`tab-edc5a6c-a-manual.txt`, `recorded-observer-edc5a6c.log`). Case (c) was last run at `cc6507a`; the label code hasn't changed since.
   - The node feed was a local stand-in serving a recorded tap at recorded speed: Part A's follow test, Nov 7, 20:47:56 to 20:53:13 UTC, all four markets, verbatim feed lines. Its blocks are from Nov 7, so node freshness reads BEHIND.
   - No live node data was read. No runner, forwarder or service was started.
   - Screenshots and logs are in `~/contest/engine-run/burst-cal/tab/`. They aren't committed, because they show local paths.
@@ -237,6 +241,27 @@ Kevin's report: with `node_feed` set to the second runner's live feed, every 1 t
 - **`tests/test_node_flow.py`:** node-fill results lapse by their delay bound.
 - **Elsewhere:** the client settings key `max_source_age_ms` is now `delayed_after_ms`.
 
+## Codex h1 review 1 (REVISE) and the fix
+
+Codex reviewed `56c65e3`: REVISE, with two blocking findings and two deferred. All are answered in `evidence/review-response-56c65e39edf8660a198f3deccb74682eaa21b5d8.md`:
+- **B1.** A tool reading the latest snapshot re-judged node results at its served age, but not public statuses.
+- **B2.** The tab, after Kevin's no-blank change, kept expired numbers and fresh badges on screen when a snapshot aged.
+- **D1 (deferred, then fixed at Kevin's request).** The README named schema v1.0.0. The evidence commit after `edc5a6c` changes it to v1.2.0.
+- **D2 (deferred).** The demo's chat step took longer than its scripted time.
+
+**The fixes** (`c0be2a0`, `5dda388`, `edc5a6c`):
+- `hl_desk/serving_public.py` re-judges every public status fresh at build time at the served age. A lapsed field reads stale or delayed, and every value the build gates on it is withheld in the build's own withheld shape.
+- The tab's `ageShown` applies the same rules, and the node rules, to the snapshot on screen, every second. Lapsed values turn unavailable in place, with the reason, without blanking the page, so Kevin's Nov 8 rule holds.
+- Every status shows its ages as of now.
+- Tests: `tests/test_h1_review1.py`.
+- A headless-Chrome rerun of Codex's B2 reproduction at `edc5a6c` (one real snapshot answer held 12 s, later polls aborted), public mode:
+  - BID/ASK, spread and the ladder turned unavailable with "stale … while on screen" reasons;
+  - the fast-book badge read stale;
+  - trades, within 30 s, read fresh with ages counting up;
+  - the empty view never appeared;
+  - the aborted polls were said in the delay bar.
+- Node mode on the recorded feed was checked again at `edc5a6c`: no empty views, and the same 10 bursts and ranks.
+
 ## Pre-review (handoff-check) and what changed
 
 Before the evidence commit, the handoff-check agent read `3b2764a` against Kevin's task, his choice A and PLAN.md. Its findings and what was done:
@@ -260,4 +285,5 @@ Before the evidence commit, the handoff-check agent read `3b2764a` against Kevin
 - **Burst events don't outlive their stream.** A node burst event belongs to its input stream. After a producer restart (a new epoch or session), the earlier stream's bursts and liquidation events are no longer shown, as for every node-fill result in Part B. A reconnect that resumes the same session keeps them.
 - **Displayed times.** Node bursts are timed by their block time. The tab shows UTC times without a date, so in the tab check the Nov 7 bursts appear as 20:48 to 20:51 next to Nov 8 regime changes.
 - **Versions.** The plugin version stays 1.0.0, as Part B left it; versioning the release is Kevin's call. The schema is 1.2.0 (additive: `alerts.burst.node_mode`, and the node-mode part of `alerts.burst.config`).
-- **Superseded runs.** Official runs were started at `969978b`, `844d9aa`, `f6115cc`, `3b2764a`, `cc6507a` (finished: 287 passed and 1 failed on both Pythons, the failure from an over-long temp path, see below) and `138e22a`, and stopped when the code changed. Their partial logs are under `~/contest/engine-run/burst-cal/official/`. Doctor, validate and the tab check were also repeated at `3b2764a`, `cc6507a` and `138e22a`. Only the run at `70c2553` is the official one.
+- **Live run.** The live run was at `138e22a`, before the h1 review 1 fixes. Those fixes don't touch the node delay that the run exercised; they change how the tab and the tools age a snapshot after it is built.
+- **Superseded runs.** Official runs were started at `969978b`, `844d9aa`, `f6115cc`, `3b2764a`, `cc6507a` (finished: 287 passed and 1 failed on both Pythons, the failure from an over-long temp path, see below) `138e22a`, `70c2553` (finished: 289 passed on both Pythons; it was the official run for the first evidence commit), `c0be2a0` and `5dda388`, and stopped when the code changed, except where noted. Their partial logs are under `~/contest/engine-run/burst-cal/official/`. Doctor, validate and the tab checks were also repeated at `3b2764a`, `cc6507a`, `138e22a` and `70c2553`. Only the run at `edc5a6c` is the official one.
