@@ -66,7 +66,7 @@
             "transport": "info endpoint POST, polled every 5 s per market (weight 2)",
             "levels": 20,
             "max_age_s": 15.0,
-            "used_for": "depth bands",
+            "used_for": "depth bands and the grouped ladder (book.ladders)",
             "source_max_age_s": 20.0
           },
           "sf3": {
@@ -77,7 +77,18 @@
             "transport": "info endpoint POST, polled every 5 s per market (weight 2)",
             "levels": 20,
             "max_age_s": 15.0,
-            "used_for": "depth bands",
+            "used_for": "depth bands and the grouped ladder (book.ladders)",
+            "source_max_age_s": 20.0
+          },
+          "sf2": {
+            "request": {
+              "type": "l2Book",
+              "nSigFigs": 2
+            },
+            "transport": "info endpoint POST, polled every 5 s per market (weight 2)",
+            "levels": 20,
+            "max_age_s": 15.0,
+            "used_for": "the grouped ladder (book.ladders)",
             "source_max_age_s": 20.0
           }
         },
@@ -161,7 +172,7 @@
       "fields_without_source_time": "activeAssetCtx has none: it reports receipt recency and an unknown source age, and is never fresh. Another field's timestamp doesn't prove its source recency."
     },
     "in_the_tab": "the tab ages the snapshot it shows: its age is served.age_s plus all the time since the tab sent the request, so delivery delay and time on screen count. Every status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) is re-judged at that age, as at serving (served_latest): a lapsed field reads stale or delayed with the reason, and every value built on it is withheld in place, null with the reason; a node family LIVE at build time whose delay bound passes its limit reads DELAYED or STALE, with its node values withheld. The page keeps its layout and is never blanked for a delay (Kevin, Nov 8); the delay bar says when the snapshot is past 5 s or a status has lapsed. The empty view is only for having no current snapshot at all",
-    "served_latest": "Codex h1 review 1, B1: a tool reading the latest snapshot re-judges each public status fresh at build time at the snapshot's served age: progress_age + age > max_age reads stale, source_age + age + clock bound > source_max_age reads delayed, each with the reason 'by the time this was served'; every value the build gates on that field is withheld as the build withholds it (book_fast: top of book and its price lines; book_full: ladder, exact and observed depth; book_sf4/sf3: approximate and observed depth; trades: flow values, CVD values, large-print count, the Flow Deck card, wallet panels; ctx: context). A snapshot read by ID is historical and stays as of its build time (hl_desk/serving_public.py)"
+    "served_latest": "Codex h1 review 1, B1: a tool reading the latest snapshot re-judges each public status fresh at build time at the snapshot's served age: progress_age + age > max_age reads stale, source_age + age + clock bound > source_max_age reads delayed, each with the reason 'by the time this was served'; every value the build gates on that field is withheld as the build withholds it (book_fast: top of book and its price lines; book_full: ladder, exact and observed depth; book_sf4/sf3: approximate and observed depth; book_sf4/sf3/sf2: each its own grouped ladder in book.ladders, withheld whole; trades: flow values, CVD values, large-print count, the Flow Deck card, wallet panels; ctx: context). A snapshot read by ID is historical and stays as of its build time (hl_desk/serving_public.py)"
   },
   "metrics": {
     "book.best_bid": {
@@ -250,6 +261,18 @@
       "window": "latest push",
       "reset_rule": "replaced by every push",
       "completeness_rule": "only among the levels Hyperliquid returned (at most 20 per side); null when that side has no returned level; null with a reason (bid_reason / ask_reason) when any returned level on that side has a missing or invalid px or sz, since it could be the largest (Codex h1 review 3, B1); withheld with the ladder when the 20-level book isn't fresh; an aggregated level, never an individual order"
+    },
+    "book.grouped_ladder": {
+      "source": "plugin",
+      "formula": "per aggregation (nSigFigs=4, 3 and 2), the returned levels of that info l2Book as book.level rows with book.largest_level per side, under book.ladders[\"nSigFigs=<n>\"] with the book's time, its nSigFigs and its own freshness status; the levels as Hyperliquid aggregated them (its bucket alignment isn't documented), never re-bucketed or re-ranked by the plugin",
+      "units": "px USD per coin; sz coin; notional USD",
+      "inputs": [
+        "l2Book nSigFigs=4, 3 and 2 (info endpoint)"
+      ],
+      "side_convention": "bids best first, asks best first",
+      "window": "latest poll of that aggregated book (about every 5 s; the full-precision ladder updates on each push)",
+      "reset_rule": "replaced by every poll",
+      "completeness_rule": "a book that isn't fresh at build time, or has lapsed by the time it is served or shown, is withheld whole as {reason}: never a stale grouped ladder; a side with a malformed level has its largest withheld with the reason (book.largest_level); a grouping's price step is for display only, read from consecutive returned levels, not a documented bucket width"
     },
     "book.depth_band": {
       "source": "handoff; Kevin's decision 10 (GPT review R11 finding 10)",

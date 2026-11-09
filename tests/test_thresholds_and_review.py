@@ -35,7 +35,7 @@ def test_full_book_max_age_15s(age, expected):
     assert status_at(desk, int(age * NS), "book_full") == expected
 
 
-@pytest.mark.parametrize("nsf,field", [(4, "book_sf4"), (3, "book_sf3")])
+@pytest.mark.parametrize("nsf,field", [(4, "book_sf4"), (3, "book_sf3"), (2, "book_sf2")])
 @pytest.mark.parametrize("age,expected", [(15.0, "fresh"), (15.001, "stale")])
 def test_info_depth_books_max_age_15s(nsf, field, age, expected):
     desk = make_desk()
