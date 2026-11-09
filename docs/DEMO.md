@@ -17,3 +17,4 @@ Prerequisite for the chat step (0:58): the Hermes profile needs a configured inf
 Notes:
 - If a market is quiet, its trades status reads "unverified" and its flow values are unavailable. That is expected behavior, so show it rather than cutting it.
 - Panels marked "needs node mode" are out of the public-only build.
+- In node mode (outside this script), wait at least 10 s after pressing Start before opening the node ladder: until then its "last 10 s" columns show 0 instead of "not measured yet" (a known issue, deferred).
