@@ -357,7 +357,7 @@
         after(false);
       }
     }
-    return h("span", { className: "hd-ask" },
+    return h("span", { className: "hd-askbox" },
       h("button", {
         type: "button", className: cx("hd-btn", props.small ? "hd-btn-xs" : "hd-btn-primary"), onClick: go, disabled: !q,
         title: q ? "Copies this question and opens the Chat page:\n" + q : "no snapshot to ask about"

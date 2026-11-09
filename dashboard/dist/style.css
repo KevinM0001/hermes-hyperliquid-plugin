@@ -257,7 +257,7 @@
 .hd-toggle .hd-btn-on { background: var(--hd-knob); color: #000000; }
 
 /* Ask Hermes: copies a ready question (with the snapshot ID) and opens the Chat page */
-.hd-ask { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hd-askbox { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; } /* was .hd-ask, which is also the sell-side colour class: table cells lost their right alignment */
 .hd-ask-msg { font: 500 11px/1.3 var(--hd-mono); color: var(--hd-muted); }
 .hd-ask-q {
   font: 500 11px/1.4 var(--hd-mono); color: var(--hd-text-2); background: #000000; border: 1px solid var(--hd-line);
