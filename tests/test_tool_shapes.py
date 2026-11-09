@@ -38,7 +38,7 @@ def test_market_tools_shape(replay_state, name):
         for f in r["status"]["fields"].values():
             assert {"status", "reason", "source_time", "max_age_s"} <= set(f)
         assert isinstance(r["unavailable"], list)
-        assert r["schema"]["version"] == "1.2.0"
+        assert r["schema"]["version"] == "1.3.0"
         assert "not a trade recommendation" in r["disclaimer"]
 
 
@@ -64,7 +64,7 @@ def test_status_and_alerts_shape(replay_state):
     assert s["ok"] and set(s["markets"]) == set(snap["markets"])
     for m in s["markets"].values():
         assert PROV_KEYS <= set(m["provenance"])
-        assert set(m["freshness"]) == {"book_fast", "book_full", "book_sf4", "book_sf3", "trades", "bbo", "ctx"}
+        assert set(m["freshness"]) == {"book_fast", "book_full", "book_sf4", "book_sf3", "book_sf2", "trades", "bbo", "ctx"}
         assert m["panels_needing_node_mode"]
     a = call("hl_alerts", {}, snap)
     assert a["ok"] and set(a["cards"]) == set(snap["markets"])

@@ -31,6 +31,20 @@ def na(reason: str, unit: str | None = None) -> dict:
     return val(None, unit, reason)
 
 
+def unverified_receipt(field: str, received_age_s: float) -> str:
+    """The reason a value with no source timestamp is served with: only its receipt age is known."""
+    return f"{field} carries no source timestamp; a changed value was received {received_age_s:.1f} s ago"
+
+
+def mark_unverified(m: dict, field: str, received_age_s: float) -> dict:
+    """A metric served marked unverified (schema 1.3.0, context values): the value stays, with status, the reason
+    and the receipt age of the last changed value in seconds. A null value keeps its own reason."""
+    if not isinstance(m, dict) or m.get("value") is None:
+        return m
+    return m | {"status": "unverified", "reason": unverified_receipt(field, received_age_s),
+                "received_age_s": round(received_age_s, 3)}
+
+
 def fnum(x: Any) -> float | None:
     """Parse a Hyperliquid numeric string or number; None when absent or not finite."""
     if x is None:

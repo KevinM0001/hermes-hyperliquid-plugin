@@ -9,6 +9,7 @@ snapshots by ID, so chat and screen show the same numbers.
 from __future__ import annotations
 
 import json
+import math
 import secrets
 from collections import deque
 
@@ -18,12 +19,14 @@ from .config import DeskConfig
 from .deck import DeckEngine
 from .freshness import NS, FieldTracker
 from .trades import TradeStore
-from .util import dex_of, fnum, iso_ms, median, na, rnd, val
+from .util import dex_of, fnum, iso_ms, mark_unverified, median, na, rnd, val
 
 CTX_KEYS = ("markPx", "oraclePx", "midPx", "funding", "openInterest", "dayNtlVlm", "prevDayPx")
 WALLET_WINDOWS_MIN = (1, 5, 15)
 CANDLE_MS = 15_000
 CHART_SPAN_MS = 15 * 60 * 1000
+# The venue's coarser books, polled from the info endpoint, as grouped ladders (book.ladders): tracker, label, nSigFigs.
+GROUPED_BOOKS = (("book_sf4", "nSigFigs=4", 4), ("book_sf3", "nSigFigs=3", 3), ("book_sf2", "nSigFigs=2", 2))
 NODE_PANELS = ("ladder: stops, top order, age, change in 10 s", "waiting stops", "wall watch",
                "tape flags (stop, TWAP, liquidation)", "Flow Deck activity buckets (new long, cover, new short, exit)",
                "wallet activity split (new long, cover, new short, exit)")
@@ -49,6 +52,8 @@ class MarketState:
                                      "stale", "info l2Book time advances", source_max_age_s=cfg.book_source_max_age_s("sf4")),
             "book_sf3": FieldTracker("l2Book nSigFigs=3 (info)", "source_time_progress", cfg.book_max_age_s("sf3"),
                                      "stale", "info l2Book time advances", source_max_age_s=cfg.book_source_max_age_s("sf3")),
+            "book_sf2": FieldTracker("l2Book nSigFigs=2 (info)", "source_time_progress", cfg.book_max_age_s("sf2"),
+                                     "stale", "info l2Book time advances", source_max_age_s=cfg.book_source_max_age_s("sf2")),
             "trades": FieldTracker("trades", "source_time_progress", cfg.trades_max_age_s(market), "unverified",
                                    "a trade later than the trades watermark",
                                    "no trade for longer than the max age: a quiet market can't be told apart from a stalled feed",
@@ -128,7 +133,7 @@ class MarketState:
             self.offsets.append(wall_ms - t)
 
     def on_depth_poll(self, nsf: int, resp: dict, mono_ns: int, wall_ms: int) -> None:
-        kind = {4: "book_sf4", 3: "book_sf3"}[nsf]
+        kind = {4: "book_sf4", 3: "book_sf3", 2: "book_sf2"}[nsf]
         levels = resp.get("levels") or [[], []]
         t = resp.get("time")
         if t is None:
@@ -223,6 +228,23 @@ class MarketState:
         ladder = ({"bids": [], "asks": [], "reason": r_full or "no full book yet", "api_count_note": bk.API_COUNT_NOTE,
                    "largest": {"bid": None, "ask": None, "reason": r_full or "no full book yet"}}
                   if r_full or full is None else bk.ladder_rows(full["bids"], full["asks"], full.get("problems")) | {"book_time_ms": full["time_ms"]})
+        # The venue's coarser books as grouped ladders (the tab's grouping dropdown): rows by the same code as the
+        # ladder's, levels as the venue aggregated them (its bucket alignment isn't documented, so nothing is
+        # re-bucketed here). A book that isn't fresh is withheld whole with the reason, as at serving time
+        # (serving_public.age_market): never a stale grouped ladder.
+        ladders = {}
+        for key, label, nsf in GROUPED_BOOKS:
+            b = self.books.get(key)
+            r = reason_for(key)
+            if b is None or r:
+                ladders[label] = {"reason": r or "not received yet"}
+                continue
+            rows = bk.ladder_rows(b["bids"], b["asks"], b.get("problems"))
+            rows["largest"] = rows["largest"] | {
+                "by": ("the largest aggregate size (coin) among the returned levels of this grouped book on that side, ties "
+                       "to the level nearer the top; an aggregated level, never one order; the chart's largest-level line "
+                       "is the full-precision book's, not this one")}
+            ladders[label] = rows | {"book_time_ms": b["time_ms"], "nSigFigs": nsf, "freshness": dict(fr[key])}
         depth_books = []
         for kind, label in (("book_full", "full precision"), ("book_sf4", "nSigFigs=4"), ("book_sf3", "nSigFigs=3")):
             b = self.books.get(kind)
@@ -279,7 +301,15 @@ class MarketState:
         # --- context
         r_ctx = reason_for("ctx")
         c = self.ctx or {}
-        if r_ctx or not self.ctx:
+        f_ctx = fr["ctx"]
+        # Schema 1.3.0: activeAssetCtx carries no source timestamp, so its status is never fresh (unverified). Its
+        # values are served anyway, marked unverified with the receipt age of the last changed context, while a
+        # changed context arrived within the max age on a live connection; otherwise (stopped, disconnected,
+        # warming up, or no changed context within the max age) they are withheld, so a dead stream never shows
+        # old numbers.
+        shown = (self.ctx is not None and f_ctx["status"] == "unverified" and f_ctx["progress_age_s"] is not None
+                 and f_ctx["max_age_s"] is not None and f_ctx["progress_age_s"] <= f_ctx["max_age_s"])
+        if not shown:
             r = r_ctx or "no context yet"
             ctx_block = {k: na(r, u) for k, u in (("mark", "USD"), ("oracle", "USD"), ("mid", "USD"),
                                                    ("funding", "fraction per 1h"), ("funding_pct_per_hour", "% per 1h"),
@@ -299,6 +329,7 @@ class MarketState:
                 "day_notional_volume": val(c.get("dayNtlVlm"), "USD"),
                 "prev_day_px": val(c.get("prevDayPx"), "USD"),
             }
+            ctx_block = {k: mark_unverified(m, f_ctx["field"], f_ctx["progress_age_s"]) for k, m in ctx_block.items()}
         ctx_block["units_note"] = ("funding is per 1 hour (funding page: 'paid every hour'; the API field's period isn't stated); "
                                    "open interest is in coin (the docs' size convention; the field's unit isn't stated); "
                                    "day notional volume is USD over Hyperliquid's own day window")
@@ -321,7 +352,7 @@ class MarketState:
         return {"market": self.market, "meta": self.meta, "provenance": prov, "freshness": fr,
                 "unavailable": unavailable,
                 "clock": self._clock(),
-                "book": {"top": top, "ladder": ladder,
+                "book": {"top": top, "ladder": ladder, "ladders": ladders,
                          "depth": {"bands": bk.depth_bands(depth_books[0], depth_books[1:]), "observed": observed,
                                    "note": ("exact band depth comes only from full-precision returned levels, and only where they "
                                             "reach the band edge on that side; aggregated nSigFigs books give a separately labeled "
@@ -482,19 +513,24 @@ class MarketState:
             for t in self.store.window(first, wm, start_inclusive=True):
                 b = t.time // CANDLE_MS * CANDLE_MS
                 if cur is None or cur["t"] != b:
-                    cur = {"t": b, "time": b // 1000, "open": t.px, "high": t.px, "low": t.px, "close": t.px, "_vol": 0.0}
+                    cur = {"t": b, "time": b // 1000, "open": t.px, "high": t.px, "low": t.px, "close": t.px, "_vol": 0.0,
+                           "_szs": []}
                     candles.append(cur)
                 cur["high"] = max(cur["high"], t.px)
                 cur["low"] = min(cur["low"], t.px)
                 cur["close"] = t.px
                 cur["_vol"] += t.notional          # summed exactly, rounded once below
+                cur["_szs"].append(t.sz)
         lines = []
         for key, label in (("best_bid", "best bid"), ("best_ask", "best ask")):
             if top.get(key, {}).get("value") is not None:
                 lines.append({"price": top[key]["value"], "label": label, "kind": key})
         for key, label in (("mark", "mark"), ("oracle", "oracle")):
-            if ctx_block.get(key, {}).get("value") is not None:
-                lines.append({"price": ctx_block[key]["value"], "label": label, "kind": key})
+            m = ctx_block.get(key, {})
+            if m.get("value") is not None:
+                # Context values are shown marked unverified (schema 1.3.0): so is their line.
+                lines.append({"price": m["value"], "label": f"{label} ({m['status']})" if m.get("status") else label,
+                              "kind": key, **({"status": m["status"]} if m.get("status") else {})})
         largest = ladder.get("largest") or {}
         withheld = []
         for side in ("bids", "asks"):
@@ -505,14 +541,19 @@ class MarketState:
                 lines.append({"price": big["px"], "kind": f"largest_{side[:-1]}_level",
                               "label": f"largest returned {side[:-1]} level: {big['sz']} (API count "
                                        f"{big['api_count'] if big['api_count'] is not None else 'unavailable'}, aggregated)"})
+        sz_dec = (self.meta or {}).get("sz_decimals")
         for c in candles:
             c["volume_usd"] = rnd(c.pop("_vol"), 2)
+            base = math.fsum(c.pop("_szs"))     # the sizes' exact sum (coin), rounded once to the market's size step
+            c["volume_base"] = round(base, sz_dec) if isinstance(sz_dec, int) and not isinstance(sz_dec, bool) else base
             c["complete"] = c["t"] > (seg or 0) and c["t"] + CANDLE_MS - 1 <= (wm or 0)
         return {"candle_s": CANDLE_MS // 1000, "candles": candles, "price_lines": lines,
                 **({"price_lines_withheld": withheld} if withheld else {}),
                 "candles_note": ("each candle summarizes every public trade in its own aligned 15 s interval, from the boundary at or "
                                  "before (watermark - 15 min); 'complete' is false for a candle that starts at or before the segment "
-                                 "start or ends after the trades watermark"),
+                                 "start or ends after the trades watermark; volume_base is the sum of its trades' sizes (coin), "
+                                 "summed exactly and rounded once to the market's szDecimals"),
+                "intervals": getattr(self, "candle_intervals", {}),   # venue candle intervals loaded so far (GET candles)
                 "gaps": list(self.store.gaps)[-10:],
                 "note": "candles from public trades in the current coverage segment; price lines from the fast book, context and the 20-level book"}
 
@@ -561,6 +602,7 @@ class DeskState:
     def __init__(self, cfg: DeskConfig, mode: str = "LIVE") -> None:
         self.cfg = cfg
         self.node = None          # hl_desk.node.manager.NodeManager when running under a collector
+        self.candles = None       # hl_desk.candles.CandleStore under a collector: chart.intervals per market
         self.mode = mode
         self.run_id = secrets.token_hex(3)
         self.seq = 0
@@ -591,6 +633,7 @@ class DeskState:
             s.node_client = self.node.live_client() if self.node is not None else None
             # Node mode (a node feed is configured): bursts come from node fills, never public trades.
             s.node_bursts = self.node is not None and getattr(self.node, "live", None) is not None
+            s.candle_intervals = self.candles.summary(m) if self.candles is not None else {}
         return {
             "snapshot_id": sid,
             "built_at_ms": wall_ms,

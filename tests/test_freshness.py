@@ -117,13 +117,20 @@ def test_context_is_never_fresh_without_a_source_timestamp():
     snap, f = status(desk, 1 * NS, "ctx")
     assert f["status"] == "unverified" and "no source timestamp" in f["reason"] and "1.0 s ago" in f["reason"]
     c = snap["markets"]["BTC"]["context"]
-    assert c["mark"]["value"] is None and c["funding"]["value"] is None and c["funding_pct_per_hour"]["value"] is None
+    # Schema 1.3.0: never fresh, but the values are served marked unverified with the receipt age, not withheld.
+    assert c["mark"]["value"] == 100.0 and c["funding"]["value"] == 0.0000125 and c["funding_pct_per_hour"]["value"] == 0.00125
+    assert all(c[k]["status"] == "unverified" and c[k]["received_age_s"] == 1.0 and "received 1.0 s ago" in c[k]["reason"]
+               for k in ("mark", "funding", "funding_pct_per_hour"))
     assert c["funding"]["unit"] == "fraction per 1h" and c["open_interest"]["unit"] == "coin"
     snap, f = status(desk, int(20.001 * NS), "ctx")
     assert f["status"] == "unverified" and "no changed context" in f["reason"]
+    c = snap["markets"]["BTC"]["context"]                              # past the max age: withheld, as before
+    assert c["mark"]["value"] is None and "no changed context" in c["mark"]["reason"] and "status" not in c["mark"]
     ms.on_ctx({"coin": "BTC", "ctx": dict(ctx, markPx="100.5")}, 21 * NS, T0)
     snap, f = status(desk, 21 * NS, "ctx")
     assert f["status"] == "unverified" and "no source timestamp" in f["reason"]   # a change is receipt recency only
+    c = snap["markets"]["BTC"]["context"]
+    assert c["mark"]["value"] == 100.5 and c["mark"]["received_age_s"] == 0.0 and c["mark"]["status"] == "unverified"
 
 
 def test_disconnect_makes_every_field_disconnected():

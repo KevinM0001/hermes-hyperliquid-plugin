@@ -1,0 +1,140 @@
+# Dashboard look: proposal screenshots (UI batches 1 to 3, 2026-11-09)
+
+Headless Chrome 156 (`--headless=new`, 1440 px wide, device scale 1) on an isolated Hermes dashboard
+(`hermes dashboard --isolated --port <N> --skip-build`, its own `HERMES_HOME` under a scratch directory outside the repo, the plugin
+copied from this clone). The machine's own Hermes and settings were not touched; the isolated dashboard's theme was
+switched to Mono for two shots and set back. No run touched the node, production or the contest runner.
+
+**Where the screenshots are.** The PNG files these tables describe are kept outside the repository: they show the
+dashboard as run on the author's machine, including local paths (the node feed's socket as the node strip's source)
+and local layout, which the repository rules keep out of the tree. The rows below say what each one showed and how
+it was made; the files are available on request.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `00-before-public-top.png` | The tab before this change (Hermes Teal), public mode, BTC, live | Start pressed in the tab, 150 s later |
+| `01-public-top.png` | Proposal, public mode, BTC, live, Hermes Teal | same |
+| `02-public-full.png` | The whole tab, same run | viewport grown to the tab's height |
+| `03-public-top-mono.png` | Same run, Hermes's Mono theme | `PUT /api/dashboard/theme {name: mono}` on the isolated dashboard, reload |
+| `04-public-full-mono.png` | The whole tab, Mono | same |
+| `05-public-hype-top.png` | HYPE, a market without a confirmed regime | market tab clicked |
+| `06-chat-strip.png` | The Chat page after Ask Hermes: the `chat:top` strip, the question in the clipboard | Ask Hermes clicked; clipboard read back: `Using snapshot <ID>, what is BTC doing? Use the hyperliquid commentary skill.` |
+| `07-node-top.png` | Node mode on the recorded feed: node strip and node panels first | `node_feed` = a local socket served by `serve_recorded_feed.py` from the Part A follow-test tap (outside the repo) (the Part A follow-test tap, 4 markets, 318 s), Start pressed, 110 s later |
+| `08-node-full.png` | The whole tab in node mode | same run |
+| `09-node-replay.png` | The Node replay area playing `tests/fixtures/node/xyz-2markets-66s.jsonl` (REPLAY) | replay Start pressed in the tab, 40 s later, xyz:XYZ100 selected |
+| `10-node-replay-full.png` | The whole tab with the replay area | same |
+| `11-public-nostart.png` | The empty state before Start | page opened, nothing pressed |
+| `12-before-public-full.png` | Before: the whole tab as it was (`088babf` dashboard files), public live | the proposal's public full-page view, for comparison with `02` |
+| `13-before-public-hype-top.png` | Before: HYPE | compare with `05` |
+| `14-before-node-top.png`, `15-before-node-full.png` | Before: node mode on the recorded feed | compare with `07`, `08` |
+| `20-live-node-top.png`, `21-live-node-full.png` | Live node mode (UI batch 3): the isolated dashboard subscribed read-only to the contest runner's feed socket (`the contest runner's feed socket`), Start pressed in the tab, 240 s later | the runner was still catching up (feed delay about 11,900 s), so every node family reads STALE and the node panels withhold their values with that reason |
+| `22-live-node-stops.png` | The Waiting stops panel in that run | scrolled to the panel |
+| `23-live-node-ladder.png` to `27-live-node-tape.png` | Node ladder, heatmap, wall watch, thinning, node tape in that run | scrolled to each panel |
+| `28-live-node-top-mono.png`, `29-live-node-stops-mono.png` | The same run in the Mono frame | theme switched on the isolated dashboard only, reset after |
+| `30-live-node-top.png`, `31-live-node-full.png` | Live node mode with current data (UI batch 3, second capture, 04:52 to 04:56Z): feed delay 1.5 s, every family LIVE | same read-only subscription to the runner's socket, Start pressed in the tab, 240 s later; the heatmap has about 6 of its 15 minutes (history since 04:49:56Z, the moment the book became valid) |
+| `32-live-node-stops.png` | The Waiting stops panel with live data (19,657 triggers accounted) | scrolled to the panel |
+| `33` to `37-live-node-*.png` | Node ladder, heatmap, wall watch, thinning, node tape with live data | scrolled to each panel |
+| `38-live-node-top-mono.png`, `39-live-node-full-mono.png`, `39b-live-node-stops-mono.png` | The same run in the Mono frame | theme switched on the isolated dashboard only, reset after |
+| `43-node-layout-proposed-ladder.png`, `44-node-layout-proposed-stops.png`, `45-node-layout-proposed-tapes.png` | Proposed node-mode layout (UI batch 3, not built): the order-level tables take the full row (node ladder, then heatmap; waiting stops, then wall watch; node tape above the public tape) | mock-up in the file-based harness on the live 04:56Z snapshots, a temporary CSS override, reverted; compare with `33`, `32`, `37` |
+| `50-labels-tape-latest-of.png` | Batch 5, option (a) built: the Tape panel's "latest 40 of 450 trades in the window" | file-based harness on the recorded BTC snapshot (the committed code, not a mock) |
+| `51-node-layout-built-ladder.png`, `52-node-layout-built-tapes.png` | Batch 5, full-width node tables built: node ladder and heatmap; node tape above the public tape with "latest 30 executions" | file-based harness on the live 04:56Z snapshots (the runner's socket refused connections from about 05:25Z, so no new live capture with values was possible) |
+| `53-live-top-feed-refused.png`, `54-live-full-feed-refused.png`, `55-live-top-mono-feed-refused.png` | The built layout on the live dashboard, 05:26 to 05:31Z: public data live, the node feed "disconnected: Connection refused", every node family INVALID with "no data for this market from this source yet" | 240 s run as before; what the tab shows when the runner is down |
+| `60-review5-replay-start-2s.png`, `61-review5-replay-start-5s.png`, `62-review5-replay-start-12s.png` | The Plugin session's review-5 issue shown (UI batch 6, nothing changed): the node ladder's "last 10 s" columns (added, absorbed, pulled, unknown) read 0 before 10 s of block time have passed instead of "not measured yet". Replay Restart pressed on BTC on the review dashboard at 05:41:26Z (the runner was down); the Ladder summary box scrolled to its right-hand columns; shots about 2 s (the new session's first snapshot, book time 20:47:56.147: 0 in all four columns at every level), 4 s and 12 s after the click (real sizes). The snapshot route agreed: zeros at 2.1 s of replay time, sizes at 4.5 s and 11.8 s | `tools/shoot.py` on the review instance |
+| `40-nofm-a-label.png` | "N of M" option (a), UI batch 4: a plain label in the Tape panel's status line, "latest 40 of 450 trades in the window" | mock-up in the file-based harness on the recorded BTC snapshot (40 tape rows, 450 counted trades); temporary edit, not committed |
+| `41-nofm-b-expander.png` | Option (b): the label plus a "Show all 450" button; disabled in the mock because the snapshot carries only the newest 40 rows | same |
+| `42-nofm-c-scroll.png` | Option (c): the count in the panel title ("Tape 40 of 450") and a fixed-height scrolling list | same |
+
+What the data says in these shots is the data: the public runs are live Hyperliquid public data at the time stamped in
+each header; the recorded feed's blocks are from Nov 7, so its families read STALE (delay about 110,000 s) and the node
+panels withhold their values with that reason, which is the plugin's rule, not a display choice.
+
+The capture driver (a local capture script (outside the repo)) is a 150-line CDP script: open the URL, click Start, wait,
+screenshot, read the clipboard, change the route, click Stop. It is not part of the plugin.
+
+## The interactive review on Engine's Nov 5 recording (2026-11-09, from 13:44Z)
+
+The isolated dashboard (a spare port, the isolated dashboard's config (outside the repo): public live, `node_feed` = the contest runner's
+socket, `node_replay_file` = Engine's recording (outside the repo), Engine's Thursday Nov 5
+14:00 to 16:00Z recording, 4.2 GB, four markets, block time 13:28:51Z to 16:13:37Z). The runner was down (its socket
+refused connections since 05:05Z), so the live node panels say so and the Replay area carries the node tables.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `70-review-nov5-top.png` | The top of the tab after the switch: public side live, the node feed banner (connection refused, retry), "a replay is loaded (PLAYING, 1x)" | 13:49Z, two minutes after the replay started; tab code at `7197cb7` |
+| `71-review-nov5-loading.png` | What the tab shows while the plugin loads the recording: "No snapshot. the latest snapshot is 89.9 s old: the collector isn't publishing" (the whole load took 1 min 50 s; the Start call itself timed out at 10 s and the replay appeared when the load ended) | 82 s after pressing Start in the Replay area |
+| `72-review-nov5-full.png` | The whole tab with the Replay area playing: Families and the L4 ladder summary side by side in half a row each (before the width change), waiting stops, walls, thinning, node tape, the heatmap filling (24 samples) | 13:49Z; the ladder table scrolled to its right-hand columns |
+| `73-review-nov5-full-after.png` | The same view at `c616fbf`: the Families strip and the L4 ladder summary take the full row (two `wide` props); replay position 14:12Z of the recording, heatmap with a full 15-minute window | 14:30Z, page reloaded after the bundle sync; no restart, the recording kept playing |
+
+## The market row: chart left, ladder right, directly under the summary (2026-11-09, 18:50Z, Kevin's direction)
+
+Kevin, reviewing the interactive dashboard, asked for the price chart on the left directly under the summary cards and
+the price ladder to its right (his reference: Hyperliquid's own trade page). Same isolated review dashboard on a spare port
+(public live; the runner's socket refused; the Nov 5 replay in the Replay area), headless Chrome, 1440 px wide, BTC.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `80-market-row-before-top.png` | Before: the first screen ends at the node strip; chart and ladder were in the Book section below the node panels | bundle `c616fbf`, 18:49Z |
+| `81-market-row-before-full.png` | Before: the whole tab | same |
+| `82-market-row-after-top.png` | After: the chart on the left and the ladder on the right, straight under the delay bar | the market-row change, 18:57Z |
+| `83-market-row-after-full.png` | After: the whole tab (node strip, then Book with the node panels and the observed depth, then Flow, Wallets, Replay) | same |
+| `84-market-row-after-row.png` | After: the whole market row in one frame (1700 px tall viewport); the chart grows to the ladder's height | same, 18:58Z |
+| `85-market-row-after-book.png` | After: the Book section under the row (node panels, then the observed depth on its own full row) | scrolled to the Book heading, 18:58Z |
+
+The public websocket reconnected at 18:53:05Z (the collector's conn #23), so the after shots show a segment that is
+seconds old: one candle, the 90 s windows not yet complete. That is the data at that moment, not the layout.
+
+## Volume bars, a crosshair readout, and the observed depth folded (2026-11-09, 19:08Z, Kevin's direction)
+
+Kevin's three reference screenshots (Hyperliquid, Breakout, Bullish) all carry volume under the candles and an
+open/high/low/close readout; Bullish's page was also his cue to take the depth panel out of the main view. Same
+review dashboard, same capture setup. The before views are `82` and `84` above.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `86-chart-volume-readout.png` | The market row with volume bars under the candles (each candle's `volume_usd`, buy and sell colours at 50 %) and the readout at the top left (the latest candle, marked partial, O/H/L/C, change, volume) | 1700 px tall viewport, 19:08Z |
+| `87-depth-folded.png` | The Book section with the observed depth folded to one line at its end | scrolled to the Book heading |
+| `88-depth-fold-open.png` | The same fold opened: the Observed depth panel, unchanged inside | the fold's summary clicked |
+| `89-chart-no-label-boxes.png` | The chart without the label boxes on its price lines (Kevin: they moved around and hid the candles); the prices stay on the axis, the names in the legend | 1700 px tall viewport, 19:14Z |
+| `90-ladder-ask-prices-aligned.png` | The ladder's ask prices right-aligned again (Kevin noticed them left-aligned: the sell-side colour class `hd-ask` was also the Ask Hermes wrapper's inline-flex class; the wrapper is `hd-askbox` now) | same viewport, 19:33Z |
+
+The readout follows the crosshair when a pointer is over the chart (headless Chrome has none here, so the shots show
+the latest candle). The volume bars sit on their own hidden scale in the bottom fifth of the chart; the candles keep
+the upper part. Nothing is computed in the tab: the change shown is the candle's close minus its open.
+
+## The first screen: the selected market's Flow Deck card instead of the unavailable list and the delay bar (2026-11-09, 19:48Z, Kevin's direction)
+
+Kevin, in his live review: the "Unavailable now" row and the "Node feed delay" bar are "extra information that no one
+will understand or use"; the Flow Deck card for the market on screen is "really useful information, better placed
+toward the top where traders can see it". Same review dashboard and capture setup. Before: `82` and `84`.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `91-first-screen-deck-card.png` | Tiles, then the context row with its four reasons collapsed into one line and a "not fresh: 2" fold, then the BTC Flow Deck card in three columns, then the chart and the ladder | 1700 px tall viewport, 19:48Z |
+| `92-node-strip-with-delay.png` | The node strip under the market row, now carrying the node feed delay counter as its own line (5 s average, unchanged) | scrolled to the strip |
+| `93-flow-deck-panel-others.png` | The Flow Deck panel further down: a note that BTC's card is at the top, and the other three markets' cards | scrolled to the panel |
+
+The coordinator's two rules behind the removed rows are kept one click away: every not-fresh field with its reason
+is in the fold at the foot of the summary card, and the delay counter lives in the node strip in node mode. The
+aging or failed-poll note the bar carried is on the header's snapshot line when it applies.
+
+## Schema 1.3.0 live: context values, candle intervals, grouped ladders, Flow notes (2026-11-09, 21:07Z)
+
+The three plugin-side features Kevin asked for at 19:10Z, built the same evening on this branch by three agents
+and merged (`fdcbdce`, `843e340`, `49f15be`), with the tab side from this session. The review dashboard restarted on
+the merged code at 21:06Z (public live, the runner's node feed connected, no recording loaded); headless Chrome,
+1440 x 1900, BTC, about a minute after the collector's Start.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `94-merged-first-screen-unverified-values.png` | Mark/oracle, funding, open interest and day volume shown with the UNVERIFIED mark and "changed 1.8 s ago"; the mark and oracle lines on the chart labelled "(unverified)"; the ladder's new "group" select; the Flow notes card | 15s interval, full-precision ladder |
+| `95-merged-chart-1h-candles.png` | The chart on the 1h interval: 500 candles from the venue, the in-progress candle hollow and "unverified, received 0.3 s ago", volume in BTC, the readout and the history note; the Flow notes with the node state lines (bid and ask depth thinning sharpest) | 1h button |
+| `96-merged-ladder-grouped-10-and-1d.png` | The ladder grouped at the venue's nSigFigs=4 book (step 10, its own freshness chip) and the chart on 1d | the group select set to nSigFigs=4, the 1d button |
+
+Everything shown is the snapshot's or the route's own data; the tab computes nothing. The interval buttons poll the
+plugin's candles route for the selected interval only.
+
+## Ask Hermes in the page (2026-11-09, 21:30Z)
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `97-hermes-panel-in-page.png` | The "Hermes says · BTC" panel after one Ask: the question with the snapshot ID, the session's model (the dashboard's), the streamed reply. On the isolated review Hermes the reply is the agent's own error ("Hermes is not connected to any AI provider yet"), which proves the path end to end: socket, session, prompt, streamed answer; with a provider key the same panel carries the commentary | the panel's Ask Hermes button pressed, 12 s later |

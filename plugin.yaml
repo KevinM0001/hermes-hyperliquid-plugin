@@ -13,6 +13,7 @@ provides_tools:
   - hl_status
   - hl_alerts
   - hl_wallets
+  - hl_candles
   - node_status
   - node_book
   - node_stops
