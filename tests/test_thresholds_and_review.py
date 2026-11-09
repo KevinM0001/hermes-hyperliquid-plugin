@@ -62,10 +62,16 @@ def test_ctx_receipt_age_per_market_and_never_fresh(market, limit):
     ms.on_connect(1)
     ms.on_ctx({"coin": market, "ctx": {"markPx": "10", "oraclePx": "10", "funding": "0", "openInterest": "1",
                                        "dayNtlVlm": "1", "prevDayPx": "10"}}, 0, T0)
-    snap = build(desk, int(limit * NS))["markets"][market]["freshness"]["ctx"]
+    m = build(desk, int(limit * NS))["markets"][market]
+    snap = m["freshness"]["ctx"]
     assert snap["status"] == "unverified" and "no source timestamp" in snap["reason"]
-    snap = build(desk, int((limit + 0.001) * NS))["markets"][market]["freshness"]["ctx"]
+    # at the limit the values are still served, marked unverified with the receipt age (schema 1.3.0)
+    assert m["context"]["mark"]["value"] == 10.0 and m["context"]["mark"]["status"] == "unverified"
+    assert m["context"]["mark"]["received_age_s"] == limit
+    m = build(desk, int((limit + 0.001) * NS))["markets"][market]
+    snap = m["freshness"]["ctx"]
     assert snap["status"] == "unverified" and "no changed context" in snap["reason"]
+    assert m["context"]["mark"]["value"] is None and "no changed context" in m["context"]["mark"]["reason"]
 
 
 @pytest.mark.parametrize("offset_ms,suspected", [(2000, False), (2001, True), (-2001, True)])

@@ -17,7 +17,7 @@ Use this skill when the user asks what a Hyperliquid market is doing, what the d
 ## 1. Get the numbers first
 
 1. Call `hl_status` and check the collector state. If it is `stopped`, tell the user to run `/hl start`; don't describe the market from memory.
-2. Call the tools that answer the question: `hl_market` (book, spread, depth), `hl_flow` (aggressive flow, large prints, tape), `hl_context` (mark, oracle, funding, open interest, volume), `hl_alerts` (Flow Deck regimes, events, bursts), `hl_wallets` (who is buying and selling; pass `address` to open one wallet).
+2. Call the tools that answer the question: `hl_market` (book, spread, depth), `hl_flow` (aggressive flow, large prints, tape), `hl_context` (mark, oracle, funding, open interest, volume: always unverified, quoted with their receipt age), `hl_alerts` (Flow Deck regimes, events, bursts), `hl_wallets` (who is buying and selling; pass `address` to open one wallet).
 3. To match what the user sees on the dashboard, pass the dashboard's `snapshot_id` to every tool. Otherwise take the `snapshot_id` from your first call and pass it to the others, so every number you cite comes from one snapshot.
 
 ## 2. Say only what the tools returned
@@ -40,6 +40,7 @@ Then, next to each figure or group of figures, give its freshness from the resul
 - `fresh`: say "fresh". It means the feed is still advancing and its source timestamp is recent under a known clock bound.
 - `delayed`: the feed advances but its data is old (a backlog or a delayed source). Say so; the values are unavailable.
 - `stale`, `unverified`, `warming_up`, `disconnected`, `stopped`: name the status and its reason, and say the value is unavailable.
+- Exception: a value served with its own `status: "unverified"` beside a non-null `value` (every `hl_context` value: mark, oracle, mid, funding, open interest, day volume, previous-day price; and any other field served that way, such as an in-progress candle) is shown, not withheld. Quote it and say "unverified, received N s ago", N being its `received_age_s`; its `reason` says why (Hyperliquid's activeAssetCtx carries no source timestamp, so only the receipt age of the last changed value is known). Never call such a value fresh or current. When it is `null` instead, give its `reason` like any other value: no changed context arrived within the max age, or the collector is stopped, disconnected or warming up.
 - Freshness is separate from provenance. A LIVE connection doesn't make data fresh. REPLAY and SYNTHETIC results must be called that every time.
 
 ## 4. Say what is unavailable and why

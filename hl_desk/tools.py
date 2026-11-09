@@ -40,7 +40,10 @@ SCHEMAS = {
     "hl_context": {
         "name": "hl_context",
         "description": ("Market context for one Hyperliquid perp: mark, oracle, funding (per 1 hour), open interest (coin and USD) "
-                        "and day notional volume, with units and freshness."),
+                        "and day notional volume, with units and freshness. These values are always marked unverified "
+                        "(status, reason, received_age_s): Hyperliquid's activeAssetCtx carries no source timestamp, so only "
+                        "the receipt age of the last changed value is known; they are null with a reason when the collector "
+                        "is stopped, disconnected or warming up, or when no changed value arrived within the max age."),
         "parameters": {"type": "object", "properties": {"market": _MARKET_PROP, "snapshot_id": _SNAP_PROP}, "required": ["market"]},
     },
     "hl_status": {
@@ -182,7 +185,13 @@ def hl_context(snap: dict, args: dict, rt=None) -> dict:
     ms, err = _market(snap, args.get("market"))
     if err:
         raise LookupError(err)
-    return _envelope("hl_context", snap, ms, ["ctx"], {"context": ms["context"], "meta": ms["meta"]})
+    return _envelope("hl_context", snap, ms, ["ctx"], {
+        "context": ms["context"], "meta": ms["meta"],
+        "notes": ["context values are served marked unverified (status, reason, received_age_s): activeAssetCtx carries "
+                  "no source timestamp, so only the receipt age of the last changed context is known; quote them as "
+                  "unverified, received that many seconds ago",
+                  "a context value is null with its reason when the collector is stopped, disconnected or warming up, "
+                  "or when no changed context arrived within the max age (a dead stream never shows old numbers)"]})
 
 
 def hl_status(snap: dict, args: dict, rt=None) -> dict:

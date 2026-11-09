@@ -20,6 +20,12 @@ from .util import iso_ms
 NS = 1_000_000_000
 
 
+def receipt_only_reason(name: str, age_s: float) -> str:
+    """The status reason of a field with no source timestamp whose last changed value was received age_s ago."""
+    return (f"{name} carries no source timestamp, so its source age is unknown "
+            f"(a changed value was received {age_s:.1f} s ago)")
+
+
 class FieldTracker:
     """basis: 'source_time_progress' (l2Book, trades), 'change_on_receipt' (activeAssetCtx), 'none' (bbo)."""
 
@@ -98,8 +104,7 @@ class FieldTracker:
             status, reason = "warming_up", (f"no verified progress since {self.restart_reason}" if self.restart_reason
                                             else "no verified progress on this connection yet")
         elif self.basis == "change_on_receipt" and self.max_age_s is not None and age <= self.max_age_s:
-            status, reason = "unverified", (f"{self.name} carries no source timestamp, so its source age is unknown "
-                                            f"(a changed value was received {age:.1f} s ago)")
+            status, reason = "unverified", receipt_only_reason(self.name, age)
         elif self.max_age_s is not None and age <= self.max_age_s:
             status, reason = self._source_recency(now_wall_ms, clock, out)
         else:

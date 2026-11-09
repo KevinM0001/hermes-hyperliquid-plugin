@@ -18,7 +18,7 @@ from .config import DeskConfig
 from .deck import DeckEngine
 from .freshness import NS, FieldTracker
 from .trades import TradeStore
-from .util import dex_of, fnum, iso_ms, median, na, rnd, val
+from .util import dex_of, fnum, iso_ms, mark_unverified, median, na, rnd, val
 
 CTX_KEYS = ("markPx", "oraclePx", "midPx", "funding", "openInterest", "dayNtlVlm", "prevDayPx")
 WALLET_WINDOWS_MIN = (1, 5, 15)
@@ -300,7 +300,15 @@ class MarketState:
         # --- context
         r_ctx = reason_for("ctx")
         c = self.ctx or {}
-        if r_ctx or not self.ctx:
+        f_ctx = fr["ctx"]
+        # Schema 1.3.0: activeAssetCtx carries no source timestamp, so its status is never fresh (unverified). Its
+        # values are served anyway, marked unverified with the receipt age of the last changed context, while a
+        # changed context arrived within the max age on a live connection; otherwise (stopped, disconnected,
+        # warming up, or no changed context within the max age) they are withheld, so a dead stream never shows
+        # old numbers.
+        shown = (self.ctx is not None and f_ctx["status"] == "unverified" and f_ctx["progress_age_s"] is not None
+                 and f_ctx["max_age_s"] is not None and f_ctx["progress_age_s"] <= f_ctx["max_age_s"])
+        if not shown:
             r = r_ctx or "no context yet"
             ctx_block = {k: na(r, u) for k, u in (("mark", "USD"), ("oracle", "USD"), ("mid", "USD"),
                                                    ("funding", "fraction per 1h"), ("funding_pct_per_hour", "% per 1h"),
@@ -320,6 +328,7 @@ class MarketState:
                 "day_notional_volume": val(c.get("dayNtlVlm"), "USD"),
                 "prev_day_px": val(c.get("prevDayPx"), "USD"),
             }
+            ctx_block = {k: mark_unverified(m, f_ctx["field"], f_ctx["progress_age_s"]) for k, m in ctx_block.items()}
         ctx_block["units_note"] = ("funding is per 1 hour (funding page: 'paid every hour'; the API field's period isn't stated); "
                                    "open interest is in coin (the docs' size convention; the field's unit isn't stated); "
                                    "day notional volume is USD over Hyperliquid's own day window")
@@ -514,8 +523,11 @@ class MarketState:
             if top.get(key, {}).get("value") is not None:
                 lines.append({"price": top[key]["value"], "label": label, "kind": key})
         for key, label in (("mark", "mark"), ("oracle", "oracle")):
-            if ctx_block.get(key, {}).get("value") is not None:
-                lines.append({"price": ctx_block[key]["value"], "label": label, "kind": key})
+            m = ctx_block.get(key, {})
+            if m.get("value") is not None:
+                # Context values are shown marked unverified (schema 1.3.0): so is their line.
+                lines.append({"price": m["value"], "label": f"{label} ({m['status']})" if m.get("status") else label,
+                              "kind": key, **({"status": m["status"]} if m.get("status") else {})})
         largest = ladder.get("largest") or {}
         withheld = []
         for side in ("bids", "asks"):
