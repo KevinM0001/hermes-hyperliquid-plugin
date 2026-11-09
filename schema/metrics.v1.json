@@ -1,6 +1,6 @@
 {
   "schema_id": "hyperliquid-desk.metrics",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Every metric, freshness rule, regime and alert rule the plugin computes, defined once. Tools, the dashboard tab and the commentary skill read these definitions; code in hl_desk/ implements them and tests in tests/ check each one against independently calculated values.",
   "sources": {
     "hyperliquid_docs": "See docs/ENDPOINTS.md for every endpoint and the doc link that confirms it.",
@@ -17,7 +17,7 @@
     "coverage_segment": "A segment starts when the collector subscribes to a market's trades on a connection: its start is the latest trade time in the first trades message on that connection (that message is treated as the subscription snapshot, because the docs don't say whether it holds every recent trade). It ends at the trades watermark when the connection closes, restarts or is forced to reconnect. Nothing counts trades across two segments; the time between them is a gap.",
     "gap": "A gap is the interval between one segment's last trades watermark and the next segment's start. Every disconnect, restart and forced reconnect creates one. Gaps are listed per market in hl_status.",
     "level_count": "Each book level carries n, shown as 'API count'. Hyperliquid's docs describe n two ways: '// number of levels' (info endpoint l2Book example) and '// number of orders' (websocket WsLevel). Levels are aggregated, so a level is never an individual order.",
-    "null_rule": "Missing, partial, stale, unverified or warming-up values are null with a reason, never zero. A computed zero (for example no aggressive selling in a complete, fresh window) is a real zero.",
+    "null_rule": "Missing, partial, stale, unverified or warming-up values are null with a reason, never zero. A computed zero (for example no aggressive selling in a complete, fresh window) is a real zero. One exception since 1.3.0: context values (activeAssetCtx, which carries no source timestamp) are served with their value marked {status: unverified, reason, received_age_s} while a changed context arrived within the max age, and are null with the reason otherwise (freshness.fields.activeAssetCtx.served).",
     "data_check": "Before release, the data check verifies public trade semantics (aggressor side, identity, users order, notional) for every flow number."
   },
   "freshness": {
@@ -25,7 +25,7 @@
       "fresh": "Both checks pass: the field's progress signal advanced within its receipt-age limit (monotonic clock), and its source timestamp is within its source-age limit under the clock relationship's known uncertainty.",
       "delayed": "The feed is advancing, but its source timestamp is older than the source-age limit by more than the clock uncertainty: a backlog or a delayed source. Values are null.",
       "stale": "The field has a progress signal that should keep advancing (l2Book pushes on a cadence), and it hasn't within its receipt-age limit.",
-      "unverified": "Freshness can't be established: no verified progress signal (bbo always; trades after their receipt-age limit with no new trade), no source timestamp (activeAssetCtx always), an unknown clock uncertainty, or a source age within the clock uncertainty of its limit.",
+      "unverified": "Freshness can't be established: no verified progress signal (bbo always; trades after their receipt-age limit with no new trade), no source timestamp (activeAssetCtx always), an unknown clock uncertainty, or a source age within the clock uncertainty of its limit. Context values are the one family served while unverified, marked with the receipt age of the last changed context (fields.activeAssetCtx.served, 1.3.0).",
       "warming_up": "Nothing has been received for this field on the current connection yet, or a window doesn't yet have enough coverage.",
       "disconnected": "The collector has no connection.",
       "stopped": "The collector isn't running.",
@@ -129,8 +129,9 @@
         },
         "observed_note": "Measured on 2026-11-07: contexts arrived about once a second, and the longest gap between changed contexts was 7.2 s for BTC and HYPE and 17.5 s for the xyz markets.",
         "when_exceeded": "unverified",
-        "reason_when_exceeded": "no source timestamp, so its source age is unknown; values are null with the receipt age shown",
-        "never_fresh": true
+        "reason_when_exceeded": "no changed context for longer than the max age (no source time; cadence undocumented): values are null with the reason, so a dead stream never shows old numbers",
+        "never_fresh": true,
+        "served": "1.3.0: the status is never fresh, but the values are served. While the collector is connected, past warm-up, and a changed context arrived within max_age_s, each context value is {value, unit, status: unverified, reason: 'activeAssetCtx carries no source timestamp; a changed value was received N s ago', received_age_s: N}, N being the receipt age of the last changed context on the monotonic clock. Values are null with the reason when the collector is stopped, disconnected or warming up, or when no changed context arrived within max_age_s. The serving gate (served_latest) and the tab grow received_age_s by the snapshot's age and withhold the values, with their mark and oracle chart lines, once it passes max_age_s"
       },
       "clock_skew": {
         "measure": "offset_ms = local wall clock at receipt - source time, per l2Book push (median of the last 50).",
@@ -158,10 +159,10 @@
       "local_clock_bound": "The local wall clock's error bound E: on Linux the kernel's maximum error from adjtimex (maxerror) while the clock is NTP-synchronized; otherwise the plugin setting clock_error_bound_ms; if neither is known, E is unknown.",
       "source_clock": "Hyperliquid's source timestamps are taken as accurate (an assumption; the docs don't state their accuracy). Network delay counts as source age.",
       "rules": "fresh when receipt progress is recent AND source_age + E <= source_max_age AND source_age >= -(E + 1 s); delayed when source_age - E > source_max_age; unverified when E is unknown, the source time is ahead of local time beyond E + 1 s, or source_age is within E of the limit.",
-      "fields_without_source_time": "activeAssetCtx has none: it reports receipt recency and an unknown source age, and is never fresh. Another field's timestamp doesn't prove its source recency."
+      "fields_without_source_time": "activeAssetCtx has none: it reports receipt recency and an unknown source age, and is never fresh. Another field's timestamp doesn't prove its source recency. Since 1.3.0 its values are served marked unverified with that receipt age (fields.activeAssetCtx.served)."
     },
-    "in_the_tab": "the tab ages the snapshot it shows: its age is served.age_s plus all the time since the tab sent the request, so delivery delay and time on screen count. Every status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) is re-judged at that age, as at serving (served_latest): a lapsed field reads stale or delayed with the reason, and every value built on it is withheld in place, null with the reason; a node family LIVE at build time whose delay bound passes its limit reads DELAYED or STALE, with its node values withheld. The page keeps its layout and is never blanked for a delay (Kevin, Nov 8); the delay bar says when the snapshot is past 5 s or a status has lapsed. The empty view is only for having no current snapshot at all",
-    "served_latest": "Codex h1 review 1, B1: a tool reading the latest snapshot re-judges each public status fresh at build time at the snapshot's served age: progress_age + age > max_age reads stale, source_age + age + clock bound > source_max_age reads delayed, each with the reason 'by the time this was served'; every value the build gates on that field is withheld as the build withholds it (book_fast: top of book and its price lines; book_full: ladder, exact and observed depth; book_sf4/sf3: approximate and observed depth; trades: flow values, CVD values, large-print count, the Flow Deck card, wallet panels; ctx: context). A snapshot read by ID is historical and stays as of its build time (hl_desk/serving_public.py)"
+    "in_the_tab": "the tab ages the snapshot it shows: its age is served.age_s plus all the time since the tab sent the request, so delivery delay and time on screen count. Every status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) is re-judged at that age, as at serving (served_latest): a lapsed field reads stale or delayed with the reason, and every value built on it is withheld in place, null with the reason; context values shown marked unverified have their received_age_s grown the same way and are withheld once it passes the max age; a node family LIVE at build time whose delay bound passes its limit reads DELAYED or STALE, with its node values withheld. The page keeps its layout and is never blanked for a delay (Kevin, Nov 8); the delay bar says when the snapshot is past 5 s or a status has lapsed. The empty view is only for having no current snapshot at all",
+    "served_latest": "Codex h1 review 1, B1: a tool reading the latest snapshot re-judges each public status fresh at build time at the snapshot's served age: progress_age + age > max_age reads stale, source_age + age + clock bound > source_max_age reads delayed, each with the reason 'by the time this was served'; every value the build gates on that field is withheld as the build withholds it (book_fast: top of book and its price lines; book_full: ladder, exact and observed depth; book_sf4/sf3: approximate and observed depth; trades: flow values, CVD values, large-print count, the Flow Deck card, wallet panels; ctx: context values shown marked unverified have received_age_s grown by the served age, and are withheld with their mark and oracle lines once it passes the max age). A snapshot read by ID is historical and stays as of its build time (hl_desk/serving_public.py)"
   },
   "metrics": {
     "book.best_bid": {
@@ -413,7 +414,7 @@
       "side_convention": "none",
       "window": "latest changed context",
       "reset_rule": "replaced by every changed context",
-      "completeness_rule": "null unless activeAssetCtx is fresh"
+      "completeness_rule": "served with the value, status unverified, the reason and received_age_s while a changed context arrived within activeAssetCtx's max age (never fresh: no source timestamp); null with the reason when the collector is stopped, disconnected or warming up, or past the max age (freshness.fields.activeAssetCtx.served)"
     },
     "context.oracle": {
       "source": "plugin",
@@ -425,7 +426,7 @@
       "side_convention": "none",
       "window": "latest changed context",
       "reset_rule": "replaced by every changed context",
-      "completeness_rule": "null unless activeAssetCtx is fresh"
+      "completeness_rule": "served with the value, status unverified, the reason and received_age_s while a changed context arrived within activeAssetCtx's max age (never fresh: no source timestamp); null with the reason when the collector is stopped, disconnected or warming up, or past the max age (freshness.fields.activeAssetCtx.served)"
     },
     "context.mid": {
       "source": "plugin",
@@ -437,7 +438,7 @@
       "side_convention": "none",
       "window": "latest changed context",
       "reset_rule": "replaced by every changed context",
-      "completeness_rule": "null unless activeAssetCtx is fresh, or with reason 'midPx absent' when the field is missing"
+      "completeness_rule": "as context.mark: served marked unverified while a changed context arrived within the max age, null with the reason otherwise; null with reason 'midPx absent' when the field is missing"
     },
     "context.funding": {
       "source": "plugin",
@@ -450,7 +451,7 @@
       "side_convention": "positive = longs pay shorts (funding page)",
       "window": "latest changed context",
       "reset_rule": "replaced by every changed context",
-      "completeness_rule": "null unless activeAssetCtx is fresh"
+      "completeness_rule": "served with the value, status unverified, the reason and received_age_s while a changed context arrived within activeAssetCtx's max age (never fresh: no source timestamp); null with the reason when the collector is stopped, disconnected or warming up, or past the max age (freshness.fields.activeAssetCtx.served)"
     },
     "context.open_interest": {
       "source": "plugin",
@@ -462,7 +463,7 @@
       "side_convention": "none",
       "window": "latest changed context",
       "reset_rule": "replaced by every changed context",
-      "completeness_rule": "null unless activeAssetCtx is fresh"
+      "completeness_rule": "served with the value, status unverified, the reason and received_age_s while a changed context arrived within activeAssetCtx's max age (never fresh: no source timestamp); null with the reason when the collector is stopped, disconnected or warming up, or past the max age (freshness.fields.activeAssetCtx.served)"
     },
     "context.day_notional_volume": {
       "source": "plugin",
@@ -474,7 +475,7 @@
       "side_convention": "none",
       "window": "Hyperliquid's own day window",
       "reset_rule": "replaced by every changed context",
-      "completeness_rule": "null unless activeAssetCtx is fresh"
+      "completeness_rule": "served with the value, status unverified, the reason and received_age_s while a changed context arrived within activeAssetCtx's max age (never fresh: no source timestamp); null with the reason when the collector is stopped, disconnected or warming up, or past the max age (freshness.fields.activeAssetCtx.served)"
     },
     "context.prev_day_px": {
       "source": "plugin",
@@ -486,7 +487,7 @@
       "side_convention": "none",
       "window": "Hyperliquid's own previous-day reference",
       "reset_rule": "replaced by every changed context",
-      "completeness_rule": "null unless activeAssetCtx is fresh"
+      "completeness_rule": "served with the value, status unverified, the reason and received_age_s while a changed context arrived within activeAssetCtx's max age (never fresh: no source timestamp); null with the reason when the collector is stopped, disconnected or warming up, or past the max age (freshness.fields.activeAssetCtx.served)"
     },
     "deck.window": {
       "source": "hl_deck",
@@ -833,7 +834,7 @@
       "side_convention": "per line",
       "window": "latest values",
       "reset_rule": "replaced every snapshot",
-      "completeness_rule": "a line is drawn only when its value is available (fresh); missing lines are simply absent; the largest-level lines are drawn from book.largest_level, so a side whose largest isn't established has no line, listed in price_lines_withheld with the reason"
+      "completeness_rule": "a line is drawn only when its value is available (fresh, or for mark and oracle a context value shown marked unverified: the line then carries status unverified and is withheld with the value past the max age); missing lines are simply absent; the largest-level lines are drawn from book.largest_level, so a side whose largest isn't established has no line, listed in price_lines_withheld with the reason"
     },
     "deck.pressure_legacy_hl_deck": {
       "source": "hl_deck (legacy comparison only)",
@@ -1334,6 +1335,7 @@
     "1.2.0 also (Codex h1 review 2): book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)",
     "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check",
     "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
-    "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution"
+    "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution",
+    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals"
   ]
 }

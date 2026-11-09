@@ -12,7 +12,10 @@ that field is withheld exactly as the build withholds it (null with the reason),
 - book_sf4, book_sf3: the approximate band depth and observed depth built on them;
 - trades: the flow values, the CVD buckets' values, the large-print count, the Flow Deck card's numbers and regime,
   and the wallet panels;
-- ctx: the context values and their price lines (never fresh in practice: activeAssetCtx has no source time).
+- ctx: the context values and their price lines. Since schema 1.3.0 these are served marked unverified (activeAssetCtx
+  has no source time, so ctx is never fresh) with the receipt age of the last changed context: that age grows by the
+  snapshot's age, and once it passes the max age the values and their mark and oracle price lines are withheld, as
+  the build withholds them.
 
 Records that the build doesn't gate (the tape, candles, large prints themselves, deck events) are kept. A snapshot read
 by ID is historical and isn't aged: it is labelled as of its build time. The tab applies the same rules to the
@@ -21,7 +24,8 @@ snapshot it shows (app.js ageShown), counting the time since it asked for it.
 
 from __future__ import annotations
 
-from .util import na
+from .freshness import receipt_only_reason
+from .util import mark_unverified, na
 
 BOOK_LABEL = {"book_full": "full precision", "book_sf4": "nSigFigs=4", "book_sf3": "nSigFigs=3"}
 CARD_NUMBERS = ("move_bps", "net_flow_usd", "volume_usd", "impact", "pressure", "trades", "accounts", "top_wallet")
@@ -43,6 +47,30 @@ def lapse(f: dict | None, age_s: float) -> tuple[str, str] | None:
     if _num(sa) and _num(smx) and sa + age_s + bound > smx:
         return "delayed", f"source time {sa + age_s:.1f} s old (max {smx:g} s with a {bound:g} s clock bound)"
     return None
+
+
+def _shown_context(f) -> bool:
+    """Whether the build served the context values marked unverified: ctx unverified within its max age."""
+    return (isinstance(f, dict) and f.get("status") == "unverified" and _num(f.get("progress_age_s"))
+            and _num(f.get("max_age_s")) and f["progress_age_s"] <= f["max_age_s"])
+
+
+def context_lapse(f: dict | None, age_s: float) -> tuple[str, str] | None:
+    """(status, reason) when context values shown marked unverified at build time have passed their max age age_s
+    later (the last changed context's receipt age, grown by age_s, exceeds max_age_s); None otherwise."""
+    if not _shown_context(f):
+        return None
+    aged = f["progress_age_s"] + age_s
+    if aged > f["max_age_s"]:
+        return "unverified", ("no changed context for longer than the max age (no source time; cadence undocumented) "
+                              f"(no progress for {aged:.1f} s, max age {f['max_age_s']:g} s)")
+    return None
+
+
+def _age_context(block: dict, field: str, age_s: float) -> dict:
+    """Context values shown marked unverified, their receipt age grown by age_s and the reason restated."""
+    return {k: (mark_unverified(v, field, v["received_age_s"] + age_s)
+                if isinstance(v, dict) and _num(v.get("received_age_s")) else v) for k, v in block.items()}
 
 
 def _withhold_metrics(block: dict, reason: str) -> dict:
@@ -101,11 +129,21 @@ def age_market(ms: dict, age_s: float, when: str) -> dict:
     if not _num(age_s) or age_s <= 0:
         return ms
     lapses = {k: v for k in fr0 if (v := lapse(fr0[k], age_s))}
+    ctx_lapse = context_lapse(fr0.get("ctx"), age_s)
+    if ctx_lapse:
+        lapses["ctx"] = ctx_lapse
     out = dict(ms)
     fr, why = dict(fr0), {}
     for k, f in fr0.items():                     # every status shows its ages as of now
         if isinstance(f, dict) and k not in lapses:
             fr[k] = _aged_ages(f, age_s)
+    if _shown_context(fr0.get("ctx")) and not ctx_lapse:
+        # Context values shown marked unverified (schema 1.3.0): their receipt age is as of now too.
+        field = fr0["ctx"]["field"]
+        fr["ctx"] = dict(fr["ctx"], reason=receipt_only_reason(field, fr["ctx"]["progress_age_s"]))
+        out["context"] = _age_context(ms.get("context") or {}, field, age_s)
+        out["unavailable"] = [dict(u, reason=fr["ctx"]["reason"]) if isinstance(u, dict) and u.get("field") == field else u
+                              for u in (ms.get("unavailable") or [])]
     if not lapses:
         out["freshness"] = fr
         return out
@@ -114,7 +152,8 @@ def age_market(ms: dict, age_s: float, when: str) -> dict:
         fr[k] = f
         why[k] = f"{f['field']} {status}: {f['reason']}"
     out["freshness"] = fr
-    out["unavailable"] = list(ms.get("unavailable") or []) + [
+    lapsed = {fr[k]["field"] for k in lapses}          # ctx was already listed (never fresh): replaced, not repeated
+    out["unavailable"] = [u for u in (ms.get("unavailable") or []) if not (isinstance(u, dict) and u.get("field") in lapsed)] + [
         {"field": fr[k]["field"], "status": fr[k]["status"], "reason": fr[k]["reason"]} for k in lapses]
     drop_lines: dict[str, str] = {}
     book = dict(ms.get("book") or {})

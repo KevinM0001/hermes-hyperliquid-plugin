@@ -38,7 +38,7 @@ def test_market_tools_shape(replay_state, name):
         for f in r["status"]["fields"].values():
             assert {"status", "reason", "source_time", "max_age_s"} <= set(f)
         assert isinstance(r["unavailable"], list)
-        assert r["schema"]["version"] == "1.2.0"
+        assert r["schema"]["version"] == "1.3.0"
         assert "not a trade recommendation" in r["disclaimer"]
 
 
