@@ -2924,6 +2924,57 @@
     }));
   }
 
+  // Flow notes (Kevin, Nov 9: comments on the order flow where a trader reads the chart): the plugin's own
+  // plain-English texts for the market on screen (regime changes, burst alerts, liquidation bursts, large prints),
+  // newest first, one line each with its time and an ask button for the narrative. No model is involved and nothing
+  // is computed here: every line is the snapshot's text or its numbers formatted.
+  const NOTE_TAG = { regime_change: "REGIME", regime_ended_by_gap: "GAP", burst: "BURST", liquidation_burst: "LIQUIDATIONS" };
+  function FlowNotes(props) {
+    const r = props.resp;
+    const m = props.m;
+    const name = m.market;
+    const d = g(r, "deck", name) || {};
+    const notes = [];
+    (d.events || []).forEach(function (e, i) {
+      if (!e || !isNum(e.at_ms)) return;
+      const tone = e.type === "burst" ? (e.side === "selling" ? "bad" : "ok") : (e.type === "liquidation_burst" ? "bad" : (e.type === "regime_change" ? "info" : "warn"));
+      let text = e.text;
+      if (!text && e.type === "regime_change") text = "regime " + e.from + " -> " + e.to + (isNum(e.held_s) ? " (held " + heldS(e.held_s) + ")" : "");
+      if (!text && e.type === "regime_ended_by_gap") text = "regime " + e.from + " ended by a gap" + (e.reason ? " (" + e.reason + ")" : "");
+      if (!text) text = String(e.type || "event");
+      notes.push({ key: "e" + i + ":" + e.at_ms, t: e.at_ms, tag: NOTE_TAG[e.type] || String(e.type || "event").toUpperCase(), tone: tone, text: text });
+    });
+    const lp = g(m, "flow", "large_prints") || {};
+    (lp.prints || []).forEach(function (t, i) {
+      const ms = toMs(t.time);
+      if (ms === null) return;
+      notes.push({ key: "p" + (t.tid || i) + ":" + ms, t: ms, tag: "LARGE PRINT", tone: t.side === "B" ? "ok" : "bad",
+        text: (t.side === "B" ? "Buy" : "Sell") + " " + (isNum(t.notional_usd) ? usd(t.notional_usd) : "?") + " at " + (isNum(t.px) ? px(t.px) : "?") +
+          (isNum(lp.threshold_usd) ? " (at or above the " + usd(lp.threshold_usd) + " print threshold; one taker order can produce several fills)" : "") });
+    });
+    notes.sort(function (a, b) { return b.t - a.t; });
+    const shown = notes.slice(0, 6);
+    return h(Panel, {
+      id: "flow-notes", className: "hd-p-notes", title: "Flow notes \u00b7 " + name,
+      label: "Flow notes for " + name,
+      why: h("p", null, "The plugin's own plain-English texts for this market, newest first: regime changes (with how long the previous regime held), " +
+        "burst alerts (the aggressive side and the notional within 60 s; the wallets behind it are in the Flow Deck panel), liquidation bursts " +
+        "(node mode) and large prints at or above the threshold. Nothing is generated here: each line is the snapshot's text, or its numbers " +
+        "formatted. 'ask' copies a question about that line for Hermes and opens the chat."),
+      badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "deck events + trades" }),
+      status: h(Fragment, null, h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
+        notes.length ? h("span", { className: "hd-dim" }, listCount("newest", shown.length, "notes", notes.length, "in this snapshot")) : null)
+    },
+    shown.length ? h("ul", { className: "hd-notes" }, shown.map(function (n) {
+      return h("li", { key: n.key, className: "hd-note-row" },
+        h("span", { className: "hd-num hd-note-t" }, hms(n.t) + " UTC"),
+        h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
+        h("span", { className: "hd-note-text", title: n.text }, n.text),
+        r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
+          " event at " + hms(n.t) + " UTC: " + n.text + " Use the hyperliquid commentary skill." }) : null);
+    })) : h("div", { className: "hd-empty" }, "No regime change, burst or large print for " + name + " in the current coverage yet."));
+  }
+
   // ------------------------------------------------------------------ wallets
 
   function WalletTable(props) {
@@ -3814,7 +3865,7 @@
       m ? h(DeckHero, { resp: resp }) : null,
       // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
       m ? h("div", { className: "hd-row hd-row-m" },
-        h(PriceChart, { m: m }),
+        h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(FlowNotes, { resp: resp, m: m })),
         h(Ladder, { m: m, nodeOn: non })) : null,
       m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market, delay: nlive && nlive.delay })
         : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,

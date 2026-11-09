@@ -77,14 +77,22 @@
 .hd-p-chart { flex: 999 1 360px; }
 /* the market row: the chart on the left, the aggregated ladder beside it, directly under the summary (Kevin, Nov 9) */
 .hd-row-m { flex-wrap: nowrap; align-items: stretch; }
-.hd-row-m .hd-p-chart { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; }
+.hd-col-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.hd-col-main > .hd-p-chart { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
+.hd-col-main > .hd-p-notes { flex: 0 0 auto; }
+.hd-notes { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
+.hd-note-row { display: grid; grid-template-columns: 96px 118px minmax(0, 1fr) auto; gap: 4px 10px; align-items: baseline; font-size: 12px; padding: 4px 0; border-bottom: 1px solid var(--hd-row); }
+.hd-note-row:last-child { border-bottom: 0; }
+.hd-note-t { color: var(--hd-muted); font-size: 11.5px; }
+.hd-note-text { color: var(--hd-text-2); min-width: 0; line-height: 1.35; }
+@media (max-width: 720px) { .hd-note-row { grid-template-columns: 1fr; } }
 .hd-row-m .hd-p-chart > .hd-card-body { flex: 1 1 auto; }
 .hd-row-m .hd-chart-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 480px; }
 .hd-row-m .hd-chart { flex: 1 1 auto; height: auto; min-height: 480px; }
 .hd-row-m .hd-p-ladder { flex: 0 1 430px; min-width: 360px; max-width: 460px; }
 @media (max-width: 1000px) {
   .hd-row-m { flex-wrap: wrap; }
-  .hd-row-m .hd-p-chart, .hd-row-m .hd-p-ladder { flex: 1 1 100%; max-width: none; min-width: 0; }
+  .hd-row-m .hd-col-main, .hd-row-m .hd-p-ladder { flex: 1 1 100%; max-width: none; min-width: 0; }
 }
 .hd-p-depth { flex: 1 1 300px; max-width: 520px; }
 /* a folded panel: one line until opened (the observed depth, out of the main view since Nov 9) */
