@@ -38,6 +38,10 @@ def dispatch(desk: DeskState, msg: dict, mono_ns: int, wall_ms: int) -> str:
         ms = desk.markets.get(data.get("coin"))
         if ms:
             ms.on_ctx(data, mono_ns, wall_ms)
+    elif ch == "candle":
+        store = getattr(desk, "candles", None)     # the collector's candle store (hl_desk.candles); a replay has none
+        if store is not None:
+            store.on_ws_candle(data, mono_ns, wall_ms)
     return ch or "unknown"
 
 

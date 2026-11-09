@@ -12,6 +12,7 @@ import json
 import re
 
 from . import schema
+from .candles import INTERVALS as CANDLE_INTERVALS
 from .clock import ClockBound
 from .util import dex_of, fnum, iso_ms, na, val
 
@@ -71,6 +72,19 @@ SCHEMAS = {
             "window_min": {"type": "integer", "enum": [1, 5, 15], "description": "Window length in minutes (default 5)."},
             "address": {"type": "string", "description": "Optional 0x address to open (drill-down)."},
             "snapshot_id": _SNAP_PROP}, "required": ["market"]},
+    },
+    "hl_candles": {
+        "name": "hl_candles",
+        "description": ("Candle history for one Hyperliquid market at one interval (1m, 5m, 15m, 30m, 1h, 4h, 1d) from the venue's "
+                        "own candle data: the most recent closed candles (open, high, low, close, base volume, trade count; the "
+                        "venue keeps at most the last 5000 per interval) and the in-progress candle, which is unverified (its "
+                        "updates carry no source time) and comes with its receipt age. The first call for a market and interval "
+                        "starts the fetch and answers state 'loading': call again a second later."),
+        "parameters": {"type": "object", "properties": {
+            "market": _MARKET_PROP,
+            "interval": {"type": "string", "enum": list(CANDLE_INTERVALS), "description": "Candle interval (default 1h)."},
+            "limit": {"type": "integer", "description": "How many of the most recent candles to return (default 100, max 500)."}},
+            "required": ["market"]},
     },
 }
 
@@ -390,8 +404,35 @@ def drilldown(snap: dict, frozen: dict | None, market: str, window_min, address:
     return wallet_trades(execs, address) | {"window": win, "execution_set": f"frozen with snapshot {snap['snapshot_id']}"}
 
 
+def hl_candles(snap: dict, args: dict, rt=None) -> dict:
+    """The same answer as the tab's GET candles (hl_desk.candles): the venue's closed candles and the in-progress candle,
+    read from the collector's candle store at serving time, not from the snapshot. Chat gets at most 500 candles."""
+    market, interval = args.get("market"), args.get("interval") or "1h"
+    if not market:
+        raise ValueError("market is required")
+    if interval not in CANDLE_INTERVALS:
+        raise ValueError(f"interval must be one of {', '.join(CANDLE_INTERVALS)}")
+    limit = args.get("limit", 100)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 500:
+        raise ValueError("limit must be a whole number from 1 to 500")
+    if rt is None or not hasattr(rt, "candles"):
+        res = {"ok": False, "state": "error", "market": market, "interval": interval,
+               "reason": "candles aren't available from this runtime (no collector with a candle store)"}
+    else:
+        res = rt.candles(market, interval, limit)
+        if not res.get("ok") and "error" in res and "state" not in res:
+            raise ValueError(res["error"])
+    # The snapshot's own served age and historical label stay on the answer, as on every tool's; the candles themselves
+    # aren't part of the snapshot.
+    return {"tool": "hl_candles", **res, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
+            **_served(snap), "schema": snap["schema"], "disclaimer": DISCLAIMER,
+            "note": ("candles come from the venue's candleSnapshot and candle channel when this is served, not from the "
+                     "snapshot (snapshot_id is the desk's state at the call); the in-progress candle is unverified: say "
+                     "'received N s ago' from in_progress.received_age_s")}
+
+
 HANDLERS = {"hl_market": hl_market, "hl_flow": hl_flow, "hl_context": hl_context, "hl_status": hl_status,
-            "hl_alerts": hl_alerts, "hl_wallets": hl_wallets}
+            "hl_alerts": hl_alerts, "hl_wallets": hl_wallets, "hl_candles": hl_candles}
 
 
 _NODE_SOURCE_PROP = {"type": "string", "enum": ["live", "replay"],

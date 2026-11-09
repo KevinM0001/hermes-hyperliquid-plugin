@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 
 from fastapi import APIRouter, Query
+from fastapi.responses import JSONResponse
 
 router = APIRouter()
 
@@ -200,6 +201,23 @@ async def get_wallets(market: str, window_min: int = 5, address: str | None = No
         args["address"] = address
     raw = await asyncio.to_thread(tools_mod.run_tool, "hl_wallets", args, rt_mod.get_runtime())
     return json.loads(raw)
+
+
+@router.get("/candles")
+async def get_candles(market: str, interval: str, limit: int = 500):
+    """Candle history for one market and interval (1m 5m 15m 30m 1h 4h 1d; limit default 500, max 5000): closed candles
+    from candleSnapshot, cached per (market, interval) and refetched only when the newest closed candle is older than
+    one interval (at most once per 30 s), plus the in-progress candle from the websocket, served unverified with its
+    receipt age. {ok: false, state: "loading"} while the first fetch runs (ask again), {ok: false, state: "error",
+    reason} after a failed one; an unknown market or interval is the usual error shape with HTTP 400. The fetch runs on
+    the owner's worker threads, never on this loop or the collector's."""
+    rt_mod = await _engine_async("runtime")
+    if rt_mod is None:
+        return _not_loaded()
+    res = await asyncio.to_thread(rt_mod.get_runtime().candles, market, interval, limit)
+    if not res.get("ok") and "error" in res and "state" not in res:
+        return JSONResponse(status_code=400, content=res)
+    return res
 
 
 @router.get("/tool/{name}")
