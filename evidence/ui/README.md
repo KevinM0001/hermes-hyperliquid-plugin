@@ -90,7 +90,24 @@ review dashboard, same capture setup. The before views are `82` and `84` above.
 | `87-depth-folded.png` | The Book section with the observed depth folded to one line at its end | scrolled to the Book heading |
 | `88-depth-fold-open.png` | The same fold opened: the Observed depth panel, unchanged inside | the fold's summary clicked |
 | `89-chart-no-label-boxes.png` | The chart without the label boxes on its price lines (Kevin: they moved around and hid the candles); the prices stay on the axis, the names in the legend | 1700 px tall viewport, 19:14Z |
+| `90-ladder-ask-prices-aligned.png` | The ladder's ask prices right-aligned again (Kevin noticed them left-aligned: the sell-side colour class `hd-ask` was also the Ask Hermes wrapper's inline-flex class; the wrapper is `hd-askbox` now) | same viewport, 19:33Z |
 
 The readout follows the crosshair when a pointer is over the chart (headless Chrome has none here, so the shots show
 the latest candle). The volume bars sit on their own hidden scale in the bottom fifth of the chart; the candles keep
 the upper part. Nothing is computed in the tab: the change shown is the candle's close minus its open.
+
+## The first screen: the selected market's Flow Deck card instead of the unavailable list and the delay bar (2026-11-09, 19:48Z, Kevin's direction)
+
+Kevin, in his live review: the "Unavailable now" row and the "Node feed delay" bar are "extra information that no one
+will understand or use"; the Flow Deck card for the market on screen is "really useful information, better placed
+toward the top where traders can see it". Same review dashboard and capture setup. Before: `82` and `84`.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `91-first-screen-deck-card.png` | Tiles, then the context row with its four reasons collapsed into one line and a "not fresh: 2" fold, then the BTC Flow Deck card in three columns, then the chart and the ladder | 1700 px tall viewport, 19:48Z |
+| `92-node-strip-with-delay.png` | The node strip under the market row, now carrying the node feed delay counter as its own line (5 s average, unchanged) | scrolled to the strip |
+| `93-flow-deck-panel-others.png` | The Flow Deck panel further down: a note that BTC's card is at the top, and the other three markets' cards | scrolled to the panel |
+
+The coordinator's two rules behind the removed rows are kept one click away: every not-fresh field with its reason
+is in the fold at the foot of the summary card, and the delay counter lives in the node strip in node mode. The
+aging or failed-poll note the bar carried is on the header's snapshot line when it applies.
