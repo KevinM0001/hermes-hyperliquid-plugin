@@ -2898,7 +2898,7 @@
         const lines = ms.chart.price_lines || [];
         out.chart = Object.assign({}, ms.chart, { price_lines: lines.filter(function (ln) { return !drop[ln.kind]; }) });
         const gone = lines.filter(function (ln) { return drop[ln.kind]; }).map(function (ln) { return { kind: ln.kind, reason: drop[ln.kind] }; });
-        if (gone.length) out.chart.price_lines_withheld = gone;
+        if (gone.length) out.chart.price_lines_withheld = (ms.chart.price_lines_withheld || []).concat(gone);
       }
       if (why.trades) {
         const r = why.trades;

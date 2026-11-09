@@ -147,7 +147,8 @@ def age_market(ms: dict, age_s: float, when: str) -> dict:
         chart["price_lines"] = [ln for ln in lines if ln.get("kind") not in drop_lines]
         gone = sorted({ln.get("kind") for ln in lines if ln.get("kind") in drop_lines})
         if gone:
-            chart["price_lines_withheld"] = [{"kind": k, "reason": drop_lines[k]} for k in gone]
+            chart["price_lines_withheld"] = list(chart.get("price_lines_withheld") or []) + [
+                {"kind": k, "reason": drop_lines[k]} for k in gone]
         out["chart"] = chart
     if "trades" in why:
         r = why["trades"]

@@ -489,10 +489,13 @@ class MarketState:
         for key, label in (("mark", "mark"), ("oracle", "oracle")):
             if ctx_block.get(key, {}).get("value") is not None:
                 lines.append({"price": ctx_block[key]["value"], "label": label, "kind": key})
+        largest = ladder.get("largest") or {}
+        withheld = []
         for side in ("bids", "asks"):
-            rows = ladder.get(side) or []
-            if rows:
-                big = bk.largest_level(rows, side)          # the same level as hl_market's levels.largest
+            big = largest.get(side[:-1])                     # hl_market's levels.largest: withheld when unestablished
+            if big is None and largest.get(f"{side[:-1]}_reason"):
+                withheld.append({"kind": f"largest_{side[:-1]}_level", "reason": largest[f"{side[:-1]}_reason"]})
+            if big:
                 lines.append({"price": big["px"], "kind": f"largest_{side[:-1]}_level",
                               "label": f"largest returned {side[:-1]} level: {big['sz']} (API count "
                                        f"{big['api_count'] if big['api_count'] is not None else 'unavailable'}, aggregated)"})
@@ -500,6 +503,7 @@ class MarketState:
             c["volume_usd"] = rnd(c.pop("_vol"), 2)
             c["complete"] = c["t"] > (seg or 0) and c["t"] + CANDLE_MS - 1 <= (wm or 0)
         return {"candle_s": CANDLE_MS // 1000, "candles": candles, "price_lines": lines,
+                **({"price_lines_withheld": withheld} if withheld else {}),
                 "candles_note": ("each candle summarizes every public trade in its own aligned 15 s interval, from the boundary at or "
                                  "before (watermark - 15 min); 'complete' is false for a candle that starts at or before the segment "
                                  "start or ends after the trades watermark"),

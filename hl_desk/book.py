@@ -255,10 +255,19 @@ def ladder_rows(bids: list, asks: list, problems: dict | None = None) -> dict:
         "aggregated": True,
     }
     out["largest"] = {
-        "bid": largest_level(out["bids"], "bids"), "ask": largest_level(out["asks"], "asks"),
         "by": ("the largest aggregate size (coin) among the returned levels on that side, ties to the level nearer the "
                "top; an aggregated level, never one order; the same level as the chart's largest-level price line"),
     }
+    for side, key in (("bid", "bids"), ("ask", "asks")):
+        bad = (problems or {}).get(side)
+        if bad:
+            # A returned level with a missing or invalid px or sz could be the largest: the ranking isn't established
+            # (Codex h1 review 3, B1).
+            out["largest"][side] = None
+            out["largest"][f"{side}_reason"] = (f"{len(bad)} returned {side} level(s) have a missing or invalid px or sz, "
+                                                "so the largest returned level can't be established")
+        else:
+            out["largest"][side] = largest_level(out[key], key)
     if problems and (problems.get("bid") or problems.get("ask")):
         out["malformed_levels"] = problems
         out["malformed_note"] = "levels with a missing or invalid px or sz are left out of the rows and make that side's totals unavailable"
