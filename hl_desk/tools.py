@@ -138,6 +138,8 @@ def hl_market(snap: dict, args: dict, rt=None) -> dict:
     return _envelope("hl_market", snap, ms, ["book_fast", "book_full", "book_sf4", "book_sf3", "bbo"], {
         "top_of_book": b["top"], "levels": b["ladder"], "depth": b["depth"], "bbo": b["bbo"],
         "notes": ["levels are aggregated price levels, never individual orders",
+                  "each depth band's approximate value names its own book and bucket width (approximate.<side>.resolution); "
+                  "bands and sides can use different books",
                   "'API count' is Hyperliquid's n; the docs call it 'number of levels' (info l2Book) and 'number of orders' (websocket)"]})
 
 
@@ -169,7 +171,9 @@ def hl_flow(snap: dict, args: dict, rt=None) -> dict:
     return _envelope("hl_flow", snap, ms, ["trades"], {
         "window": f["window"], "values": f["values"], "cvd_last_6_minutes": cvd,
         "large_prints": f["large_prints"], "tape": f["tape"][:20],
-        "notes": ["side follows the docs: B = buyer aggressed, A = seller aggressed",
+        "notes": ["every number here covers window.label's window only; hl_wallets and the Flow Deck use their own "
+                  "windows, so never combine their counts or volumes with these",
+                  "side follows the docs: B = buyer aggressed, A = seller aggressed",
                   "each trade counted once, identified by (coin, time, tid)",
                   "the window covers only what was observed since the collector started or the last gap"]})
 

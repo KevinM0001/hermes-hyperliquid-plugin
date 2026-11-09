@@ -268,7 +268,7 @@
       "side_convention": "computed separately for each side",
       "window": "latest push of the full-precision book",
       "reset_rule": "replaced by every push",
-      "completeness_rule": "exact is available on a side only when that side's deepest returned full-precision level reaches the band edge (bids: lowest px <= edge; asks: highest px >= edge), no returned level on that side is malformed, and the mid is known (a malformed best level makes it unknown). Otherwise exact is null with a reason and 'observed depth within returned levels' is shown with its span."
+      "completeness_rule": "exact is available on a side only when that side's deepest returned full-precision level reaches the band edge (bids: lowest px <= edge; asks: highest px >= edge), no returned level on that side is malformed, and the mid is known (a malformed best level makes it unknown). Otherwise exact is null with a reason and 'observed depth within returned levels' is shown with its span; each approximate side names its own resolution (book and bucket width), which can differ between bands and sides"
     },
     "book.depth_imbalance": {
       "source": "plugin",
@@ -597,7 +597,7 @@
       "side_convention": "buy side: new-long, cover; sell side: new-short, exit",
       "window": "deck.window",
       "reset_rule": "per tick",
-      "completeness_rule": "needs node mode (implemented in Handoff 1c Part B). A missing starting position makes the dependent split unavailable, with the unclassified notional shown; it is never treated as zero."
+      "completeness_rule": "needs node mode (implemented in Handoff 1c Part B). A missing starting position makes the dependent split unavailable, with the unclassified notional shown; it is never treated as zero; a participant's position effect counts only when complete for its side (a buy's cover and new_long, a sell's exit and new_short, none negative, adding up to the fill size; Codex h1 review 4, B2), otherwise its notional is unclassified and the side's buckets are unavailable with the reason, never 0"
     },
     "deck.top_wallet": {
       "source": "hl_deck",
@@ -1085,7 +1085,7 @@
       "side_convention": "aggressor (taker) side",
       "window": "the card's 90 s window or the burst's 60 s window, in node fills",
       "reset_rule": "restarts after the first watermark following a gap, new session, replay session change or fills_known false",
-      "completeness_rule": "unavailable with a reason and the unclassified notional when any taker effect, role or identity is missing; unavailable when node fills don't cover the window; never scaled to 100%"
+      "completeness_rule": "unavailable with a reason and the unclassified notional when any taker effect, role or identity is missing; unavailable when node fills don't cover the window; never scaled to 100%; a participant's position effect counts only when complete for its side (a buy's cover and new_long, a sell's exit and new_short, none negative, adding up to the fill size; Codex h1 review 4, B2), otherwise its notional is unclassified and the side's buckets are unavailable with the reason, never 0"
     },
     "node.wallet_split": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1113,7 +1113,7 @@
     },
     "node.liquidation_burst": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
-      "formula": "liquidations (counted once each) within 60 s of block time >= liq_burst_count (default 2) or their notional >= liq_burst_usd (default 1,000,000); rearms when the window falls below both",
+      "formula": "liquidations (counted once each) within 60 s of block time >= liq_burst_count (default 2) or their notional >= liq_burst_usd (default 1,000,000); rearms when the window falls below both; evaluated at each node executions message at its own block time t, over (t - 60 s, t] (Codex h1 review 4, B1)",
       "units": "count; USD",
       "inputs": [
         "node.liquidation"
@@ -1333,6 +1333,7 @@
     "1.2.0 also (Codex h1 review 1): public statuses are re-judged at a latest snapshot's served age, and the tab ages what it shows the same way, withholding lapsed values in place",
     "1.2.0 also (Codex h1 review 2): book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)",
     "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check",
-    "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed"
+    "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
+    "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's own block time over (t - 60 s, t]; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution"
   ]
 }

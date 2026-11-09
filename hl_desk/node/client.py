@@ -357,7 +357,8 @@ class FeedClient:
         elif kind == "execs":
             new = mf.flow.on_execs(body, block, bt)
             for listener in self.listeners:
-                listener({"type": "execs", "market": m, "execs": new, "client": self})
+                listener({"type": "execs", "market": m, "execs": new, "block": block, "block_time_ms": bt,
+                          "client": self})
             if mf.flow.restart_pending:
                 mf.fam["flow"].invalidate(f"flow window restarting ({mf.flow.restart_reason})")
         # Every valid family's applied-through advances with the contiguous stream.

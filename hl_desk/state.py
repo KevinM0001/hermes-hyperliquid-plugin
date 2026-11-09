@@ -260,6 +260,10 @@ class MarketState:
             fwin = {"start_exclusive_ms": fstart, "start": iso_ms(fstart), "end_ms": wm, "end": iso_ms(wm),
                     "since": "segment start" if fstart == seg else "15-minute retention limit",
                     "length_s": round((wm - fstart) / 1000, 3)}
+            # Each tool's numbers carry their own window (Codex h1 review 4, B3): never another tool's.
+            fwin["label"] = (f"the flow window: {fwin['length_s']:.1f} s, {iso_ms(fstart)} to {iso_ms(wm)} (since the "
+                             f"{fwin['since']}); these counts and volumes cover this window only, not the wallets' "
+                             "or the Flow Deck's windows")
         else:
             ftrades, fwin = [], {"reason": r_tr or "no coverage segment yet"}
         flow_block = {
@@ -455,7 +459,9 @@ class MarketState:
         req = wm - minutes * 60_000
         start = max(req, seg)
         trades = self.store.window(start, wm, start_inclusive=False)
-        window = {"requested_min": minutes, "start_exclusive_ms": start, "start": iso_ms(start), "end_ms": wm,
+        window = {"label": (f"the wallets' {minutes}-minute window: {(wm - start) / 1000:.1f} s observed, {iso_ms(start)} to "
+                            f"{iso_ms(wm)}; its executions and notional cover this window only, not the flow window's"),
+                  "requested_min": minutes, "start_exclusive_ms": start, "start": iso_ms(start), "end_ms": wm,
                   "end": iso_ms(wm), "length_s": round((wm - start) / 1000, 3), "complete": start == req,
                   "completeness": ("complete" if start == req else
                                    f"incomplete: only {(wm - start) / 1000:.0f} s observed since the segment start (start or last gap)")}

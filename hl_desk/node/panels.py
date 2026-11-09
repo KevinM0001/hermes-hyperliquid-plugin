@@ -81,7 +81,7 @@ def on_client_event(ev: dict, opts: dict) -> None:
             _sample_history(mf, ps, t, client)
             _track_walls(mf, ps, t)
     elif ev["type"] == "execs":
-        _liquidation_bursts(mf, ps, opts)
+        _liquidation_bursts(mf, ps, opts, ev.get("block_time_ms"))
 
 
 def _sample_history(mf, ps: PanelState, t: int, client) -> None:
@@ -184,11 +184,14 @@ def _wall_outcome(book: NodeBook, oid: int, still) -> dict:
             "unknown_sz": num(ch["unknown"])}
 
 
-def _liquidation_bursts(mf, ps: PanelState, opts: dict) -> None:
-    if mf.flow.restart_pending or mf.flow.last_block_time_ms is None:
+def _liquidation_bursts(mf, ps: PanelState, opts: dict, block_time_ms=None) -> None:
+    """Evaluated at each node executions message, at its own block time t, over (t - 60 s, t] (Codex h1 review 4,
+    B1: never at an earlier watermark's time, which let a window include fills after its own end)."""
+    if mf.flow.restart_pending or not isinstance(block_time_ms, int) or isinstance(block_time_ms, bool):
         return
-    now = mf.flow.last_block_time_ms
-    execs = [e for e in mf.flow.execs.values() if e.time_ms > now - LIQ_WINDOW_MS and e.liquidation is not None]
+    now = block_time_ms
+    execs = [e for e in mf.flow.execs.values()
+             if now - LIQ_WINDOW_MS < e.time_ms <= now and e.liquidation is not None]
     liqs = liquidations(execs)
     n = len(liqs)
     total = sum((g["notional"] for g in liqs), ZERO)
