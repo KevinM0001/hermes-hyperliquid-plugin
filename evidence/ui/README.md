@@ -45,3 +45,17 @@ panels withhold their values with that reason, which is the plugin's rule, not a
 
 The capture driver (a local capture script (outside the repo)) is a 150-line CDP script: open the URL, click Start, wait,
 screenshot, read the clipboard, change the route, click Stop. It is not part of the plugin.
+
+## The interactive review on Engine's Nov 5 recording (2026-11-09, from 13:44Z)
+
+The isolated dashboard (a spare port, the isolated dashboard's config (outside the repo): public live, `node_feed` = the contest runner's
+socket, `node_replay_file` = Engine's recording (outside the repo), Engine's Thursday Nov 5
+14:00 to 16:00Z recording, 4.2 GB, four markets, block time 13:28:51Z to 16:13:37Z). The runner was down (its socket
+refused connections since 05:05Z), so the live node panels say so and the Replay area carries the node tables.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `70-review-nov5-top.png` | The top of the tab after the switch: public side live, the node feed banner (connection refused, retry), "a replay is loaded (PLAYING, 1x)" | 13:49Z, two minutes after the replay started; tab code at `7197cb7` |
+| `71-review-nov5-loading.png` | What the tab shows while the plugin loads the recording: "No snapshot. the latest snapshot is 89.9 s old: the collector isn't publishing" (the whole load took 1 min 50 s; the Start call itself timed out at 10 s and the replay appeared when the load ended) | 82 s after pressing Start in the Replay area |
+| `72-review-nov5-full.png` | The whole tab with the Replay area playing: Families and the L4 ladder summary side by side in half a row each (before the width change), waiting stops, walls, thinning, node tape, the heatmap filling (24 samples) | 13:49Z; the ladder table scrolled to its right-hand columns |
+| `73-review-nov5-full-after.png` | The same view at `c616fbf`: the Families strip and the L4 ladder summary take the full row (two `wide` props); replay position 14:12Z of the recording, heatmap with a full 15-minute window | 14:30Z, page reloaded after the bundle sync; no restart, the recording kept playing |
