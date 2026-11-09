@@ -1,4 +1,4 @@
-# Dashboard look: proposal screenshots (UI batch 1, 2026-11-09)
+# Dashboard look: proposal screenshots (UI batches 1 to 3, 2026-11-09)
 
 Headless Chrome 156 (`--headless=new`, 1440 px wide, device scale 1) on an isolated Hermes dashboard
 (`hermes dashboard --isolated --port <N> --skip-build`, its own `HERMES_HOME` under a scratch directory outside the repo, the plugin
@@ -19,6 +19,13 @@ switched to Mono for two shots and set back. No run touched the node, production
 | `09-node-replay.png` | The Node replay area playing `tests/fixtures/node/xyz-2markets-66s.jsonl` (REPLAY) | replay Start pressed in the tab, 40 s later, xyz:XYZ100 selected |
 | `10-node-replay-full.png` | The whole tab with the replay area | same |
 | `11-public-nostart.png` | The empty state before Start | page opened, nothing pressed |
+| `12-before-public-full.png` | Before: the whole tab as it was (`088babf` dashboard files), public live | the proposal's public full-page view, for comparison with `02` |
+| `13-before-public-hype-top.png` | Before: HYPE | compare with `05` |
+| `14-before-node-top.png`, `15-before-node-full.png` | Before: node mode on the recorded feed | compare with `07`, `08` |
+| `20-live-node-top.png`, `21-live-node-full.png` | Live node mode (UI batch 3): the isolated dashboard subscribed read-only to the contest runner's feed socket (`the contest runner's feed socket`), Start pressed in the tab, 240 s later | the runner was still catching up (feed delay about 11,900 s), so every node family reads STALE and the node panels withhold their values with that reason |
+| `22-live-node-stops.png` | The Waiting stops panel in that run | scrolled to the panel |
+| `23-live-node-ladder.png` to `27-live-node-tape.png` | Node ladder, heatmap, wall watch, thinning, node tape in that run | scrolled to each panel |
+| `28-live-node-top-mono.png`, `29-live-node-stops-mono.png` | The same run in the Mono frame | theme switched on the isolated dashboard only, reset after |
 
 What the data says in these shots is the data: the public runs are live Hyperliquid public data at the time stamped in
 each header; the recorded feed's blocks are from Nov 7, so its families read STALE (delay about 110,000 s) and the node
