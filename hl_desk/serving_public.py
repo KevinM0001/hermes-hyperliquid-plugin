@@ -7,12 +7,14 @@ snapshot's age. So when a latest snapshot is served, each fresh status is re-jud
 lapsed reads stale (no progress) or delayed (old source time) with the reason, and every value the build gates on
 that field is withheld exactly as the build withholds it (null with the reason), in the same shape:
 
-- book_fast: the top of book (best bid and ask, mid, spread) and its price lines;
+- book_fast: the top of book (best bid and ask, mid, spread) and its price lines, and the watch block's price (when it
+  came from the fast book) with the positions and verdict built on it;
 - book_full: the ladder, its largest-level price lines, and the exact band depth and observed depth built on it;
 - book_sf4, book_sf3: the approximate band depth and observed depth built on them, and their grouped ladders
   (book.ladders, withheld whole); book_sf2: its grouped ladder;
 - trades: the flow values, the CVD buckets' values, the large-print count, the Flow Deck card's numbers and regime,
-  and the wallet panels;
+  the wallet panels, and the watch block's flow, wave, taker and top-wallet parts (hl_desk.watch.withhold, the
+  build's own rule; its verdict is recomputed without the wave);
 - ctx: the context values and their price lines. Since schema 1.3.0 these are served marked unverified (activeAssetCtx
   has no source time, so ctx is never fresh) with the receipt age of the last changed context: that age grows by the
   snapshot's age, and once it passes the max age the values and their mark and oracle price lines are withheld, as
@@ -27,6 +29,7 @@ from __future__ import annotations
 
 from .freshness import receipt_only_reason
 from .util import mark_unverified, na
+from .watch import withhold as withhold_watch
 
 BOOK_LABEL = {"book_full": "full precision", "book_sf4": "nSigFigs=4", "book_sf3": "nSigFigs=3", "book_sf2": "nSigFigs=2"}
 CARD_NUMBERS = ("move_bps", "net_flow_usd", "volume_usd", "impact", "pressure", "trades", "accounts", "top_wallet")
@@ -227,6 +230,11 @@ def age_market(ms: dict, age_s: float, when: str) -> dict:
         out["deck"] = deck
         out["wallets"] = {k: {"window_min": int(k.rstrip("m")) if k.rstrip("m").isdigit() else None, "reason": r,
                               "buyers": None, "sellers": None} for k in (ms.get("wallets") or {})}
+    w = (ms.get("deck") or {}).get("watch")
+    if isinstance(w, dict) and ("trades" in why or "book_fast" in why):
+        deck = dict(out.get("deck") or ms.get("deck") or {})
+        deck["watch"] = withhold_watch(w, why.get("trades"), why.get("book_fast"))
+        out["deck"] = deck
     return out
 
 

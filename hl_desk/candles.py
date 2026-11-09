@@ -275,10 +275,10 @@ class CandleStore:
                                    "next_retry_s": round(max(0.0, wait), 1)}
                 return base | {"state": "loading", "reason": "the first candleSnapshot fetch for this market and interval "
                                                               "is running; ask again in a second"}
-            closed = [dict(c, state="closed") for t, c in sorted(s.closed.items())]
+            ts = sorted(s.closed)                                   # only the candles returned are copied (the watch block reads three views per market per second)
             cur = s.current
             wanted = limit - 1 if cur is not None else limit        # closed candles that fit beside the in-progress one
-            candles = closed[-wanted:] if wanted > 0 else []
+            candles = [dict(s.closed[t], state="closed") for t in (ts[-wanted:] if wanted > 0 else [])]
             if cur is not None:
                 candles = candles + [dict(cur, state="in_progress")]
             if cur is not None:
@@ -294,8 +294,8 @@ class CandleStore:
                                "reason": "no in-progress candle received yet (no websocket candle update, and the newest "
                                          "candleSnapshot candle had already closed)"}
             n_closed = sum(1 for c in candles if c["state"] == "closed")
-            history = {"count": n_closed, "available": len(closed), "first_ms": candles[0]["time"] if candles else None,
-                       "last_closed_ms": closed[-1]["time"] if closed else None, "fetched_at_ms": s.fetched_at_ms,
+            history = {"count": n_closed, "available": len(ts), "first_ms": candles[0]["time"] if candles else None,
+                       "last_closed_ms": ts[-1] if ts else None, "fetched_at_ms": s.fetched_at_ms,
                        "fetched_at": iso_ms(s.fetched_at_ms), "fetches": s.fetches, "refetching": s.fetching,
                        "note": VENUE_NOTE}
             if s.malformed:

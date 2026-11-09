@@ -73,7 +73,7 @@ def test_import_and_register_start_nothing(monkeypatch, tmp_path):
     ctx = FakeCtx()
     mod.register(ctx)
     assert set(ctx.tools) == {"hl_market", "hl_flow", "hl_context", "hl_status", "hl_alerts", "hl_wallets", "hl_candles",
-                              "hl_structure", "node_status", "node_book", "node_stops"}
+                              "hl_structure", "hl_watch", "node_status", "node_book", "node_stops"}
     assert set(ctx.commands) == {"hl"}
     assert set(ctx.skills) == {"hyperliquid-commentary"}
     assert set(threading.enumerate()) == before            # no thread started

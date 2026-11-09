@@ -5,7 +5,8 @@
   "sources": {
     "hyperliquid_docs": "See docs/ENDPOINTS.md for every endpoint and the doc link that confirms it.",
     "hl_deck": "The author's terminal Flow Deck, hl_deck.py (a private tool, not distributed; the version of 2026-10-09, 547 lines). Regime, card and latch definitions marked source=hl_deck are ported from it; the code is not copied. Line numbers refer to that file.",
-    "handoff": "Definitions marked source=handoff come from Handoff 1 (burst alert, wallet shares, depth bands). Definitions marked source=plugin are this plugin's own choices, documented here because neither the docs nor hl_deck define them."
+    "handoff": "Definitions marked source=handoff come from Handoff 1 (burst alert, wallet shares, depth bands). Definitions marked source=plugin are this plugin's own choices, documented here because neither the docs nor hl_deck define them.",
+    "watch": "Kevin's swing-context page (a private page, not distributed): its 24h range track with the hatched middle 30%, the 7d position, 15m/1h/4h flow, the 4h wave, taker per hour, the hour's top wallet and verdict(). Definitions marked source=watch are ported from it; the code is not copied, and the data is the plugin's own (minute bars from the counted public trades, the venue's closed candles)."
   },
   "conventions": {
     "time": "Source times are Hyperliquid's millisecond timestamps (the 'time' field). Local receive times are the collector's monotonic clock in nanoseconds. Receipt-progress ages use the monotonic clock. Source recency compares the local wall clock with source time through the clock relationship in freshness.clock_relationship, whose uncertainty must be known; otherwise nothing source-timestamped is fresh.",
@@ -676,6 +677,37 @@
       "window": "deck.window",
       "reset_rule": "per tick",
       "completeness_rule": "null if the window is incomplete"
+    },
+    "deck.watch": {
+      "source": "watch",
+      "watch_ref": "Kevin's swing-context page: its 24h range track with the hatched middle 30%, 7d position, 15m/1h/4h flow, 4h wave, taker/hr, top wallet (1h) and verdict()",
+      "formula": "Per followed market, deck.<market>.watch, from the plugin's own data. Minute bars: per UTC minute of the collector's counted public trades (the trade store's execution sets, every segment), taker buy and sell notional (px*sz by side), trade count, high, low and last price, and each aggressor's notional in the minute; the newest 240 minutes are kept, the per-wallet sums for the latest 60. Windows are whole UTC minutes ending at the trades watermark's minute (exclusive): 15m = 15, 1h = 60, 4h = 240 minutes. flow.<window>: buy_usd, sell_usd and trades over the window's covered minutes; imbalance = (buy - sell) / (buy + sell). wave: the covered minutes of the 4h window split into halves by count (the second half holds the extra minute when the count is odd); delta = |imbalance(second half)| - |imbalance(first half)|; state decelerating when delta < -0.05, accelerating when delta > 0.05, else flat; both halves' imbalances and minute counts are reported. taker_per_hour: per_hour_usd = taker notional (buy + sell) over the covered minutes of the 4h window / hours_covered (minutes_covered / 60); the page divides the 4h total by 4, the plugin divides by the covered hours and says so. top_wallet_1h: share_pct = (sum over the 1h window's covered minutes of each minute's top aggressor notional) / the hour's taker notional * 100 (the page's definition); address, notional_usd and minute_ms name the minute-top wallet with the largest notional; hour_top is the hour-wide top aggressor (address, notional_usd, share_pct of the hour's taker notional). Ties: the lowest address within a minute, the latest minute between minute tops. range_24h: the last 24 closed 1h candles, high with high_ms and low with low_ms (the most recent candle on ties). range_7d: the last 7 closed 1d candles, or the last 42 closed 4h candles when fewer than 7 days exist ('from' says which, with fallback_reason). position_pct = (price - low) / (high - low) * 100, not clamped ('outside' is above or below past the range); zone low below 35, middle 35 to 65, high above 65 (middle_band_pct). price: the fast book's mid when book_fast is fresh, else the last counted trade (price_from: book_fast or last_trade; price_time_ms). verdict (the page's verdict(), on the 24h position and the 4h wave): position in [35, 65] -> label MIDDLE, tone warning, 'mid-range: the condition you said costs you money'; else the edge (low below 35, high above 65): wave delta < -0.05 -> '<EDGE> + FADING', tone good, 'at the <edge> of range and the 4h wave is decelerating'; delta > 0.05 -> '<EDGE> + BUILDING', tone critical, 'at the <edge> of range but the wave is still accelerating'; otherwise '<EDGE>', tone serious, 'at the <edge> of range, wave flat'; with no wave, '<EDGE>', tone serious, 'at the <edge> of range, wave not measurable yet' with wave_reason.",
+      "thresholds": {
+        "middle_band_pct": [
+          35,
+          65
+        ],
+        "wave_delta": 0.05,
+        "wave_min_minutes_per_half": "more than 10 covered minutes",
+        "range_24h_candles": "24 closed 1h",
+        "range_7d_candles": "7 closed 1d, else 42 closed 4h",
+        "windows_min": {
+          "15m": 15,
+          "1h": 60,
+          "4h": 240
+        },
+        "minutes_retained": 240
+      },
+      "units": "USD notional; imbalance and delta are ratios in [-1, 1]; position_pct is percent of the range (unclamped); share_pct percent; per_hour_usd USD per hour",
+      "inputs": [
+        "execution set (counted public trades with their aggressor addresses, every coverage segment of the last 4 hours)",
+        "candleSnapshot closed candles (1h and 1d, requested for every followed market when the collector starts; 4h as the 7d fallback)",
+        "fast book mid (l2Book fast) when fresh, else the last counted trade"
+      ],
+      "side_convention": "buy = side B (buyer aggressed), sell = side A (seller aggressed); +1 imbalance is all buying; the aggressor (taker) carries the notional for the top wallet",
+      "window": "15m, 1h and 4h of whole UTC minutes ending at the trades watermark's minute; 24 closed 1h candles; 7 closed 1d candles (or 42 closed 4h)",
+      "reset_rule": "minute bars persist across gaps and reconnects (the newest 240 minutes); coverage is judged per minute at every build from the retained segments; the ranges follow the candle store's refetch policy (closed candles are facts, with fetched_at_ms)",
+      "completeness_rule": "A minute is covered only when it lies wholly inside one coverage segment: it starts after the segment start (trades at the start aren't counted) and ends at or before that segment's watermark; so never a minute inside a declared gap, before the segment start, or in progress. Every window reports minutes_covered, minutes_wanted, complete (all covered) and gap_inside (a declared gap overlaps it), sums only its covered minutes and carries a note when incomplete; a window spanning a gap says so and is never averaged as if covered. A window with no covered minute has null values with a reason; no trades in covered minutes gives buy and sell of 0 and a null imbalance with a reason. The wave is null with a reason unless both halves hold more than 10 covered minutes with trades; taker_per_hour and top_wallet_1h are null with a reason without a covered minute (the share is unavailable, not 0%). The flow, wave, taker and top-wallet parts follow the trades field: null with the reason (<part>_reason) when trades aren't fresh at build time, and at the served or shown age when trades lapse (hl_desk/serving_public.py, the same withhold as the build, like the Flow Deck card), with the verdict recomputed without the wave (the edge with 'wave not measurable yet', or MIDDLE). The price and the positions follow the field the price came from (book_fast, or trades for the last trade): withheld when it isn't fresh or lapses, and then position_pct, outside and zone of both ranges are null with position_reason and the verdict is null with verdict_reason; the ranges' highs and lows stay. A range is {state: loading | error | unavailable | insufficient, reason} while its candles aren't there (a first snapshot may say loading); fewer closed candles than wanted give the range over them with complete false. The verdict is a description by the page's own rule, not a signal; the block's notes carry the page's footer and 'not a forecast'."
     },
     "wallets.window": {
       "source": "handoff",
@@ -1399,6 +1431,6 @@
     "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check",
     "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
     "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution",
-    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals; Flow Deck card path (six 15 s points) and dominated_by, and a validation status on the card's regime labels (Commentary TOOL_PROPOSALS 1, 4 and 2, Nov 9), additive"
+    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals; Flow Deck card path (six 15 s points) and dominated_by, and a validation status on the card's regime labels (Commentary TOOL_PROPOSALS 1, 4 and 2, Nov 9), additive; deck.watch, Kevin's swing-context page per market (minute bars from the counted public trades under the coverage rules, ranges from the venue's closed candles, the verdict by his own rule), its serving-time withholding, and the hl_watch tool"
   ]
 }

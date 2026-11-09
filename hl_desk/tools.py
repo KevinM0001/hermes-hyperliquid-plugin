@@ -113,6 +113,20 @@ SCHEMAS = {
                                          "(default [\"1d\", \"4h\", \"1h\", \"30m\", \"5m\", \"1m\"])."}},
             "required": ["market"]},
     },
+    "hl_watch": {
+        "name": "hl_watch",
+        "description": ("Kevin's swing-context page for Hyperliquid markets, computed by the plugin from its own data, for one "
+                        "market or every followed market: the price and where it sits in the 24h range (the last 24 closed 1h "
+                        "candles; the middle 35 to 65% is the band he identified as his loss-maker) and in the 7d range, taker "
+                        "flow imbalance over 15m, 1h and 4h from minute bars of public trades, the 4h wave (the second half of "
+                        "the four hours against the first: accelerating, decelerating or flat), taker notional per hour, the "
+                        "hour's top wallet share, and a verdict badge by his own rule (MIDDLE, LOW or HIGH, + FADING or + "
+                        "BUILDING) with a plain-English gloss. Every window says how many minutes it covers and whether it spans "
+                        "a gap; the parts built on trades or on the fast book are null with the reason when those aren't fresh; "
+                        "a range says when its candles are still loading. Descriptions by that rule, not a forecast."),
+        "parameters": {"type": "object", "properties": {"market": {"type": "string", "description": "Optional: one market only."},
+                                                        "snapshot_id": _SNAP_PROP}},
+    },
 }
 
 
@@ -517,8 +531,31 @@ def hl_structure(snap: dict, args: dict, rt=None) -> dict:
                      "answered by calling again in a second")}
 
 
+def hl_watch(snap: dict, args: dict, rt=None) -> dict:
+    """Kevin's swing-context page per market (hl_desk.watch), read from the snapshot's deck.<market>.watch: the same block
+    the tab shows, with each market's provenance and the status of the fields it is built on (trades, the fast book)."""
+    names = [args["market"]] if args.get("market") else sorted(snap["markets"])
+    markets = {}
+    for name in names:
+        ms, err = _market(snap, name)
+        if err:
+            raise LookupError(err)
+        markets[name] = {"provenance": ms["provenance"], "status": _status_line(ms, ["trades", "book_fast"]),
+                         "watch": (ms.get("deck") or {}).get("watch")}
+    m = schema.load()["metrics"]["deck.watch"]
+    return {"tool": "hl_watch", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
+            "mode": snap["mode"], **_served(snap), "markets": markets,
+            "definitions": {k: m[k] for k in ("formula", "thresholds", "window", "completeness_rule")}
+            | {"source": "schema/metrics.v1.json deck.watch (ported from Kevin's swing-context page)"},
+            "schema": snap["schema"], "disclaimer": DISCLAIMER,
+            "note": ("descriptions by Kevin's own rule, not a forecast or a signal: say where the price sits, what the flow "
+                     "and the wave measured and over how many covered minutes, which wallet led the hour, and what is "
+                     "unavailable and why (a null part has its reason beside it as <part>_reason)")}
+
+
 HANDLERS = {"hl_market": hl_market, "hl_flow": hl_flow, "hl_context": hl_context, "hl_status": hl_status,
-            "hl_alerts": hl_alerts, "hl_wallets": hl_wallets, "hl_candles": hl_candles, "hl_structure": hl_structure}
+            "hl_alerts": hl_alerts, "hl_wallets": hl_wallets, "hl_candles": hl_candles, "hl_structure": hl_structure,
+            "hl_watch": hl_watch}
 
 
 _NODE_SOURCE_PROP = {"type": "string", "enum": ["live", "replay"],

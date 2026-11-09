@@ -13,7 +13,7 @@ import math
 import secrets
 from collections import deque
 
-from . import PLUGIN_VERSION, book as bk, flow, schema, wallets
+from . import PLUGIN_VERSION, book as bk, flow, schema, wallets, watch
 from .clock import ClockBound
 from .config import DeskConfig
 from .deck import DeckEngine
@@ -72,6 +72,7 @@ class MarketState:
         self.offsets: deque[int] = deque(maxlen=50)
         self.store = TradeStore(market)
         self.deck = DeckEngine(market, cfg.burst_threshold(market), cfg.wallet_target_share_pct, cfg.wallet_cap)
+        self.minutes = watch.MinuteBars()       # the watch block's minute bars (hl_desk.watch): counted trades, 4 hours
         self.conn: int | None = None
 
     # --- connection lifecycle -------------------------------------------
@@ -148,6 +149,7 @@ class MarketState:
         seg_before = self.store.segment_start_ms
         wm_before = self.store.watermark_ms
         new = self.store.on_message(data, fallback_start_ms=fast["time_ms"] if fast else None)
+        self.minutes.add(new)
         if was_open and self.store.segment_start_ms != seg_before:
             # A malformed trade closed the segment.
             self._after_boundary(wm_before)
@@ -342,6 +344,11 @@ class MarketState:
         deck["card"]["activity_buckets"] = self._node_card_buckets(deck["card"], node_client, now)
         deck["events"] = self._node_events(deck["events"], node_client, node_view.get("live"), now)
         deck["bursts"] = self._burst_info(node_client)
+        # Kevin's swing-context page per market (hl_desk.watch), beside the card: its trade parts follow the trades
+        # field, its price the fast book (else the last trade), its ranges the candle store (watch_views, set by the desk).
+        deck["watch"] = watch.block(self.market, self.minutes, self.store, getattr(self, "watch_views", None),
+                                    mid=top["mid"].get("value"), mid_time_ms=fast["time_ms"] if fast else None,
+                                    mid_reason=top["mid"].get("reason"), trades_reason=r_tr, book_reason=r_fast)
         wallet_panels = {}
         for n in WALLET_WINDOWS_MIN:
             wallet_panels[f"{n}m"] = self._wallet_panel(n, r_tr)
@@ -634,6 +641,7 @@ class DeskState:
             # Node mode (a node feed is configured): bursts come from node fills, never public trades.
             s.node_bursts = self.node is not None and getattr(self.node, "live", None) is not None
             s.candle_intervals = self.candles.summary(m) if self.candles is not None else {}
+            s.watch_views = watch.candle_views(self.candles, m) if self.candles is not None else None
         return {
             "snapshot_id": sid,
             "built_at_ms": wall_ms,

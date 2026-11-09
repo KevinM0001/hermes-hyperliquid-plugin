@@ -5,8 +5,9 @@ Start button), never on import, registration, doctor or validate. It runs
 its own asyncio loop in its own thread, so nothing here touches the gateway
 event loop. Bounded: one thread (plus the candle store's two fetch workers,
 hl_desk.candles), one websocket connection, at most 20 subscriptions for the
-4 default markets plus one candle subscription per (market, interval) the
-chart has asked for (at most 7 per market), 16 minutes of trades per market,
+4 default markets plus one candle subscription per (market, interval) asked
+for (the watch block's 1h and 1d from the start, the chart's on demand; at most
+7 per market), 16 minutes of trades and 4 hours of minute bars per market,
 a fixed snapshot ring, at most 5000 candles per (market, interval).
 Reconnects back off from 1 s to 30 s.
 """
@@ -27,6 +28,7 @@ from .markets import MarketRegistry
 from .state import DeskState
 from .store import SnapshotStore
 from .util import dex_of, iso_ms
+from .watch import START_INTERVALS
 
 THREAD_NAME = "hyperliquid-desk-collector"
 BACKOFF_S = (1, 2, 4, 8, 16, 30)
@@ -145,6 +147,9 @@ class Collector:
                 t.cancel()
             await asyncio.gather(*node_tasks, return_exceptions=True)
             return
+        for m in self.desk.markets:          # the watch block's ranges (hl_desk.watch): 1h and 1d candles from the start
+            for iv in START_INTERVALS:
+                self.candles.request(m, iv)
         tasks = node_tasks + [asyncio.create_task(self._ws_loop()), asyncio.create_task(self._snapshot_loop()),
                               asyncio.create_task(self._depth_loop())]
         await self._stop.wait()

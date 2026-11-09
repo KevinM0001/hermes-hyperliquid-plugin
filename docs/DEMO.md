@@ -17,5 +17,6 @@ Prerequisite for the chat step (0:58): the Hermes profile needs a configured inf
 Notes:
 - If a market is quiet, its trades status reads "unverified" and its flow values are unavailable. That is expected behavior, so show it rather than cutting it.
 - Panels marked "needs node mode" are out of the public-only build.
+- The Flow Deck also carries each market's watch block (Kevin's swing-context page: the 24h and 7d range position with the hatched middle, 15m/1h/4h flow, the 4h wave, taker per hour, the hour's top wallet and a verdict by his own rule); `hl_watch` answers it in chat. It is a description, not a forecast, and says when a window is incomplete or a range's candles are still loading.
 - In node mode (outside this script), wait at least 10 s after pressing Start before opening the node ladder: until then its "last 10 s" columns show 0 instead of "not measured yet" (a known issue, deferred).
 - The chart's interval buttons (1m to 1d) show the venue's own candle history; its last candle is in progress and reads "unverified, received N s ago" (its updates carry no source time), so say that rather than calling it live.

@@ -18,7 +18,7 @@ title: Hyperliquid Desk
 known_issues:
   - Node panels need a node feed (the engine's local socket or a relay) set in node_feed; without one they show "needs node mode" and public mode works as before.
 capabilities:
-  provides_tools: [hl_market, hl_flow, hl_context, hl_status, hl_alerts, hl_wallets, hl_candles, hl_structure, node_status, node_book, node_stops]
+  provides_tools: [hl_market, hl_flow, hl_context, hl_status, hl_alerts, hl_wallets, hl_candles, hl_structure, hl_watch, node_status, node_book, node_stops]
   provides_hooks: []
   provides_middleware: []
   requires_env: []
