@@ -7,7 +7,7 @@ activeAssetCtx). It never touches the exchange endpoint.
 
 It records what the collector itself uses: on the websocket, the fast
 5-level book and the 20-level book at full precision, trades, bbo and
-activeAssetCtx; over the info endpoint, l2Book with nSigFigs 4 and 3 every
+activeAssetCtx; over the info endpoint, l2Book with nSigFigs 4, 3 and 2 every
 5 seconds. Each record stores the local receive time (wall clock ms and
 monotonic ns) and a connection number. The script closes and reopens the
 socket once, so the fixture holds a real reconnect.
@@ -30,7 +30,7 @@ import websockets
 INFO_URL = "https://api.hyperliquid.xyz/info"
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 COINS = ["BTC", "HYPE", "xyz:SP500", "xyz:XYZ100"]
-POLL_SIG_FIGS = [4, 3]
+POLL_SIG_FIGS = [4, 3, 2]
 POLL_EVERY_S = 5.0
 
 

@@ -239,7 +239,7 @@ class Collector:
         while not self._stop.is_set():
             if self.desk.link == "connected":
                 for coin in list(self.desk.markets):
-                    for nsf in (4, 3):
+                    for nsf in (4, 3, 2):
                         body = {"type": "l2Book", "coin": coin, "nSigFigs": nsf}
                         try:
                             resp = await asyncio.to_thread(info_client.post_info, self.cfg.info_url, body, 10.0)

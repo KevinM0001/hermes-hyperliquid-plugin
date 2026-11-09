@@ -9,7 +9,8 @@ that field is withheld exactly as the build withholds it (null with the reason),
 
 - book_fast: the top of book (best bid and ask, mid, spread) and its price lines;
 - book_full: the ladder, its largest-level price lines, and the exact band depth and observed depth built on it;
-- book_sf4, book_sf3: the approximate band depth and observed depth built on them;
+- book_sf4, book_sf3: the approximate band depth and observed depth built on them, and their grouped ladders
+  (book.ladders, withheld whole); book_sf2: its grouped ladder;
 - trades: the flow values, the CVD buckets' values, the large-print count, the Flow Deck card's numbers and regime,
   and the wallet panels;
 - ctx: the context values and their price lines (never fresh in practice: activeAssetCtx has no source time).
@@ -23,7 +24,7 @@ from __future__ import annotations
 
 from .util import na
 
-BOOK_LABEL = {"book_full": "full precision", "book_sf4": "nSigFigs=4", "book_sf3": "nSigFigs=3"}
+BOOK_LABEL = {"book_full": "full precision", "book_sf4": "nSigFigs=4", "book_sf3": "nSigFigs=3", "book_sf2": "nSigFigs=2"}
 CARD_NUMBERS = ("move_bps", "net_flow_usd", "volume_usd", "impact", "pressure", "trades", "accounts", "top_wallet")
 
 
@@ -86,6 +87,21 @@ def withheld_card(card: dict, reason: str) -> dict:
     return out
 
 
+def _age_ladders(ladders: dict, fr: dict, why: dict) -> dict:
+    """book.ladders re-judged: a grouped ladder whose book has lapsed is withheld whole with the reason (never a stale
+    grouped ladder, exactly as the build withholds one); the others carry their book's status as of now."""
+    out = dict(ladders)
+    for key, label in BOOK_LABEL.items():
+        entry = ladders.get(label)
+        if not isinstance(entry, dict):
+            continue
+        if key in why:
+            out[label] = {"reason": why[key]}
+        elif "freshness" in entry and isinstance(fr.get(key), dict):
+            out[label] = dict(entry, freshness=fr[key])
+    return out
+
+
 def _aged_ages(f: dict, age_s: float) -> dict:
     out = dict(f, aged_by_s=round(age_s, 3))
     for a in ("progress_age_s", "source_age_s", "last_message_age_s"):
@@ -108,6 +124,8 @@ def age_market(ms: dict, age_s: float, when: str) -> dict:
             fr[k] = _aged_ages(f, age_s)
     if not lapses:
         out["freshness"] = fr
+        if isinstance((ms.get("book") or {}).get("ladders"), dict):     # each grouped ladder's status as of now
+            out["book"] = dict(ms["book"], ladders=_age_ladders(ms["book"]["ladders"], fr, {}))
         return out
     for k, (status, reason) in lapses.items():
         f = dict(_aged_ages(fr0[k], age_s), status=status, reason=f"{reason}, {when}")
@@ -127,6 +145,8 @@ def age_market(ms: dict, age_s: float, when: str) -> dict:
                           "largest": {"bid": None, "ask": None, "reason": why["book_full"]},
                           "api_count_note": (book.get("ladder") or {}).get("api_count_note")}
         drop_lines |= {"largest_bid_level": why["book_full"], "largest_ask_level": why["book_full"]}
+    if isinstance(book.get("ladders"), dict):
+        book["ladders"] = _age_ladders(book["ladders"], fr, why)
     lapsed_books = {BOOK_LABEL[k]: why[k] for k in BOOK_LABEL if k in why}
     if lapsed_books and isinstance(book.get("depth"), dict):
         depth = dict(book["depth"])

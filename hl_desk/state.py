@@ -24,6 +24,8 @@ CTX_KEYS = ("markPx", "oraclePx", "midPx", "funding", "openInterest", "dayNtlVlm
 WALLET_WINDOWS_MIN = (1, 5, 15)
 CANDLE_MS = 15_000
 CHART_SPAN_MS = 15 * 60 * 1000
+# The venue's coarser books, polled from the info endpoint, as grouped ladders (book.ladders): tracker, label, nSigFigs.
+GROUPED_BOOKS = (("book_sf4", "nSigFigs=4", 4), ("book_sf3", "nSigFigs=3", 3), ("book_sf2", "nSigFigs=2", 2))
 NODE_PANELS = ("ladder: stops, top order, age, change in 10 s", "waiting stops", "wall watch",
                "tape flags (stop, TWAP, liquidation)", "Flow Deck activity buckets (new long, cover, new short, exit)",
                "wallet activity split (new long, cover, new short, exit)")
@@ -49,6 +51,8 @@ class MarketState:
                                      "stale", "info l2Book time advances", source_max_age_s=cfg.book_source_max_age_s("sf4")),
             "book_sf3": FieldTracker("l2Book nSigFigs=3 (info)", "source_time_progress", cfg.book_max_age_s("sf3"),
                                      "stale", "info l2Book time advances", source_max_age_s=cfg.book_source_max_age_s("sf3")),
+            "book_sf2": FieldTracker("l2Book nSigFigs=2 (info)", "source_time_progress", cfg.book_max_age_s("sf2"),
+                                     "stale", "info l2Book time advances", source_max_age_s=cfg.book_source_max_age_s("sf2")),
             "trades": FieldTracker("trades", "source_time_progress", cfg.trades_max_age_s(market), "unverified",
                                    "a trade later than the trades watermark",
                                    "no trade for longer than the max age: a quiet market can't be told apart from a stalled feed",
@@ -128,7 +132,7 @@ class MarketState:
             self.offsets.append(wall_ms - t)
 
     def on_depth_poll(self, nsf: int, resp: dict, mono_ns: int, wall_ms: int) -> None:
-        kind = {4: "book_sf4", 3: "book_sf3"}[nsf]
+        kind = {4: "book_sf4", 3: "book_sf3", 2: "book_sf2"}[nsf]
         levels = resp.get("levels") or [[], []]
         t = resp.get("time")
         if t is None:
@@ -223,6 +227,23 @@ class MarketState:
         ladder = ({"bids": [], "asks": [], "reason": r_full or "no full book yet", "api_count_note": bk.API_COUNT_NOTE,
                    "largest": {"bid": None, "ask": None, "reason": r_full or "no full book yet"}}
                   if r_full or full is None else bk.ladder_rows(full["bids"], full["asks"], full.get("problems")) | {"book_time_ms": full["time_ms"]})
+        # The venue's coarser books as grouped ladders (the tab's grouping dropdown): rows by the same code as the
+        # ladder's, levels as the venue aggregated them (its bucket alignment isn't documented, so nothing is
+        # re-bucketed here). A book that isn't fresh is withheld whole with the reason, as at serving time
+        # (serving_public.age_market): never a stale grouped ladder.
+        ladders = {}
+        for key, label, nsf in GROUPED_BOOKS:
+            b = self.books.get(key)
+            r = reason_for(key)
+            if b is None or r:
+                ladders[label] = {"reason": r or "not received yet"}
+                continue
+            rows = bk.ladder_rows(b["bids"], b["asks"], b.get("problems"))
+            rows["largest"] = rows["largest"] | {
+                "by": ("the largest aggregate size (coin) among the returned levels of this grouped book on that side, ties "
+                       "to the level nearer the top; an aggregated level, never one order; the chart's largest-level line "
+                       "is the full-precision book's, not this one")}
+            ladders[label] = rows | {"book_time_ms": b["time_ms"], "nSigFigs": nsf, "freshness": dict(fr[key])}
         depth_books = []
         for kind, label in (("book_full", "full precision"), ("book_sf4", "nSigFigs=4"), ("book_sf3", "nSigFigs=3")):
             b = self.books.get(kind)
@@ -321,7 +342,7 @@ class MarketState:
         return {"market": self.market, "meta": self.meta, "provenance": prov, "freshness": fr,
                 "unavailable": unavailable,
                 "clock": self._clock(),
-                "book": {"top": top, "ladder": ladder,
+                "book": {"top": top, "ladder": ladder, "ladders": ladders,
                          "depth": {"bands": bk.depth_bands(depth_books[0], depth_books[1:]), "observed": observed,
                                    "note": ("exact band depth comes only from full-precision returned levels, and only where they "
                                             "reach the band edge on that side; aggregated nSigFigs books give a separately labeled "
