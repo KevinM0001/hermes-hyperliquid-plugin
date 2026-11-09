@@ -35,7 +35,9 @@ Also keep a manual override per market, and rank each live burst against the ref
 | `c0be2a068fdd7c17c237a7a446958ecfe0fa6046` | Fix for h1 review 1 B1 and B2: public statuses re-judged at serving (`hl_desk/serving_public.py`), and the tab ages what it shows the same way (`app.js` `ageShown`), withholding lapsed values in place |
 | `5dda388285da449f1aad3d8100b0b0bebc9c0122` | Follow-up after the browser rerun: statuses still fresh show their ages as of now |
 | `edc5a6c6e425931b2ac04dce775f488369a15d43` | Every status shows its ages as of now (final code) |
-| this commit | This report updated, `evidence/review-response-56c65e39edf8660a198f3deccb74682eaa21b5d8.md`, the official logs at `edc5a6c` (`evidence/logs/burst-calibration/`), and D1: README now names schema v1.2.0 (folded in at Kevin's request, Nov 9). No code. |
+| `5bcd1533b0a0c57cf94e0714c8ac72d7d2186e50` | The second evidence commit: the response to review 1, the logs at `edc5a6c`, and D1 (README names schema v1.2.0, at Kevin's request). Codex h1 review 2 reviewed it: REVISE, B1 to B3 blocking, D1 and D2 deferred. |
+| `29afff11eeecd55ba75f32fce64328876f9a1052` | Fix for h1 review 2 (final code): the withheld card in the build's own shape; the true median for walls and the clock offset; `levels.largest` and the skill's rule |
+| this commit | This report updated, `evidence/review-response-5bcd1533b0a0c57cf94e0714c8ac72d7d2186e50.md`, and the official logs at `29afff1`. No code. |
 
 - Author and committer of every commit: `KevinM0001 <210251245+KevinM0001@users.noreply.github.com>`. No other email appears in any commit object.
 - Nothing was pushed. `v1-public-btc` is still `593211d`. The review never creates or moves it.
@@ -118,30 +120,30 @@ The rank of a manual-threshold burst is still against the Nov 3 to 7 reference. 
 - `config unset` removed one market, and unsetting the last one removed the empty map;
 - the tab then showed the manual labels, and after unsetting all three, the automatic labels.
 
-## Official checks at `edc5a6c` (the final code; logs in `evidence/logs/burst-calibration/`)
+## Official checks at `29afff1` (the final code; logs in `evidence/logs/burst-calibration/`)
 
 | Check | Result | Log |
 | --- | --- | --- |
-| Tests, Python 3.14.9 | 293 passed, 0 skipped, 0 failed | `pytest-py3.14.log` |
-| Tests, Python 3.12.3 | 293 passed, 0 skipped, 0 failed | `pytest-py3.12.log` |
-| Dashboard bundle check | `dashboard/dist/index.js is up to date (1039091 bytes, sha256 33bbbd7e…)` | `build-dashboard-check.log` |
+| Tests, Python 3.14.9 | 297 passed, 0 skipped, 0 failed | `pytest-py3.14.log` |
+| Tests, Python 3.12.3 | 297 passed, 0 skipped, 0 failed | `pytest-py3.12.log` |
+| Dashboard bundle check | `dashboard/dist/index.js is up to date (1039672 bytes, sha256 634fb7ab…)` | `build-dashboard-check.log` |
 | `plugins doctor . --ci` (Hermes v0.23.0) | runtime discovery, manifest parsing, import and registration passed; 9 tools | `plugins-doctor.log` |
 | `plugins validate . --install-deps` | Validation passed | `plugins-validate.log` |
 
 - **Nothing skipped.** `HL_DECK_SOURCE`, `HL_DECK_LIVE_LOG` and `BURST_CALIBRATION_SOURCE` were set, so the hl_deck checks and the check of the shipped files against the calibration run ran.
-- **Where they ran.** Hermes ran from its own install, with an isolated home under `~/contest/engine-run/burst-cal/hermes-home`. That home got its own `hermes pm install` dependency environment, so no other Hermes home was written. The tests ran from the clean checkout at `edc5a6c`; the run checked HEAD and an empty `git status` before and after. The only later change is the README fix (D1) in the evidence commit, which no test reads.
+- **Where they ran.** Hermes ran from its own install, with an isolated home under `~/contest/engine-run/burst-cal/hermes-home`. That home got its own `hermes pm install` dependency environment, so no other Hermes home was written. The tests ran from the clean checkout at `29afff1`; the run checked HEAD and an empty `git status` before and after.
 - **An earlier full run** (at `cc6507a`) had 287 passed and 1 failed on both Pythons, with the same failure each time: `tests/test_review2.py::test_long_data_dir_gets_a_short_private_socket` (`assert (105 <= 100)`).
   - That test stands in for the system temp folder with `tempfile.mkdtemp`, which follows `TMPDIR`. The in-scope `TMPDIR` used then made the socket path 105 characters long, against the 100-character limit.
   - With a shorter `TMPDIR`, the same commit passed all 288 on Python 3.14. The runs above used the shorter one.
   - Logs: `pytest-py3.14-cc6507a-long-tmpdir.log` and `pytest-py3.12-cc6507a-long-tmpdir.log`.
   - The failed test left two empty temp folders under `~/contest/engine-run/burst-cal/tmp`; they were left in place.
 - **Log substitutions.** The committed logs are copies with the home path written as `~`, the user name in pytest's temp folder as `<user>`, and the paths given for `hl_deck.py` and the deck's live log as `<hl_deck.py>` and `<a copy of the deck live log>`. The originals are in `~/contest/engine-run/burst-cal/official/`.
-- **Tab-check logs.** The independent burst count (`tab-independent-check.log`), the tab text from the burst cases (`tab-*.txt`), the live and recorded observer samples (`live-run-*.{log,jsonl}`, `recorded-observer-*`) and the B2 browser reproduction (`repro-b2-edc5a6c.log`) are in the same folder. The screenshots stay in `~/contest/engine-run/burst-cal/tab/`, because they show local paths.
+- **Tab-check logs.** The independent burst count (`tab-independent-check.log`), the tab text from the burst cases (`tab-*.txt`), the live and recorded observer samples (`live-run-*.{log,jsonl}`, `recorded-observer-*`) and the browser reproductions (`repro-b2-edc5a6c.log` for review 1's B2, `repro-b1-29afff1.log` for review 2's B1) are in the same folder. The screenshots stay in `~/contest/engine-run/burst-cal/tab/`, because they show local paths.
 
 ## Tab check (offline, recorded node data only)
 
 - **Setup.**
-  - The plugin at `70c2553`, installed by `git archive` into the isolated Hermes home, with the dashboard started with `--isolated`. Case (a), and the recorded-feed flicker check, were run again at `edc5a6c` (the final code) with the same results (`tab-edc5a6c-a-manual.txt`, `recorded-observer-edc5a6c.log`). Case (c) was last run at `cc6507a`; the label code hasn't changed since.
+  - The plugin at `70c2553`, installed by `git archive` into the isolated Hermes home, with the dashboard started with `--isolated`. Case (a), and the recorded-feed flicker check, were run again at `edc5a6c` and at `29afff1` (the final code) with the same results (`tab-29afff1-a-manual.txt`, `recorded-observer-29afff1.log`). Case (c) was last run at `cc6507a`; the label code hasn't changed since.
   - The node feed was a local stand-in serving a recorded tap at recorded speed: Part A's follow test, Nov 7, 20:47:56 to 20:53:13 UTC, all four markets, verbatim feed lines. Its blocks are from Nov 7, so node freshness reads BEHIND.
   - No live node data was read. No runner, forwarder or service was started.
   - Screenshots and logs are in `~/contest/engine-run/burst-cal/tab/`. They aren't committed, because they show local paths.
@@ -262,6 +264,26 @@ Codex reviewed `56c65e3`: REVISE, with two blocking findings and two deferred. A
   - the aborted polls were said in the delay bar.
 - Node mode on the recorded feed was checked again at `edc5a6c`: no empty views, and the same 10 bursts and ranks.
 
+## Codex h1 review 2 (REVISE) and the fix
+
+Codex reviewed `5bcd153`: REVISE, with three blocking findings and two deferred. All are answered in `evidence/review-response-5bcd1533b0a0c57cf94e0714c8ac72d7d2186e50.md`.
+- **B1.** When trades lapsed on a card with a confirmed regime, the withheld card carried the regime object where its name belongs. React threw and the page went blank.
+- **B2.** Node walls took the upper-middle value as the median.
+- **B3.** The demo chat named a smaller ask level as the largest.
+- **D1 (deferred).** At the source-age boundary, the serving-time label reads "delayed" where a new build reads "unverified". Both withhold the values.
+- **D2 (deferred).** The demo's timing.
+
+**The fixes** (`29afff1`):
+- The withheld card, at serving and in the tab, is now exactly the build's own (`DeckEngine.card(reason)`).
+- `util.median` is the true median, used for walls and for the clock offset, which had the same issue.
+- `hl_market`'s `levels.largest` gives the largest returned level per side by the chart's own rule, and the skill names a largest level only from it.
+- Tests: `tests/test_h1_review2.py`.
+
+**Checks.**
+- A headless-Chrome rerun of Codex's B1 reproduction, public mode: after BTC confirmed ABSORBING, polls were aborted for 40 s. The card turned unavailable at 30 s with "last confirmed: ABSORBING since 01:18:30Z as of tick 01:18:30Z", the page text stayed at about 19,000 characters, and there were no exceptions and no empty view.
+- Node mode on the recorded feed at `29afff1`: no empty views, the same 10 bursts and ranks, and no exceptions.
+- The chat rehearsal (B3) needs the review's provider key and is left to the review.
+
 ## Pre-review (handoff-check) and what changed
 
 Before the evidence commit, the handoff-check agent read `3b2764a` against Kevin's task, his choice A and PLAN.md. Its findings and what was done:
@@ -286,4 +308,4 @@ Before the evidence commit, the handoff-check agent read `3b2764a` against Kevin
 - **Displayed times.** Node bursts are timed by their block time. The tab shows UTC times without a date, so in the tab check the Nov 7 bursts appear as 20:48 to 20:51 next to Nov 8 regime changes.
 - **Versions.** The plugin version stays 1.0.0, as Part B left it; versioning the release is Kevin's call. The schema is 1.2.0 (additive: `alerts.burst.node_mode`, and the node-mode part of `alerts.burst.config`).
 - **Live run.** The live run was at `138e22a`, before the h1 review 1 fixes. Those fixes don't touch the node delay that the run exercised; they change how the tab and the tools age a snapshot after it is built.
-- **Superseded runs.** Official runs were started at `969978b`, `844d9aa`, `f6115cc`, `3b2764a`, `cc6507a` (finished: 287 passed and 1 failed on both Pythons, the failure from an over-long temp path, see below) `138e22a`, `70c2553` (finished: 289 passed on both Pythons; it was the official run for the first evidence commit), `c0be2a0` and `5dda388`, and stopped when the code changed, except where noted. Their partial logs are under `~/contest/engine-run/burst-cal/official/`. Doctor, validate and the tab checks were also repeated at `3b2764a`, `cc6507a`, `138e22a` and `70c2553`. Only the run at `edc5a6c` is the official one.
+- **Superseded runs.** Official runs were started at `969978b`, `844d9aa`, `f6115cc`, `3b2764a`, `cc6507a` (finished: 287 passed and 1 failed on both Pythons, the failure from an over-long temp path, see below) `138e22a`, `70c2553` (finished: 289 passed on both Pythons; it was the official run for the first evidence commit), `c0be2a0` and `5dda388`, and stopped when the code changed, except where noted. Their partial logs are under `~/contest/engine-run/burst-cal/official/`. Doctor, validate and the tab checks were also repeated at `3b2764a`, `cc6507a`, `138e22a`, `70c2553` and `edc5a6c` (the official run for the second evidence commit: 293 passed on both Pythons). Only the run at `29afff1` is the official one.

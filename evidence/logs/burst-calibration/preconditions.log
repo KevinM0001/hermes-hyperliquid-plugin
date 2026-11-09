@@ -1,11 +1,11 @@
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD
-edc5a6c6e425931b2ac04dce775f488369a15d43
+29afff11eeecd55ba75f32fce64328876f9a1052
 [exit code: 0]
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git status --porcelain
 [exit code: 0]
 # post-check (after pytest 3.14, pytest 3.12 and build_dashboard --check finished)
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD
-edc5a6c6e425931b2ac04dce775f488369a15d43
+29afff11eeecd55ba75f32fce64328876f9a1052
 [exit code: 0]
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git status --porcelain
 [exit code: 0]
