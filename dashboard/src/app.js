@@ -757,8 +757,8 @@
         h("b", null, "Levels are aggregated by price: "), "a level is never an individual order. ", noteText,
         lad.aggregated === true ? " (aggregated: true)" : ""),
       h("p", null, props.nodeOn
-        ? "The order-level columns (waiting stops, largest order, oldest order, 10 s change) are in the Node ladder (L4) panel above; node levels are never mixed into these aggregated public levels."
-        : "The order-level columns (waiting stops, largest order, oldest order, 10 s change) need the node's order-level book; see the node mode banner above."));
+        ? "The order-level columns (waiting stops, largest order, oldest order, 10 s change) are in the Node ladder (L4) panel below; node levels are never mixed into these aggregated public levels."
+        : "The order-level columns (waiting stops, largest order, oldest order, 10 s change) need the node's order-level book; see the node mode banner below."));
 
     return h(Panel, {
       id: "ladder", className: "hd-p-ladder", title: "Price ladder (aggregated levels)", label: "Aggregated price ladder",
@@ -901,8 +901,10 @@
     return h(Panel, {
       id: "chart", className: "hd-p-chart", title: "Price chart",
       label: "Price chart (in the mockup's heatmap position)",
-      why: h("p", null, (isNum(chart.candle_s) ? chart.candle_s + " s candles" : "Candles") + " from public trades, times in UTC. " +
-        "Best bid and ask, mark, oracle and the largest returned levels are drawn as price lines; a gap marker sits on the first candle after a coverage gap, and no candle spans a gap."),
+      why: h(Fragment, null,
+        h("p", null, (isNum(chart.candle_s) ? chart.candle_s + " s candles" : "Candles") + " from public trades, times in UTC. " +
+          "Best bid and ask, mark, oracle and the largest returned levels are drawn as price lines; a gap marker sits on the first candle after a coverage gap, and no candle spans a gap."),
+        chart.candles_note ? h("p", null, "The snapshot's note: " + chart.candles_note + ".") : null),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" }),
       status: h(Fragment, null,
         h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
@@ -3513,17 +3515,19 @@
         pollNote: pollErr && resp ? "Last poll failed at " + localClock(pollErr.at) + " (local): " + pollErr.message +
           "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null
       }),
+      // The market row, directly under the summary: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
+      m ? h("div", { className: "hd-row hd-row-m" },
+        h(PriceChart, { m: m }),
+        h(Ladder, { m: m, nodeOn: non })) : null,
       m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market }) : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,
       m ? h(Fragment, null,
-        h(SectionHead, { title: "Book", note: non ? "the node's order-level book first, then the public aggregated book" : "the public aggregated book: ladder, chart and depth" }),
+        h(SectionHead, { title: "Book", note: non ? "the node's order-level book, then the public book's observed depth" : "the public book's observed depth (the chart and ladder are above)" }),
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(StopsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(ThinningPanel, { v: nlive })) : null,
         h("div", { className: "hd-row hd-row-a" },
-          h(Ladder, { m: m, nodeOn: non }),
-          h(PriceChart, { m: m }),
           h(DepthPanel, { m: m })),
         h(SectionHead, { title: "Flow", note: "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
         h("div", { className: "hd-row hd-row-b" },
