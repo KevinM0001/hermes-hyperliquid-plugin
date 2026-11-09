@@ -3256,6 +3256,95 @@
     answer ? h("div", { className: "hd-hs-text" }, answer) : null);
   }
 
+  // ---- Watch (Kevin's swing-context page, computed by the plugin as deck.<market>.watch; schema 1.3.0): one row per
+  // market under the summary: the 24h range track with the hatched middle 30 %, the 7d position, flow imbalance over
+  // 15m, 1h and 4h, the 4h wave, taker per hour, the top wallet over the hour and the verdict by his own rule. Every
+  // number is the block's; a part the plugin withheld shows its reason. Click a row to switch the tab to that market.
+  const WATCH_TONE = { warning: "warn", good: "ok", critical: "bad", serious: "info" };
+  function imbBar(v) {
+    if (!isNum(v)) return h("span", { className: "hd-wbar" });
+    const pct = Math.min(50, Math.abs(v) * 50);
+    const left = v > 0 ? 50 : 50 - pct;
+    return h("span", { className: "hd-wbar", "aria-hidden": "true" },
+      h("i", { className: v > 0 ? "hd-bg-bid" : "hd-bg-ask", style: { left: left + "%", width: pct + "%" } }));
+  }
+  function watchKv(label, value, title) {
+    return h("div", { className: "hd-wkv", title: title || undefined }, h("span", { className: "hd-wk" }, label), h("span", { className: "hd-wv" }, value));
+  }
+  function flowCell(label, f, reason) {
+    if (!f) return watchKv(label, h("span", { className: "hd-dim" }, "unavailable"), reason || "");
+    const imb = f.imbalance;
+    const title = [f.note, isNum(f.buy_usd) ? "buy " + usd(f.buy_usd) + " / sell " + usd(f.sell_usd) : null, f.gap_inside ? "a gap inside the window" : null].filter(Boolean).join(" \u00b7 ");
+    return watchKv(label + (f.complete === false ? " (" + f.minutes_covered + "/" + f.minutes_wanted + " min)" : ""),
+      h(Fragment, null, imbBar(imb), isNum(imb) ? h("b", { className: imb > 0 ? "hd-bid" : (imb < 0 ? "hd-ask" : "") }, (imb > 0 ? "+" : "") + num(imb, 2, 2))
+        : h("span", { className: "hd-dim" }, f.imbalance_reason || f.reason || "no trades")), title);
+  }
+  function WatchRow(props) {
+    const w = props.w;
+    const name = props.name;
+    if (!w) {
+      return h("div", { className: "hd-wrow" }, h("span", { className: "hd-wsym" }, name), h("span", { className: "hd-dim" }, " no watch block in this snapshot"));
+    }
+    const v = w.verdict;
+    const r24 = w.range_24h || {};
+    const r7 = w.range_7d || {};
+    const ready24 = r24.state === "ready";
+    const pos = ready24 && isNum(r24.position_pct) ? r24.position_pct : null;
+    const clamped = pos === null ? null : Math.max(0, Math.min(100, pos));
+    const tw = w.top_wallet_1h;
+    const tph = w.taker_per_hour;
+    return h("div", { className: cx("hd-wrow", props.selected && "hd-wrow-on"), role: "button", tabIndex: 0, onClick: props.onSelect,
+      onKeyDown: function (e) { if (e.key === "Enter" || e.key === " ") props.onSelect(); } },
+      h("div", { className: "hd-whead" },
+        h("span", { className: "hd-wsym" }, name),
+        h("span", { className: "hd-num hd-wpx", title: w.price_label || "" }, isNum(w.price) ? px(w.price) : h("span", { className: "hd-dim" }, w.price_reason ? "price unavailable" : "")),
+        v ? h("span", { className: "hd-chip hd-tone-" + (WATCH_TONE[v.tone] || "dim"), title: v.rule || "" }, v.label)
+          : h("span", { className: "hd-chip hd-tone-dim", title: w.verdict_reason || "" }, "no verdict"),
+        h("span", { className: "hd-wwhy" }, v ? v.text : (w.verdict_reason || ""))),
+      h("div", { className: "hd-wtrack", title: ready24
+        ? "24h range " + px(r24.low) + " to " + px(r24.high) + (pos !== null ? " \u00b7 position " + num(pos, 0) + "%" : "") + (r24.outside ? " \u00b7 outside: " + r24.outside : "") + (r24.position_reason ? " \u00b7 " + r24.position_reason : "")
+        : "24h range " + (r24.state || "unavailable") + (r24.reason ? ": " + r24.reason : "") },
+        h("div", { className: "hd-wzone" }),
+        clamped !== null ? h("div", { className: "hd-wmark", style: { left: "calc(" + clamped.toFixed(1) + "% - 2px)" } }) : null),
+      h("div", { className: "hd-wends" },
+        h("span", null, ready24 ? px(r24.low) : ""),
+        h("span", { className: "hd-dim" }, ready24 ? "24h range \u00b7 hatched = middle" : "24h range: " + (r24.reason || r24.state || "unavailable")),
+        h("span", null, ready24 ? px(r24.high) : "")),
+      h("div", { className: "hd-wkvs" },
+        watchKv("7d position", r7.state === "ready" && isNum(r7.position_pct) ? num(r7.position_pct, 0) + "%" : h("span", { className: "hd-dim" }, r7.state === "ready" ? (r7.position_reason || "unavailable") : (r7.state || "unavailable")),
+          r7.state === "ready" ? "7d range " + px(r7.low) + " to " + px(r7.high) + (r7.from ? " (from " + r7.from + " candles)" : "") : (r7.reason || "")),
+        flowCell("15m flow", w.flow && w.flow["15m"], w.flow_reason), flowCell("1h flow", w.flow && w.flow["1h"], w.flow_reason), flowCell("4h flow", w.flow && w.flow["4h"], w.flow_reason),
+        watchKv("4h wave", w.wave && isNum(w.wave.delta) ? w.wave.state + " (" + (w.wave.delta > 0 ? "+" : "") + num(w.wave.delta, 2, 2) + ")" : h("span", { className: "hd-dim" }, w.wave_reason || "not measurable yet"),
+          w.wave ? (w.wave.rule || "") : (w.wave_reason || "")),
+        watchKv("taker/hr", tph && isNum(tph.per_hour_usd) ? usd(tph.per_hour_usd) + (isNum(tph.hours_covered) && tph.hours_covered < 4
+            ? " (" + (tph.hours_covered < 1 && isNum(tph.minutes_covered) ? intf(tph.minutes_covered) + " min" : num(tph.hours_covered, 1, 1) + " h") + " covered)" : "")
+          : h("span", { className: "hd-dim" }, w.taker_per_hour_reason || "unavailable"),
+          tph ? (tph.method || "") : (w.taker_per_hour_reason || "")),
+        watchKv("top wallet, 1h", tw && isNum(tw.share_pct) ? h(Fragment, null, num(tw.share_pct, 0) + "% ", tw.address ? h(Addr, { address: tw.address }) : null) : h("span", { className: "hd-dim" }, w.top_wallet_1h_reason || "unavailable"),
+          tw ? (tw.label || "") : (w.top_wallet_1h_reason || ""))));
+  }
+  function WatchStrip(props) {
+    const r = props.resp;
+    const names = (r.markets || []).filter(function (n) { return r.deck && r.deck[n]; });
+    if (!names.some(function (n) { return !!r.deck[n].watch; })) return null;   // an older plugin build: nothing to show
+    const chosen = g(r, "market", "market");
+    return h(Panel, {
+      id: "watch", className: "hd-p-watch", title: "Watch \u00b7 all markets", label: "Swing context, all markets",
+      why: h("p", null, "Kevin's swing-context page, computed by the plugin: where the price sits between the 24h low and high (the hatched band is " +
+        "the middle 30 %, the condition he identified as his loss-maker), the 7d position, flow imbalance over 15m, 1h and 4h ((taker buys - " +
+        "taker sells) / total, so +1 is all buying), the 4h wave (the second half of the last four hours against the first: negative means " +
+        "the push is losing force), taker notional per hour, and the top wallet's share of the hour's aggressive flow. The verdict is his own " +
+        "rule: MIDDLE between 35 and 65 %, LOW or HIGH outside it, FADING or BUILDING by the wave. Descriptions, not signals. Every window says " +
+        "how many minutes it covers; the ranges use closed venue candles only; a part the plugin withholds shows its reason. Click a row to " +
+        "switch the tab to that market."),
+      badges: h(Prov, { mode: r.mode, source: g(r, "market", "provenance", "source"), what: "trades + candles" })
+    },
+    h("div", { className: "hd-wrows" }, names.map(function (n) {
+      return h(WatchRow, { key: n, name: n, w: r.deck[n].watch, selected: n === chosen, onSelect: function () { props.onMarket(n); } });
+    })),
+    h("div", { className: "hd-note" }, "Not a forecast: descriptions by Kevin's own rule, from the plugin's counted trades and the venue's closed candles."));
+  }
+
   // ------------------------------------------------------------------ wallets
 
   function WalletTable(props) {
@@ -3662,7 +3751,54 @@
         });
         out.wallets = w;
       }
+      if (ms.deck && ms.deck.watch && (why.trades || why.book_fast)) {
+        const dk = out.deck || ms.deck;
+        out.deck = Object.assign({}, dk, { watch: ageWatch(ms.deck.watch, why.trades || null, why.book_fast || null) });
+      }
       return out;
+    }
+    // The watch block (schema 1.3.0, deck.<market>.watch): the same withholding as hl_desk.watch.withhold, at the
+    // same lapses the serving code uses (trades for the flow parts, the price's own source for the position).
+    function watchVerdict(pos, delta) {
+      if (pos >= 35 && pos <= 65) return { label: "MIDDLE", tone: "warning", text: "mid-range: the condition you said costs you money" };
+      const edge = pos < 35 ? "low" : "high";
+      if (delta === null) return { label: edge.toUpperCase(), tone: "serious", text: "at the " + edge + " of range, wave not measurable yet" };
+      if (delta < -0.05) return { label: edge.toUpperCase() + " + FADING", tone: "good", text: "at the " + edge + " of range and the 4h wave is decelerating" };
+      if (delta > 0.05) return { label: edge.toUpperCase() + " + BUILDING", tone: "critical", text: "at the " + edge + " of range but the wave is still accelerating" };
+      return { label: edge.toUpperCase(), tone: "serious", text: "at the " + edge + " of range, wave flat" };
+    }
+    function ageWatch(w, tr, bk) {
+      if (!w || typeof w !== "object") return w;
+      const o = Object.assign({}, w);
+      let changed = false;
+      if (tr) {
+        ["flow", "wave", "taker_per_hour", "top_wallet_1h"].forEach(function (k) {
+          if (o[k] !== null && o[k] !== undefined) { o[k] = null; o[k + "_reason"] = tr; changed = true; }
+        });
+      }
+      const priceReason = (bk && w.price_from === "book_fast") ? bk : ((tr && w.price_from === "last_trade") ? tr : null);
+      if (priceReason && w.price !== null && w.price !== undefined) {
+        o.price = null; o.price_reason = priceReason; changed = true;
+        ["range_24h", "range_7d"].forEach(function (k) {
+          const rg = o[k];
+          if (rg && rg.state === "ready") o[k] = Object.assign({}, rg, { position_pct: null, position_reason: priceReason, outside: null, zone: null });
+        });
+      }
+      if (!changed) return w;
+      const r24 = o.range_24h || {};
+      const pos = r24.state === "ready" && NUM(r24.position_pct) ? r24.position_pct : null;
+      if (pos === null) {
+        const whyNot = r24.state !== "ready" ? "the 24h range is " + (r24.state || "unavailable") + ": " + (r24.reason || "") : (r24.position_reason || "no 24h range");
+        o.verdict = null; o.verdict_reason = "needs the 24h position: " + whyNot;
+      } else {
+        const delta = o.wave && NUM(o.wave.delta) ? o.wave.delta : null;
+        const v = watchVerdict(pos, delta);
+        o.verdict = Object.assign(v, { position_pct: pos, wave_delta: delta, wave_state: o.wave ? o.wave.state : null,
+          rule: (w.verdict && w.verdict.rule) || "", kind: (w.verdict && w.verdict.kind) || "a description by Kevin's own rule, not a signal or a forecast" });
+        if (delta === null) o.verdict.wave_reason = o.wave_reason || "no wave";
+        delete o.verdict_reason;
+      }
+      return o;
     }
     // Context values served marked unverified (schema 1.3.0: activeAssetCtx carries no source timestamp, so the
     // plugin serves the value with status "unverified" and received_age_s): on screen the receipt age grows, and
@@ -3740,7 +3876,9 @@
         }
         if (l) {
           const tf = agedFresh(x.trades_freshness, l);
-          x = Object.assign({}, x, { trades_freshness: tf, card: x.card ? withheldCard(x.card, tf.field + " " + tf.status + ": " + tf.reason) : x.card });
+          const tr = tf.field + " " + tf.status + ": " + tf.reason;
+          x = Object.assign({}, x, { trades_freshness: tf, card: x.card ? withheldCard(x.card, tr) : x.card });
+          if (x.watch) x = Object.assign({}, x, { watch: ageWatch(x.watch, tr, null) });
         }
         d[k] = x;
       });
@@ -4141,6 +4279,8 @@
           "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null
       }),
       m ? h(Glance, { m: m, resp: resp, onOpen: openWallet }) : null,
+      // Kevin's swing-context rows for every market (Watch), then the selected market's Flow Deck card.
+      m ? h(WatchStrip, { resp: resp, onMarket: chooseMarket }) : null,
       // The selected market's Flow Deck card under the summary (Kevin, Nov 9), where the unavailable list and the
       // delay bar were; the delay counter is in the node strip (node mode), the aging note on the header's snapshot line.
       m ? h(DeckHero, { resp: resp }) : null,
