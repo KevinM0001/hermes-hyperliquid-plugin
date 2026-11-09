@@ -29,7 +29,8 @@ CHART_SPAN_MS = 15 * 60 * 1000
 GROUPED_BOOKS = (("book_sf4", "nSigFigs=4", 4), ("book_sf3", "nSigFigs=3", 3), ("book_sf2", "nSigFigs=2", 2))
 NODE_PANELS = ("ladder: stops, top order, age, change in 10 s", "waiting stops", "wall watch",
                "tape flags (stop, TWAP, liquidation)", "Flow Deck activity buckets (new long, cover, new short, exit)",
-               "wallet activity split (new long, cover, new short, exit)")
+               "wallet activity split (new long, cover, new short, exit)",
+               "order flow map (taker flow by risk opened, closed or flipped, eight 15-minute buckets)")
 SOURCES = {
     "LIVE": "Hyperliquid public websocket wss://api.hyperliquid.xyz/ws and info endpoint https://api.hyperliquid.xyz/info",
     "REPLAY": "recorded Hyperliquid public data replayed from a file",

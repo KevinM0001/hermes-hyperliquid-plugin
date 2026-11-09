@@ -78,6 +78,16 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
     if "tape" in out and fl.get("state") not in USABLE and (view["families"].get("flow") or {}).get("state") in USABLE:
         out["tape"] = {"available": False, "reason": f"node fills {fl.get('state')}: {fl.get('reason')}",
                        "coverage": (view.get("tape") or {}).get("coverage")}
+    fm = view.get("flow_map")
+    if isinstance(fm, dict) and fl:
+        if fm.get("available") and fl.get("state") not in USABLE:
+            # The Order Flow Map, withheld like the tape: its buckets, totals, account shares and readings go; what
+            # stays is the window it was built over, its provenance and the lapsed status with the reason.
+            out["flow_map"] = {"available": False, "reason": f"node fills {fl.get('state')}: {fl.get('reason')}",
+                               "stream": "node fills", "provenance": fm.get("provenance"), "freshness": fl,
+                               "window": fm.get("window")}
+        else:
+            out["flow_map"] = dict(fm, freshness=fl)        # still usable: its own freshness carries the served age
     if isinstance(view.get("liquidation_events"), list):
         out["liquidation_events"] = [dict(ev, freshness=aged_status(ev.get("freshness"), age_ms))
                                      for ev in view["liquidation_events"]]

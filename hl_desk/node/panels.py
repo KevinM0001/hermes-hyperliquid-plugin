@@ -17,6 +17,7 @@ from decimal import Decimal
 
 from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
+from .flow_map import FlowMapState, build as build_flow_map
 from ..util import median
 from .proto import fmt, num
 
@@ -61,6 +62,16 @@ def state_of(mf) -> PanelState:
     return ps
 
 
+def flow_map_state_of(mf) -> FlowMapState:
+    """The Order Flow Map's accumulator of this market partition. Unlike PanelState it survives a gap (the hole is
+    stated as uncovered time, nothing is filled in); a new producer or replay session replaces the partition and
+    drops it with everything else."""
+    st = getattr(mf, "flow_map", None)
+    if st is None:
+        st = mf.flow_map = FlowMapState()
+    return st
+
+
 def usd(d: Decimal | None) -> float | None:
     return None if d is None else round(float(d), 2)
 
@@ -75,6 +86,7 @@ def on_client_event(ev: dict, opts: dict) -> None:
     ps = state_of(mf)
     if ev["type"] == "watermark":
         t = ev.get("block_time_ms")
+        flow_map_state_of(mf).observe(mf.flow, t)
         # The liquidation window moves with every block, executions or not: a quiet market's window empties and the
         # rule re-arms at its watermarks (a watermark adds no fills, so it never fires one).
         _liquidation_bursts(mf, ps, opts, t)
@@ -84,6 +96,9 @@ def on_client_event(ev: dict, opts: dict) -> None:
             _sample_history(mf, ps, t, client)
             _track_walls(mf, ps, t)
     elif ev["type"] == "execs":
+        fm = flow_map_state_of(mf)
+        fm.observe(mf.flow, ev.get("block_time_ms"))
+        fm.add(mf.flow, ev.get("execs") or [], ev.get("block_time_ms"))
         _liquidation_bursts(mf, ps, opts, ev.get("block_time_ms"))
 
 
@@ -446,6 +461,14 @@ def tape(mf, rows: int = TAPE_ROWS) -> list[dict]:
     return out
 
 
+def flow_map(mf, prov: dict, flow_status: dict) -> dict:
+    """The Order Flow Map (hl_desk/node/flow_map.py): taker flow over eight 15-minute buckets split by risk opened,
+    closed or flipped, with its readings, from this partition's node fills; with provenance and the flow family's
+    freshness as judged for this view."""
+    return build_flow_map(getattr(mf, "flow_map", None)) | {"stream": "node fills", "provenance": prov,
+                                                            "freshness": flow_status}
+
+
 def thinning(mf) -> dict:
     """Step 18: depth per 0.5% band out to 10% from the current price, from the full book."""
     book: NodeBook = mf.book
@@ -544,9 +567,12 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
     fst = fam["flow"]
     if fst["state"] in ("LIVE", "REPLAY"):
         base["tape"] = {"rows": tape(mf), "coverage": mf.flow.coverage()}
+        base["flow_map"] = flow_map(mf, base["provenance"], fst)
     else:
         base["tape"] = {"available": False, "reason": f"node fills {fst['state']}: {fst.get('reason')}",
                         "coverage": mf.flow.coverage()}
+        base["flow_map"] = {"available": False, "reason": f"node fills {fst['state']}: {fst.get('reason')}",
+                            "stream": "node fills", "provenance": base["provenance"], "freshness": fst}
     base["liquidation_events"] = [ev | {"provenance": base["provenance"], "freshness": fam["flow"]}
                                   for ev in ps.liq_events]
     base["recent_events"] = list(mf.events)[:10]
