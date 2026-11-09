@@ -5,6 +5,11 @@ Headless Chrome 156 (`--headless=new`, 1440 px wide, device scale 1) on an isola
 copied from this clone). The machine's own Hermes and settings were not touched; the isolated dashboard's theme was
 switched to Mono for two shots and set back. No run touched the node, production or the contest runner.
 
+**Where the screenshots are.** The PNG files these tables describe are kept outside the repository: they show the
+dashboard as run on the author's machine, including local paths (the node feed's socket as the node strip's source)
+and local layout, which the repository rules keep out of the tree. The rows below say what each one showed and how
+it was made; the files are available on request.
+
 | File | What it shows | How |
 | --- | --- | --- |
 | `00-before-public-top.png` | The tab before this change (Hermes Teal), public mode, BTC, live | Start pressed in the tab, 150 s later |
