@@ -56,6 +56,30 @@ class Execution:
         return self.px * self.sz
 
 
+EFFECT_KEYS = {"B": ("cover", "new_long"), "A": ("exit", "new_short")}
+
+
+def parse_effect(eff, side, q: Decimal) -> tuple[dict | None, str | None]:
+    """A participant's position effect, only when it is complete for its side (Codex h1 review 4, B2): a buy has both
+    cover and new_long, a sell both exit and new_short (PROTOCOL.md 4.6), no other component, none negative, and
+    the two add up to the fill size exactly. Otherwise (None, the reason): it is never read as zero."""
+    keys = EFFECT_KEYS.get(side)
+    if not isinstance(eff, dict) or keys is None:
+        return None, None
+    extra = set(eff) - set(keys)
+    if extra:
+        return None, f"position effect has components that don't belong to a {'buy' if side == 'B' else 'sell'}: {sorted(extra)}"
+    vals = {k: dec(eff.get(k)) for k in keys}
+    if any(v is None for v in vals.values()):
+        missing = [k for k, v in vals.items() if v is None]
+        return None, f"incomplete position effect: {' and '.join(missing)} missing or not a number"
+    if any(v < 0 for v in vals.values()):
+        return None, "position effect has a negative component"
+    if vals[keys[0]] + vals[keys[1]] != q:
+        return None, f"position effect {keys[0]} + {keys[1]} doesn't add up to the fill size {q}"
+    return vals, None
+
+
 def parse_exec(raw: dict, block: int, block_time_ms: int | None) -> Execution | None:
     px, sz = dec(raw.get("px")), dec(raw.get("sz"))
     tid = raw.get("tid")
@@ -64,14 +88,9 @@ def parse_exec(raw: dict, block: int, block_time_ms: int | None) -> Execution | 
         return None
     parts = []
     for p in raw.get("participants") or []:
-        eff = p.get("effect")
-        effect = None
-        if isinstance(eff, dict):
-            effect = {k: dec(v) for k, v in eff.items()}
-            if any(v is None for v in effect.values()):
-                effect = None
+        effect, why = parse_effect(p.get("effect"), p.get("side"), sz)
         parts.append(Participant(p.get("user"), p.get("oid"), p.get("side"), p.get("role"), effect,
-                                 p.get("effect_unavailable") if effect is None else None,
+                                 (why or p.get("effect_unavailable")) if effect is None else None,
                                  p.get("twap_id"), bool(p.get("liquidated"))))
     return Execution(int(tid), block, t, px, sz, raw.get("aggressor"), bool(raw.get("complete")), parts,
                      raw.get("liquidation") if isinstance(raw.get("liquidation"), dict) else None,

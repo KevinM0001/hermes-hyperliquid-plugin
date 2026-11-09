@@ -1,11 +1,26 @@
+# preconditions (pre-run) at 2026-11-09T03:58:38Z
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD
-29afff11eeecd55ba75f32fce64328876f9a1052
+fa8b6f492da63e09477f5f06cdc8f28f51a0da24
 [exit code: 0]
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git status --porcelain
 [exit code: 0]
-# post-check (after pytest 3.14, pytest 3.12 and build_dashboard --check finished)
+
+# post-check at 2026-11-09T04:19:11Z
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git rev-parse HEAD
-29afff11eeecd55ba75f32fce64328876f9a1052
+fa8b6f492da63e09477f5f06cdc8f28f51a0da24
 [exit code: 0]
 $ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git status --porcelain
+[exit code: 0]
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git ls-files -z | xargs -0 find -newermt 2026-11-09T03:58:38Z
+find: paths must precede expression: `.gitignore'
+find: possible unquoted pattern after predicate `-newermt'?
+[exit code: 123]
+# tracked files: 165; newest tracked mtime: 2026-11-09T03:52:06Z  schema/metrics.v1.json
+# corrected mtime check (previous find line was malformed) at 2026-11-09T04:19:18Z
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git ls-files -z | xargs -0 -I{} find {} -maxdepth 0 -newermt 2026-11-09T03:58:38Z -print
+[exit code: 0]
+$ cd ~/contest/hyperliquid-desk && GIT_OPTIONAL_LOCKS=0 git ls-files -z | xargs -0 stat -c "%y %n" | sort | tail -3
+2026-11-09 03:45:35.965713403 +0000 hl_desk/node/panels.py
+2026-11-09 03:50:28.253955565 +0000 tests/test_h1_review4.py
+2026-11-09 03:52:06.881569039 +0000 schema/metrics.v1.json
 [exit code: 0]

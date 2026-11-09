@@ -212,6 +212,8 @@ def depth_bands(full_book: dict | None, coarse_books: list[dict], bands=BANDS_PC
                 b, res = pick
                 chosen[side] = b
                 approx[side] = {"approx_usd": val(res["approx_usd"], "USD"), "range_usd": res["range_usd"],
+                                "resolution": (f"{b['kind']} book, {b.get('bucket_width')} price buckets (this band and "
+                                               "side only; other bands can use another book)"),
                                 "book": b["kind"], "aggregation": b["kind"], "bucket_width": b.get("bucket_width"),
                                 "book_time_ms": b["time_ms"], "status": "approximate"}
         if (approx["bid"]["status"] == "approximate" and approx["ask"]["status"] == "approximate"
