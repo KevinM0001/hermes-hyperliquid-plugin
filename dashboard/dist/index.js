@@ -17181,6 +17181,14 @@
     return isFinite(n) ? fmt(n) : String(x);
   }
 
+  // "N of M" (Kevin, batch 5, option a): what a capped list shows and, where the snapshot carries it, the total.
+  // total may be a metric ({value, reason}) or a number; without one the label says only what is shown.
+  function listCount(word, shown, noun, total, where) {
+    const m = total !== null && typeof total === "object" ? valueOf(total) : total;
+    return isNum(m) ? word + " " + intf(shown) + " of " + intf(m) + " " + noun + (where ? " " + where : "")
+      : word + " " + intf(shown) + " " + noun;
+  }
+
   // ------------------------------------------------------------------ value + status primitives
 
   function valueOf(m) { return m && m.value !== null && m.value !== undefined ? m.value : null; }
@@ -18547,7 +18555,8 @@
       id: "node-tape", className: "hd-p-ntape", title: "Node tape (fills, with flags)", nodeHook: "tape-flags",
       why: h("p", null, "Executions from the node's fills, newest first, each counted once, times in UTC. Flags come from the raw records only. Public trades stay in the Tape panel; the two are never summed."),
       badges: h(NodeProv, { v: v, what: "fills" }),
-      status: h(NodeStatus, { v: v, fams: ["flow"] }),
+      status: h(NodeStatus, { v: v, fams: ["flow"], extra: tp && tp.rows && tp.rows.length
+        ? h("span", { className: "hd-prov-item" }, listCount("latest", tp.rows.length, "executions", null)) : null }),
       flush: true
     },
     gate ? null : h(FamNotes, { fams: v && v.families, names: ["flow"], pad: true }),
@@ -19270,6 +19279,8 @@
     h("div", { className: "hd-lp" },
       h("div", null, h("b", null, "Large prints"), " \u2265 ", isNum(lp.threshold_usd) ? usd(lp.threshold_usd) : "threshold not in snapshot",
         ": ", isNum(lp.count) ? intf(lp.count) : ("count unavailable" + (lp.reason ? ": " + lp.reason : "")),
+        isNum(lp.count) && (lp.prints || []).length && lp.count > Math.min(8, lp.prints.length)
+          ? h("span", { className: "hd-dim" }, " \u00b7 " + listCount("latest", Math.min(8, lp.prints.length), "listed", lp.count)) : null,
         lp.note ? h("span", { className: "hd-dim" }, " \u00b7 " + lp.note) : null),
       (lp.prints || []).length ? h("ul", { className: "hd-lp-list" }, lp.prints.slice(0, 8).map(function (t, i) {
         return h("li", { key: t.tid || i },
@@ -19414,6 +19425,7 @@
     const tape = g(m, "flow", "tape") || [];
     const anySnapshot = tape.some(function (t) { return t.counted === false; });
     const anyEarlier = tape.some(function (t) { return t.segment && t.segment !== "current"; });
+    const uncounted = tape.filter(function (t) { return t.counted === false || (t.segment && t.segment !== "current"); }).length;
     const tpx = pxWith(decimalsOf(tape.map(function (t) { return t.px; })));
     return h(Panel, {
       id: "tape", className: "hd-p-tape", title: "Tape",
@@ -19423,7 +19435,10 @@
           ? "Whether a stop, TWAP slice or liquidation caused a trade isn't in public trades; those flags are on the node's own fills, in the Node tape panel. Public trades and node fills are separate streams and are never summed."
           : "Whether a stop, TWAP slice or liquidation caused a trade isn't in public trades; node mode adds a Node tape with those flags on the node's own fills.")),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades" }),
-      status: h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
+      status: h(Fragment, null, h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
+        tape.length ? h("span", { className: "hd-dim" },
+          listCount("latest", tape.length, "trades", g(m, "flow", "values", "trade_count"), "in the window") +
+          (uncounted ? " (" + intf(uncounted) + " of the " + intf(tape.length) + " not counted: before coverage or before a gap, dimmed)" : "")) : null),
       flush: true
     },
     tape.length ? h("div", { className: "hd-scroll hd-tape-scroll" },
@@ -19662,7 +19677,9 @@
       return h(DeckCard, { key: n, name: n, d: deck[n], nodeSrc: nodeSrc, flowFam: n === chosen ? flowFam : null, snapshotId: r.snapshot_id });
     }) : h("div", { className: "hd-empty" }, "No Flow Deck cards in this snapshot.")),
     h("div", { className: "hd-events" },
-      h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " newest first \u00b7 no regime or burst spans a gap \u00b7 UTC")),
+      h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
+        (events.length > 40 ? listCount("newest", 40, "events", events.length, "in this snapshot") : intf(events.length) + " events, newest first") +
+        " \u00b7 the snapshot carries up to 20 per market \u00b7 no regime or burst spans a gap \u00b7 UTC")),
       h("div", { className: "hd-dim hd-small" }, "Burst rule: " + names.map(function (n) { return n + " " + burstRuleText(deck[n].bursts); }).join(" \u00b7 ")),
       events.length ? h("ul", null, events.slice(0, 40).map(function (e, i) {
         return h(EventRow, { key: e.type + ":" + e.market + ":" + e.at_ms + ":" + (e.side || "") + ":" + i, e: e, nodeSrc: nodeSrc });
@@ -20503,12 +20520,10 @@
       m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market }) : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,
       m ? h(Fragment, null,
         h(SectionHead, { title: "Book", note: non ? "the node's order-level book first, then the public aggregated book" : "the public aggregated book: ladder, chart and depth" }),
-        non ? h("div", { className: "hd-row hd-row-n" },
-          h(NodeLadderPanel, { v: nlive }),
-          h(HeatmapPanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n2" },
-          h(StopsPanel, { v: nlive }),
-          h(WallsPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n2" }, h(StopsPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(ThinningPanel, { v: nlive })) : null,
         h("div", { className: "hd-row hd-row-a" },
           h(Ladder, { m: m, nodeOn: non }),
@@ -20518,9 +20533,8 @@
         h("div", { className: "hd-row hd-row-b" },
           h(FlowPanel, { m: m }),
           h(DeckPanel, { resp: resp })),
-        h("div", { className: "hd-row hd-row-c" },
-          h(TapePanel, { m: m, nodeOn: non }),
-          non ? h(NodeTapePanel, { v: nlive }) : null),
+        non ? h("div", { className: "hd-row hd-row-c" }, h(NodeTapePanel, { v: nlive })) : null,
+        h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })),
         h(SectionHead, { title: "Wallets", note: "the public addresses behind the volume" }),
         h("div", { className: "hd-row hd-row-d" },
           h(WalletsPanel, { m: m, win: walletWin, onWin: setWalletWin, onOpen: openWallet })),
