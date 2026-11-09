@@ -17324,7 +17324,10 @@
       return base + "explain the Flow Deck card for " + market + (regime ? " (regime " + regime + ")" : "") +
         " with hl_alerts: what its window numbers show, and what is unavailable and why. Use the hyperliquid commentary skill.";
     }
-    return base + "what is " + market + " doing? Use the hyperliquid commentary skill.";
+    // Question B (Kevin, Nov 9): the current read and what the data says for and against a long and a short, as
+    // conditions on the numbers; the skill answers in a fixed order and never with a direction.
+    return base + "what is " + market + " doing, and what does the data say for and against a long and a short right now, " +
+      "with the risks and what is unavailable? Use the hyperliquid commentary skill.";
   }
   function chatPath() {
     const p = window.location.pathname || "/";

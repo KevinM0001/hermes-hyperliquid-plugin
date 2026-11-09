@@ -1,13 +1,13 @@
 ---
 name: hyperliquid-commentary
 description: How to answer Hyperliquid market questions from the hyperliquid-desk tools like a trading desk - bottom line first, a few plain bullets, every number with its window and source - describing what the data shows and never forecasting
-version: 2.0.0
+version: 2.1.0
 author: KevinM0001
 license: MIT
 metadata:
   hermes:
     tags: [Hyperliquid, Markets, Commentary]
-    requires_tools: [hl_status, hl_market, hl_flow, hl_context, hl_alerts, hl_wallets]
+    requires_tools: [hl_status, hl_market, hl_flow, hl_context, hl_alerts, hl_wallets, hl_candles, hl_structure]
 ---
 
 # Hyperliquid desk commentary
@@ -21,7 +21,7 @@ Use this skill when the user asks what a Hyperliquid market is doing, what the d
 ## 1. Answer shape
 
 1. **Bottom line first:** one plain sentence with the market and its price. The answer starts with it: no "Skill loaded", no "Tallying…", no working shown. State facts. Don't set them up as a tension with "but", "yet", "despite", "although", "however" or a contrasting "while" ("buyers are ahead, but price isn't moving"). Write two facts: "BTC flat near $75,900. Buyers are ahead in trades; the book is absorbing it."
-2. **Then 3–5 short bullets, never more than 5.** About 120 words for the bottom line and bullets together, and never over 150. Count before you answer. If more is relevant, end with one short offer instead ("More on the stops or the wallets if you want it."). More detail only when asked.
+2. **Then 3–5 short bullets, never more than 5.** About 120 words for the bottom line and bullets together, and never over 150 (question B in §2.5 is the one exception: 150–200 words, never over 220). Count before you answer. If more is relevant, end with one short offer instead ("More on the stops or the wallets if you want it."). More detail only when asked.
 3. **Last, one source line:** snapshot ID, its time, the mode and each feed's status in plain words, for example `Snapshot hd-3fa9c1-0001234 · 2026-11-08 15:51:18Z · LIVE public data · book and trades fresh; mark and funding unverified`. Say REPLAY or SYNTHETIC every time it applies. With node data, add the node feed's state and delay (§6.3).
 4. **Plain trader language.** No field names, code labels or schema terms (nSigFigs, activeAssetCtx, sz_lower_bound, "IMPACT floor"). Use a plugin label only with its few-word gloss from the glossary (§7). Never make a directional label the subject of a sentence (§4.8).
 5. **Round sensibly:** $2.7M, $58K, 79 bps, 1.3 bps per $1M. Give prices as the tool gives them. Times are UTC with a Z.
@@ -38,10 +38,11 @@ Cut first: stop levels, wallet lists and ladder detail. A short answer must neve
 ## 2. Get the numbers first
 
 1. Call `hl_status` and check the collector state. If it is `stopped`, tell the user to run `/hl start`; don't describe the market from memory.
-2. Call only the tools the question needs: `hl_alerts` (Flow Deck labels, events, bursts), `hl_market` (book, spread, depth), `hl_flow` (taker flow, large prints, the 30 s buckets that show the path), `hl_context` (mark, oracle, funding, open interest), `hl_wallets` (who is buying and selling; pass `address` to open one wallet). With node data: `node_status`, `node_book`, `node_stops`.
+2. Call only the tools the question needs: `hl_alerts` (Flow Deck labels, events, bursts, the card's six-point `path` and `dominated_by`), `hl_market` (book, spread, depth), `hl_flow` (taker flow, large prints, the 30 s buckets that show the path), `hl_context` (mark, oracle, funding, open interest), `hl_wallets` (who is buying and selling; pass `address` to open one wallet), `hl_structure` (the venue's candles read from days to minutes: each interval's range and where the last close sits in it, the changes over the last bars, streaks, the last and largest bars, volume against the median, and the prior day's range; numbers only), `hl_candles` (the venue's candles for one interval, when the question is about a specific period). When the tools list has `hl_watch`, it gives the swing context (24h and 7d range position with the middle zone, flow over 15m, 1h and 4h, the 4h wave, taker per hour, the top wallet over the hour). With node data: `node_status`, `node_book`, `node_stops`.
 3. Pass one `snapshot_id` to every call: the dashboard's if the user gave it, otherwise the one from your first call. Every number in the answer then comes from one snapshot.
 4. The dashboard's Ask Hermes button sends one of two questions, each with the snapshot ID from the tab's header:
-   - **"Using snapshot <ID>, what is <market> doing? …"** Answer in the shape of §1.
+   - **"Using snapshot <ID>, what is <market> doing, and what does the data say for and against a long and a short right now, with the risks and what is unavailable? …"** (the header's Ask Hermes button and the Hermes panel; question B): answer in the fixed order of §2.5.
+   - **"Using snapshot <ID>, what is <market> doing? …"** (older copies of the question) Answer in the shape of §1.
    - **"Using snapshot <ID>, explain the Flow Deck card for <market> (regime <STATE>) with hl_alerts: what its window numbers show, and what is unavailable and why. …"**
      - Bottom line: what the current window's numbers show (the move with the flow behind it, and IMPACT).
      - Bullets: the confirmed label, the live classification and any pending change, each with its time. <STATE> is the card's confirmed label when it has one, otherwise the live one; the prompt omits it when the card has neither. Describe the current numbers with the live classification, and if <STATE> matches neither label in this snapshot, say so.
@@ -53,6 +54,20 @@ Cut first: stop levels, wallet lists and ladder detail. A short answer must neve
      - Bullets: the threshold and the window it was measured over; the burst's rank and wallets, or the liquidation counts, as given; what the current card shows now; the reliability line.
      - A liquidation alert's numbers are the 60 s before it fired, not the episode (§6.1).
      - If the event isn't in this snapshot's list, say so, and explain only what its text states.
+
+## 2.5 Question B: for and against a long and a short
+
+Kevin's requirement: extremely useful, never "it could go either way". The answer is still a description; the usefulness comes from reading the structure from days down to minutes and stating conditions, not a lean.
+
+Call, with the snapshot ID: `hl_structure` (default intervals; if some intervals come back `loading`, call it once more a second later), `hl_alerts`, `hl_market`, `hl_flow`, `hl_context`, and `hl_watch` when the tools list has it. Then answer in this order, 150–200 words, never over 220:
+
+1. **Where price sits, from days to minutes.** From `hl_structure`, one line each for 1d, 4h, 1h, 5m and 1m: where the last close sits in that interval's range (`range.position_pct`: 0 at the low, 100 at the high, with the high and low as given), the change over the last bars (`change_pct`), the streak, and from `cross` whether price is above or below the prior day's high and low. Quote the in-progress candle as unverified with its received age. Numbers as given; no pattern names, no trend words.
+2. **What the flow says now.** The move with the flow behind it and IMPACT; the card's `path` (the six 15 s points) when one tick carries the window, and `dominated_by.summary` whenever `dominated_by.any` is true; in node mode the split of the fills (new longs against covers on the buy side, new shorts against exits on the sell side); the top account's share with its net and the time.
+3. **What a long would need to see, and what a short would need to see.** Two short bullets with the same weight and the same number of conditions, each stated only as conditions on the numbers above ("a long would need the asks at 74,960 to be absorbed rather than pulled and the 1h position to hold above 50"; "a short would need the sells to broaden past the one account that carried 78% of them"). Never a direction call, a target, a stop, a probability or a time horizon. If the data gives nothing to condition on, say so in one line.
+4. **Risks and what is unavailable.** Capture gaps and incomplete windows, every unverified value with its received age, the families that aren't fresh, the labels' validation status ("descriptive; no predictive test on record").
+5. **The last line**, exactly: "This describes the snapshot; it isn't a recommendation and doesn't say where price goes next." Then the source line of §1.3.
+
+Both sides get equal treatment: if one bullet has three conditions, so does the other. A reader must not be able to tell from the answer which side the author would take.
 
 ## 3. Accuracy rules
 
@@ -89,6 +104,8 @@ These rules come from the original order-flow study (Sep 29, 2026), where flow o
    - which way price ended over the window.
 
    For example: "One 30-second stretch: −$54.5M at 23:01:30Z. The next 30 s were +$8.8M of net buying, and price ended the 90 s window up 9 bps."
+
+   The Flow Deck card now carries this directly: `path` is six 15 s points with each point's last price, move and net flow, and `dominated_by.summary` says in one sentence which tick, print or address carries more than half of the window's net flow or volume. Quote them instead of working it out; a share over 100% is real (the rest netted the other way).
 10. **Stops rarely deserve the lead.** Waiting stops are conditional and usually small: in one measurement they were about 0.15% of the resting bids they would hit (a short window; scaled up, about 3%). Don't open with stop levels. Mention them when asked, and then always with their order counts, unknown sizes and the restart-only venue check (§3).
 11. **Say a capture gap in plain words.** When a window spans a gap (coverage gaps, an incomplete window, a label ended at a gap, a node family INVALID, a replay's partial history), say so with its time: "the feed reconnected at 00:44:41Z; the 90 s windows before 00:46:11Z aren't complete". Never average across a gap, and never call a hole quiet.
 12. **Name the subject of every "stopped", "stalled" or "down".** Write "the buying stopped", "the collector is stopped", "the node feed is behind" or "price is down 12 bps". Market state and system state share these words.
@@ -113,6 +130,7 @@ These rules come from the original order-flow study (Sep 29, 2026), where flow o
 - The confirmed label, the live classification of the current window and any pending change are three separate things, each with its time. Never describe the current numbers with the confirmed label when the live classification differs.
 - When the user asks what a label means, quote its `meaning.text` word for word. Otherwise use the glossary gloss, and never turn either into advice, a cause or a forecast.
 - The window's numbers are move (bps), net taker flow, volume, IMPACT, PRESSURE and the top wallet. Give the top wallet's share with its net taker notional, so an account that both bought and sold isn't described as one-sided.
+- Each label (confirmed, live, pending) carries `validation` ("descriptive; no predictive test on record"): that is the reliability line's source; quote it with the label.
 - Events:
   - Regime change: "PREV -> NEW after PREV held N s". The held time belongs to PREV. Give each change on its own, never as a chain (A -> B -> C) with held times hung on it.
   - Gap event: the label ended at a gap.
