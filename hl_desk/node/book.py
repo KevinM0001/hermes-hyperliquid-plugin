@@ -43,6 +43,11 @@ class NodeBook:
         self.orders: dict[int, Order] = {}
         self.levels: dict[str, dict[Decimal, dict[int, None]]] = {"B": {}, "A": {}}
         self.through_seq: int | None = None
+        # The snapshot this state was built from: its stated total_orders and block (the stops census's whole-market
+        # ratio reports them as the feed stated them); None for a state offered from outside the stream.
+        self.snapshot_total: int | None = None
+        self.snapshot_block: int | None = None
+        self.snapshot_block_time_ms: int | None = None
         self.block: int | None = None
         self.block_time_ms: int | None = None
         # Lifecycle-labelled changes (block_time_ms, side, px, label, size, oid), kept 15 minutes.

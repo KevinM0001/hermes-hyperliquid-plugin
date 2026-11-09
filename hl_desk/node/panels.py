@@ -18,8 +18,9 @@ from decimal import Decimal
 from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
 from .flow_map import FlowMapState, build as build_flow_map
+from .triggers import CENSUS_EXCLUSIONS, category, census
 from ..util import median
-from .proto import fmt, num
+from .proto import dec, fmt, num
 
 ZERO = Decimal(0)
 LADDER_LEVELS = 20
@@ -39,6 +40,17 @@ TAPE_ROWS = 30
 VENUE_CHECK = ("checked against the venue only at restart: the engine compares its waiting-stop set with the venue's only when it restarts (its rebase check); during a run nothing compares them, so a stop the venue has already ended can stay shown until the next restart")
 STOPS_ROWS_RANGE_BPS = 200          # band rows shown within 2% of the mid; everything beyond is counted below/above
 BOOK_PANEL_FAMILIES = ("book",)
+MAP_OUTLIER_MULTIPLE = 100          # stop map: a stated size above 100x the market's median sized trigger is a size outlier
+MAP_PLAUSIBLE_RATIO = Decimal(10)   # stop map: a trigger price outside [ref/10, ref x 10] is implausible
+MAP_CLUSTERS_PER_SIDE = 2
+MAP_SIDES = {"fall": {"side": "sell", "label": "Sell-side triggers", "book_side": "bids_below", "book": "B",
+                      "walked": "bids at and below", "sign": "-",
+                      "members": "sell stops and buy (short) take-profits: they fire when the price falls to the band"},
+             "rise": {"side": "buy", "label": "Buy-side triggers", "book_side": "asks_above", "book": "A",
+                      "walked": "asks at and above", "sign": "+",
+                      "members": "buy stops and sell (long) take-profits: they fire when the price rises to the band"}}
+MAP_NOTE = ("a census of the engine's waiting-trigger set and resting book at this block time (the node's live memory), "
+            "not a scan of past orders: it describes that moment only, and the orders can be added or pulled at any time")
 
 
 class PanelState:
@@ -393,6 +405,296 @@ def stop_bands(mf, client) -> dict:
                                "whole-position TP/SL orders have no stated size and are counted separately"}
 
 
+# --- the stop map (Kevin's stop and liquidity map report): trigger bands beside the depth they would walk ----------
+
+def stop_map(mf, depth: dict | None, unavailable: str | None) -> dict:
+    """The stops panel's map, clusters and exclusions: every waiting trigger in a 0.5% band of the move that fires it
+    (the thinning panel's edges, out to 10%) or under one counted exclusion; per band the resting depth of the same
+    book, same moment, that its triggers would walk (the band and every band farther out, the report's "bids at and
+    below it"), the depth between the price and the band, and the trigger notional as a share of the walked depth;
+    the two largest bands per side as quotable clusters. Stated notional is a lower bound where whole-position orders
+    sit (never 0), unknown when every order is one."""
+    tr, book = mf.triggers, mf.book
+    if unavailable is not None:
+        why = f"needs a valid book for the reference price and the resting depth: {unavailable}"
+        return {"map": {"available": False, "reason": why}, "clusters": None, "clusters_reason": why,
+                "exclusions": {"available": False, "reason": why}, "census": _census(mf, None, why)}
+    mid = book.mid()
+    c = census(tr, mid, THIN_STEP, THIN_BANDS, MAP_OUTLIER_MULTIPLE, MAP_PLAUSIBLE_RATIO)
+    sides, candidates = {}, []
+    for d, meta in MAP_SIDES.items():
+        dbands = depth[meta["book"]]
+        usds = [b["usd"] for b in dbands]
+        total = sum(usds, ZERO)
+        rows, cum = [], ZERO
+        for k, b in enumerate(c["bands"][d]):
+            between, cum = cum, cum + usds[k]
+            beyond = total - between
+            row = _map_row(d, meta, k, b, dbands[k], between, beyond)
+            rows.append(row)
+            if row["notional_usd"]:
+                candidates.append((d, k, row))
+        sides[d] = {**{x: meta[x] for x in ("side", "label", "book_side", "members")}, "fires_on": d,
+                    "depth_total_usd": usd(total), "bands": rows}
+    clusters = []
+    for d in MAP_SIDES:
+        ranked = sorted((x for x in candidates if x[0] == d), key=lambda x: (-x[2]["notional_usd"], x[1], -x[2]["orders"]))
+        for rank, (_d, k, row) in enumerate(ranked[:MAP_CLUSTERS_PER_SIDE], 1):
+            clusters.append({"rank": rank, "text": _cluster_text(row), **row})
+    return {"map": {"available": True, "label": "resting trigger orders (stops and take-profits) by 0.5% band out to 10% "
+                                              "from the current price, beside the resting limit depth they would walk",
+                    "as_of": {"book_time_ms": mf.block_time_ms, "block": mf.block, "note": MAP_NOTE},
+                    "ref_px": fmt(mid), "ref_px_rule": "the book mid (the thinning panel's and the stop bands' reference)",
+                    "band_pct": float(THIN_STEP * 100), "out_to_pct": float(THIN_STEP * THIN_BANDS * 100),
+                    "sides": sides,
+                    "rules": {"band": "a trigger lands in band k = floor(distance / 0.5%) of the move that fires it: a sell stop or "
+                                      "buy take-profit on a fall (below the price), a buy stop or sell take-profit on a rise (above it); "
+                                      "the same edges as the thinning panel's bands",
+                              "notional": "sum of stated size x trigger price over the band's sized orders; whole-position TP/SL "
+                                          "orders have no stated size (unknown_size_orders), so it is a lower bound (lower_bound "
+                                          "true, understated) where they sit and unknown, never 0, when every order is one; the "
+                                          "ratio follows the notional",
+                              "walk": "depth_at_and_beyond_usd = the thinning panel's depth_usd summed over the band and every "
+                                      "band farther from the price on the walked side, to 10% (the report's 'bids at and below "
+                                      "it'); depth_between_usd = the bands nearer than it (the thinning panel's "
+                                      "cumulative_from_price_usd of the band before); ratio_pct = notional_usd / "
+                                      "depth_at_and_beyond_usd x 100",
+                              "clusters": f"the {MAP_CLUSTERS_PER_SIDE} bands per side with the largest stated notional (ties: the "
+                                          "nearer, then the more orders); fewer when fewer bands have one",
+                              "accounts": "distinct owners of the band's orders (the feed's user field)"},
+                    "venue_check": VENUE_CHECK},
+            "clusters": clusters,
+            "exclusions": _exclusions(c),
+            "census": _census(mf, c, None)}
+
+
+def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal, beyond: Decimal) -> dict:
+    near, far = (dband["hi"], dband["lo"]) if d == "fall" else (dband["lo"], dband["hi"])
+    q = Decimal("0.0001")
+    n, unsized = b["orders"], b["unsized_orders"]
+    notional = b["notional"] if b["sized_orders"] else None
+    lg = b.pop("_largest", None)
+    row = {"side": meta["side"], "fires_on": d, "book_side": meta["book_side"], "k": k,
+           "band": {"lo": fmt(dband["lo"].quantize(q)), "hi": fmt(dband["hi"].quantize(q)),
+                    "near_px": fmt(near.quantize(q)), "far_px": fmt(far.quantize(q)),
+                    "from_pct": float(THIN_STEP * k * 100), "to_pct": float(THIN_STEP * (k + 1) * 100)},
+           "distance_pct": float(THIN_STEP * k * 100),
+           # the notional and, right beside it, whether it is only a lower bound and how many orders have no size
+           "notional_usd": usd(notional), "lower_bound": bool(unsized and notional is not None),
+           "unknown_size_orders": unsized, "orders": n, "sized_orders": b["sized_orders"], "accounts": len(b["users"]),
+           "sz": num(b["sz"]) if b["sized_orders"] else None}
+    if n and notional is None:
+        row["notional_reason"] = _unsized_reason(unsized)
+    elif unsized:
+        row["notional_note"] = (f"a lower bound: {unsized} of {n} orders report no size (whole-position TP/SL), "
+                                "so this is understated")
+    row["by_category"] = {cat: {"orders": x["orders"], "sized_orders": x["sized_orders"],
+                                "unknown_size_orders": x["unsized_orders"], "accounts": len(x["users"]),
+                                "notional_usd": usd(x["notional"]) if x["sized_orders"] else None,
+                                "lower_bound": bool(x["unsized_orders"] and x["sized_orders"])}
+                          for cat, x in sorted(b["by_category"].items())}
+    row["largest_order"] = None if lg is None else {
+        "notional_usd": usd(lg.sz * lg.trigger_px), "sz": num(lg.sz), "trigger_px": fmt(lg.trigger_px),
+        "kind": lg.kind, "user": lg.user,
+        "share_pct": round(float(lg.sz * lg.trigger_px / notional) * 100, 2) if notional else None}
+    walk = {"ratio_pct": None, "lower_bound": False, "unknown_size_orders": unsized,
+            "depth_at_and_beyond_usd": usd(beyond), "depth_between_usd": usd(between),
+            "depth_bands_used": {"side": meta["book_side"], "k_from": k, "k_to": THIN_BANDS - 1, "includes_band": True,
+                                 "from_pct": float(THIN_STEP * k * 100), "to_pct": float(THIN_STEP * THIN_BANDS * 100),
+                                 "note": "thinning bands k_from..k_to summed for depth_at_and_beyond_usd (the band itself "
+                                         "and every band farther from the price); the bands before k_from make "
+                                         "depth_between_usd"},
+            "depth_source": "the node book of the same snapshot (the thinning panel's bands, same book_time_ms)"}
+    if n == 0:
+        walk["ratio_reason"] = "no triggers in this band"
+    elif notional is None:
+        walk["ratio_reason"] = row["notional_reason"]
+    elif beyond <= 0:
+        walk["ratio_reason"] = f"no resting {meta['walked']} it within 10%, so the share can't be given"
+    else:
+        walk["ratio_pct"] = _sig(float(notional / beyond) * 100)      # 4 significant figures: a tiny share is never a 0
+        walk["lower_bound"] = bool(unsized)
+    row["walk"] = walk
+    return row
+
+
+def _unsized_reason(n: int) -> str:
+    return f"every order is whole-position: size unknown, not 0 ({n} order{'s' if n != 1 else ''}, none with a stated size)"
+
+
+def _money(x: float) -> str:
+    if x >= 1e6:
+        return f"${x / 1e6:,.2f}M"
+    if x >= 1e3:
+        return f"${x / 1e3:,.0f}K"
+    return f"${x:,.0f}"
+
+
+def _sig(x: float, n: int = 4) -> float:
+    return float(f"{x:.{n}g}")
+
+
+def _pct2(x: float) -> str:
+    """Two significant figures, as the report quotes shares: 5.2%, 0.92%, 12%, 0.019%."""
+    if x >= 10:
+        return f"{x:,.0f}%"
+    if x >= 1:
+        return f"{x:.1f}%"
+    if x >= 0.1:
+        return f"{x:.2f}%"
+    return f"{x:.2g}%"
+
+
+def _cluster_text(row: dict) -> str:
+    meta = MAP_SIDES[row["fires_on"]]
+    band, walk, sign = row["band"], row["walk"], meta["sign"]
+    n, unsized, acc = row["orders"], row["unknown_size_orders"], row["accounts"]
+    where = (f"{meta['label']} at {band['near_px']} to {band['far_px']} "
+             f"({sign}{band['from_pct']:.1f}% to {sign}{band['to_pct']:.1f}%)")
+    who = f"{n} order{'s' if n != 1 else ''} from {acc} account{'s' if acc != 1 else ''}"
+    depth = _money(walk["depth_at_and_beyond_usd"]) if walk["depth_at_and_beyond_usd"] else None
+    if row["notional_usd"] is None:
+        head = f"{where}: {who}, every one whole-position: size unknown, not 0"
+        return "; ".join([head] + ([f"the {meta['walked']} it total {depth}"] if depth else [walk["ratio_reason"]]))
+    size = ("at least " if row["lower_bound"] else "") + _money(row["notional_usd"])
+    head = f"{where}: {size} across {who}"
+    if walk["ratio_pct"] is not None:
+        tail = (f"the {meta['walked']} it total {depth}, so this cluster is {'at least ' if walk['lower_bound'] else ''}"
+                f"{_pct2(walk['ratio_pct'])} of the liquidity it would walk")
+    elif depth:
+        tail = f"the {meta['walked']} it total {depth}; {walk['ratio_reason']}"
+    else:
+        tail = walk["ratio_reason"]
+    parts = [head, tail]
+    if unsized:
+        parts.append(f"{unsized} of {n} orders report{'s' if unsized == 1 else ''} no size, so this is understated")
+    return "; ".join(parts)
+
+
+def _exclusions(c: dict) -> dict:
+    eng = c["engine_excluded"]
+    med, cap = c["median_sz"], c["outlier_cap_sz"]
+    rules = {"implausible_price": f"a trigger price outside [reference / {MAP_PLAUSIBLE_RATIO}, reference x {MAP_PLAUSIBLE_RATIO}] "
+                                  "(a 90% fall or a 900% rise) or not positive: a data artifact, not a level",
+             "size_outlier": (f"a stated size above {MAP_OUTLIER_MULTIPLE}x the market's median sized waiting trigger "
+                              f"({fmt(med)} over {c['sized_population']} sized orders): cap {fmt(cap)}" if med is not None else
+                              f"a stated size above {MAP_OUTLIER_MULTIPLE}x the market's median sized waiting trigger; no sized "
+                              "trigger is waiting, so nothing is excluded"),
+             "already_true_at_price": "a fall trigger at or above the reference price, or a rise trigger at or below it: its "
+                                      "condition is already true, so it won't fire on the move the map implies (a stale bracket)",
+             "beyond_range": f"more than {float(THIN_STEP * THIN_BANDS * 100):g}% from the reference price"}
+    out = {"available": True,
+           "note": "each waiting trigger is counted once, in a band or under the first exclusion that applies, in this order; "
+                   "nothing listed here is in the map's bands; trailing stops never reach the feed, so only the engine's count "
+                   "of them is known",
+           "order": ["trailing_stops (engine)", *CENSUS_EXCLUSIONS],
+           "trailing_stops": {"orders": eng.get("trailing"), "notional_usd": None,
+                              "reason": "not in the feed: the engine leaves trailing stops out (carve-out C-2: an activation "
+                                        "condition, no fixed trigger price) and reports only their count; no price or size"},
+           "unclassified_by_engine": {"orders": eng.get("unclassified"), "notional_usd": None,
+                                      "reason": "the engine's count of waiting trigger orders it couldn't classify; not in the feed"}}
+    for k in CENSUS_EXCLUSIONS:
+        b = c["excluded"][k]
+        b.pop("_largest", None)
+        out[k] = {"orders": b["orders"], "sized_orders": b["sized_orders"], "unknown_size_orders": b["unsized_orders"],
+                  "accounts": len(b["users"]), "notional_usd": usd(b["notional"]) if b["sized_orders"] else None,
+                  "lower_bound": bool(b["unsized_orders"] and b["sized_orders"]),
+                  "by_category": {cat: x["orders"] for cat, x in sorted(b["by_category"].items())}, "rule": rules[k]}
+    excluded = sum(c["excluded"][k]["orders"] for k in CENSUS_EXCLUSIONS)
+    out["accounted"] = {"waiting_triggers": c["waiting_total"], "in_bands": c["in_bands"], "excluded_here": excluded,
+                        "complete": c["waiting_total"] == c["in_bands"] + excluded}
+    return out
+
+
+CENSUS_BOOK_KEYS = ("excluded", "executable_orders_total", "executable_within_10pct", "executable_to_trigger_ratio")
+CENSUS_BANDS_KEYS = ("within_10pct", "outside", "unsized_within_10pct", "bands_view")
+
+
+def _census(mf, c: dict | None, why: str | None) -> dict:
+    """The sanity-check counts of the feed's resting trigger orders for this market (Kevin's reviewer, Nov 9), each
+    from the client state that already holds it: the applied waiting set now; the engine's own bands view for the
+    count within 10% of the price (its rows summed, by kind and side, its outside counts; never a recount); the
+    map's exclusions; the resting executable book, in total and inside the same range; and the snapshots' stated
+    totals with their block. A count that isn't available is null with the reason, never 0."""
+    tr, book = mf.triggers, mf.book
+    total = len(tr.orders)
+    out = {"label": "resting trigger orders (stops and take-profits) the feed holds for this market, for sanity checks",
+           "triggers_total": total, "triggers_through_seq": tr.through_seq,
+           "unsized_total": sum(1 for g in tr.orders.values() if g.position_tpsl),
+           "excluded_by_engine": {"trailing_stops": tr.excluded.get("trailing"), "unclassified": tr.excluded.get("unclassified")},
+           "note": "a count can be complete while the notional is not: whole-position orders rest with size 0 (unsized), and "
+                   "a warm start's snapshot can hold many of them; within_10pct is the engine's bands view by distance alone, "
+                   "before the map's exclusions"}
+    bv = mf.bands if (mf.fam["bands"].valid and isinstance(mf.bands, dict)) else None
+    if bv is None:
+        out = census_withheld(out, "no bands view from the engine yet" if mf.bands is None else
+                              f"bands view INVALID: {mf.fam['bands'].reason}", CENSUS_BANDS_KEYS)
+    else:
+        try:
+            by_cat: dict = {}
+            n = uns = 0
+            for _lo, _hi, kind, side, orders, _sz, ptpsl in bv.get("rows") or []:
+                x = by_cat.setdefault(category(kind, side), {"orders": 0, "unsized": 0})
+                x["orders"] += orders
+                x["unsized"] += ptpsl
+                n += orders
+                uns += ptpsl
+            outside = {}
+            for where in ("below", "above"):
+                o = u = 0
+                for _kind, _side, orders, _sz, ptpsl in (bv.get("outside") or {}).get(where) or []:
+                    o += orders
+                    u += ptpsl
+                outside[where] = {"orders": o, "unsized": u}
+            out |= {"within_10pct": n, "outside": outside["below"]["orders"] + outside["above"]["orders"],
+                    "unsized_within_10pct": uns,
+                    "bands_view": {"ref_px": bv.get("ref_px"), "range_bps": bv.get("range_bps"), "width": bv.get("width"),
+                                   "lo": bv.get("lo"), "hi": bv.get("hi"), "block": bv.get("_block"),
+                                   "block_time_ms": bv.get("_block_time_ms"), "seq": bv.get("_seq"),
+                                   "by_category": dict(sorted(by_cat.items())), "outside": outside,
+                                   "excluded_by_engine": bv.get("excluded"),
+                                   "source": "the engine's bands view (protocol 4.5): the waiting triggers within range_bps "
+                                             "of its ref_px (the mid at its block), as it counted them, not a recount"}}
+        except (TypeError, ValueError):
+            out = census_withheld(out, "the bands view couldn't be read", CENSUS_BANDS_KEYS)
+    bt, tt = (book.snapshot_total if book is not None else None), tr.snapshot_total
+    if bt is None or tt is None:
+        out |= {"snapshot_totals": None, "snapshot_totals_reason": "no snapshot totals yet"}
+    else:
+        out["snapshot_totals"] = {"book": {"total_orders": bt, "block": book.snapshot_block, "block_time_ms": book.snapshot_block_time_ms},
+                                  "triggers": {"total_triggers": tt, "block": tr.snapshot_block, "block_time_ms": tr.snapshot_block_time_ms},
+                                  "executable_to_trigger_ratio": round(bt / tt, 2) if tt else None,
+                                  "note": "as the snapshots stated them, each at its own block; the other counts are the "
+                                          "applied state now"}
+        if not tt:
+            out["snapshot_totals"]["executable_to_trigger_ratio_reason"] = "the trigger snapshot stated no orders"
+    if c is None:
+        return census_withheld(out, why, CENSUS_BOOK_KEYS)
+    ref = dec(bv.get("ref_px")) if bv is not None else None
+    src = "the bands view's ref_px, the same range as within_10pct" if ref is not None else "the book mid (no bands view)"
+    ref = book.mid() if ref is None else ref
+    bps = bv.get("range_bps") if (bv is not None and isinstance(bv.get("range_bps"), int)) else 1000
+    lo, hi = ref * (1 - Decimal(bps) / 10_000), ref * (1 + Decimal(bps) / 10_000)
+    n_exec = sum(len(oids) for side in ("B", "A") for px, oids in book.levels[side].items() if lo <= px <= hi)
+    out |= {"excluded": {k: c["excluded"][k]["orders"] for k in CENSUS_EXCLUSIONS} | {
+                "excluded_by_engine": dict(out["excluded_by_engine"])},
+            "executable_orders_total": len(book.orders),
+            "executable_within_10pct": {"orders": n_exec, "ref_px": fmt(ref), "ref_px_source": src, "range_bps": bps,
+                                        "book_time_ms": mf.block_time_ms,
+                                        "source": "the client's book state (snapshot and deltas): resting executable orders "
+                                                  "priced inside the range"},
+            "executable_to_trigger_ratio": round(len(book.orders) / total, 2) if total else None}
+    if not total:
+        out["executable_to_trigger_ratio_reason"] = "no waiting trigger orders"
+    return out
+
+
+def census_withheld(cen: dict, why: str, keys=CENSUS_BOOK_KEYS) -> dict:
+    """A census with the given counts withheld (their source isn't valid at build time, or lapsed by serving time):
+    each is null with the reason; the others stay."""
+    return dict(cen, **{k: None for k in keys}, **{f"{k}_reason": why for k in keys})
+
+
 def _changes_by_oid(book: NodeBook, oids) -> dict:
     want = set(oids)
     out = {o: {"absorbed": ZERO, "pulled": ZERO, "unknown": ZERO, "added": ZERO} for o in want}
@@ -469,13 +771,10 @@ def flow_map(mf, prov: dict, flow_status: dict) -> dict:
                                                             "freshness": flow_status}
 
 
-def thinning(mf) -> dict:
-    """Step 18: depth per 0.5% band out to 10% from the current price, from the full book."""
-    book: NodeBook = mf.book
-    mid = book.mid()
-    if mid is None:
-        return {"available": False, "reason": "no mid: one side of the book is empty"}
-    step_usd = mid * THIN_STEP
+def depth_bands(book: NodeBook, mid: Decimal) -> dict:
+    """The thinning panel's bands as exact decimals: per side ("B" below, "A" above) THIN_BANDS bands of THIN_STEP
+    out from the mid, each with its resting notional, size, order count and largest order. The stop map sums the
+    same bands, so the two panels never disagree on an edge."""
     sides = {}
     for side in ("B", "A"):
         bands = []
@@ -501,13 +800,31 @@ def thinning(mf) -> dict:
             o = book.largest_at(side, px)
             if o is not None and (b["largest"] is None or o.sz > b["largest"].sz or (o.sz == b["largest"].sz and o.oid < b["largest"].oid)):
                 b["largest"] = o
+        sides[side] = bands
+    return sides
+
+
+def thinning(mf, depth: dict | None = None) -> dict:
+    """Step 18: depth per 0.5% band out to 10% from the current price, from the full book."""
+    book: NodeBook = mf.book
+    mid = book.mid()
+    if mid is None:
+        return {"available": False, "reason": "no mid: one side of the book is empty"}
+    step_usd = mid * THIN_STEP
+    depth = depth_bands(book, mid) if depth is None else depth
+    sides = {}
+    for side in ("B", "A"):
+        bands = depth[side]
         rows = []
+        cum = ZERO
         for b in bands:
             lg = b["largest"]
             share = (lg.sz / b["sz"]) if (lg is not None and b["sz"] > 0) else None
+            cum += b["usd"]
             rows.append({"from_pct": float(THIN_STEP * b["k"] * 100), "to_pct": float(THIN_STEP * (b["k"] + 1) * 100),
                          "lo": fmt(b["lo"].quantize(Decimal("0.0001"))), "hi": fmt(b["hi"].quantize(Decimal("0.0001"))),
                          "depth_usd": usd(b["usd"]), "usd_per_1_price": usd(b["usd"] / step_usd),
+                         "cumulative_from_price_usd": usd(cum),
                          "orders": b["orders"],
                          "largest_order": None if lg is None else {"sz": num(lg.sz), "usd": usd(lg.sz * lg.px),
                                                                      "share_pct": round(float(share) * 100, 2) if share is not None else None,
@@ -531,7 +848,8 @@ def thinning(mf) -> dict:
     return {"available": True, "mid": fmt(mid), "band_pct": float(THIN_STEP * 100), "out_to_pct": float(THIN_STEP * THIN_BANDS * 100),
             "band_width_usd": usd(step_usd), "note": THIN_NOTE,
             "units": {"depth_usd": "sum of price x size of resting orders in the band",
-                      "usd_per_1_price": "depth_usd divided by the band's width in dollars of price"},
+                      "usd_per_1_price": "depth_usd divided by the band's width in dollars of price",
+                      "cumulative_from_price_usd": "resting notional from the current price out to and including this band, same side"},
             "size_check": f"a band is flagged when one order is more than {int(DOMINANT_SHARE * 100)}% of its size",
             **sides}
 
@@ -553,12 +871,14 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
         "book_time_ms": mf.block_time_ms}
     base["ladder"] = ladder(mf, client, fam["triggers"]) if ok else {"available": False, "reason": why}
     base["walls"] = walls(mf, ps) if ok else {"available": False, "reason": why}
-    base["thinning"] = (thinning(mf) | {"book_time_ms": mf.block_time_ms, "freshness": fam["book"]["state"]}) if ok else {
+    depth = depth_bands(mf.book, mf.book.mid()) if ok and mf.book.mid() is not None else None
+    base["thinning"] = (thinning(mf, depth) | {"book_time_ms": mf.block_time_ms, "freshness": fam["book"]["state"]}) if ok else {
         "available": False, "reason": why, "note": THIN_NOTE}
     base["history"] = history(ps, client, market) if mf.book is not None else {"available": False, "reason": why}
     tst = fam["triggers"]
     if mf.triggers is not None and tst["state"] in ("LIVE", "REPLAY"):
-        base["stops"] = stop_bands(mf, client)
+        base["stops"] = stop_bands(mf, client) | stop_map(mf, depth, None if depth is not None else (
+            why or "no mid: one side of the book is empty"))
     else:
         base["stops"] = {"available": False, "reason": f"triggers {tst['state']}: {tst.get('reason')}"}
     rule = mf.flow.bursts

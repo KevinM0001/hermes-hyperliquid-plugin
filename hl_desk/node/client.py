@@ -541,6 +541,7 @@ class FeedClient:
             self._family_lost(mf, a.family, f"snapshot holds {len(state.orders)} rows, total says {a.total}")
             mf.counters["snapshots_rejected"] += 1
             return
+        state.snapshot_total, state.snapshot_block, state.snapshot_block_time_ms = a.total, a.block, a.block_time_ms
         self._offer(mf, a.family, a.through_seq, state, in_stream_last_seq=mf.last_seq)
 
     def offer_snapshot(self, market: str, family: str, through_seq: int, rows: list, coverage: dict | None = None,

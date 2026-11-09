@@ -17,9 +17,11 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_FLOOR
 
 from .proto import dec
+from ..util import median
 
 ZERO = Decimal(0)
 DOMINANT_SHARE = Decimal("0.5")
+CENSUS_EXCLUSIONS = ("implausible_price", "size_outlier", "already_true_at_price", "beyond_range")
 
 
 @dataclass(slots=True)
@@ -44,6 +46,9 @@ class NodeTriggers:
         self._floors: dict[tuple, Decimal] = {}     # (oid, width) -> band floor, computed once per order
         self.excluded = {"trailing": None, "unclassified": None}
         self.through_seq: int | None = None
+        self.snapshot_total: int | None = None      # the snapshot's stated total_triggers and block (as book.py)
+        self.snapshot_block: int | None = None
+        self.snapshot_block_time_ms: int | None = None
 
     @classmethod
     def from_snapshot(cls, rows: list, excluded: dict | None) -> "NodeTriggers":
@@ -152,3 +157,82 @@ def _finish(b: dict) -> dict:
     b["largest"] = None if lg is None else {"sz": lg.sz, "user": lg.user, "oid": lg.oid, "share": share}
     b["dominated"] = share is not None and share > DOMINANT_SHARE
     return b
+
+
+# --- the stop map's census (Kevin's stop and liquidity map report) ---------------------------
+
+def fires_on(kind: str, side: str) -> str:
+    """The move that fires a trigger, from its kind and the side it trades (the feed carries no condition string):
+    a sell stop or a buy (short) take-profit fires on a fall ("Price below X"); a buy stop or a sell (long)
+    take-profit fires on a rise ("Price above X")."""
+    return "fall" if (kind == "stop") == (side == "A") else "rise"
+
+
+def category(kind: str, side: str) -> str:
+    """sell_stop_on_fall, buy_take_profit_on_fall, buy_stop_on_rise or sell_take_profit_on_rise."""
+    return f"{'sell' if side == 'A' else 'buy'}_{kind}_on_{fires_on(kind, side)}"
+
+
+def census(triggers: "NodeTriggers", ref_px: Decimal, step: Decimal, n_bands: int, outlier_multiple: int,
+           plausible_ratio: Decimal) -> dict:
+    """Every waiting trigger counted exactly once for the stop map: in a band of the move that fires it (bands of
+    `step` out to n_bands x step from ref_px, the thinning panel's edges) or under one exclusion, in this order:
+    implausible price (outside [ref/plausible_ratio, ref x plausible_ratio], or not positive), size outlier (a stated
+    size above outlier_multiple x the market's median sized waiting trigger), condition already true at ref_px (a fall
+    trigger at or above it, a rise trigger at or below it), beyond the range. Whole-position orders (size unknown)
+    are never size outliers and stay counted as unsized. Sizes and notionals are exact decimals."""
+    sized_szs = [g.sz for g in triggers.orders.values() if not g.position_tpsl and g.sz > 0]
+    med = median(sized_szs) if sized_szs else None
+    cap = None if med is None else med * outlier_multiple
+    bands = {d: [_cbucket() for _ in range(n_bands)] for d in ("fall", "rise")}
+    excluded = {k: _cbucket() for k in CENSUS_EXCLUSIONS}
+    for g in triggers.orders.values():
+        px = g.trigger_px
+        if px <= 0 or px > ref_px * plausible_ratio or px < ref_px / plausible_ratio:
+            _cadd(excluded["implausible_price"], g)
+            continue
+        if cap is not None and not g.position_tpsl and g.sz > cap:
+            _cadd(excluded["size_outlier"], g)
+            continue
+        d = fires_on(g.kind, g.side)
+        if (d == "fall" and px >= ref_px) or (d == "rise" and px <= ref_px):
+            _cadd(excluded["already_true_at_price"], g)
+            continue
+        dist = (ref_px - px) / ref_px if d == "fall" else (px - ref_px) / ref_px
+        k = int(dist / step)
+        if k >= n_bands:
+            _cadd(excluded["beyond_range"], g)
+            continue
+        _cadd(bands[d][k], g)
+    in_bands = sum(b["orders"] for d in bands for b in bands[d])
+    return {"ref_px": ref_px, "step": step, "n_bands": n_bands, "bands": bands, "excluded": excluded,
+            "median_sz": med, "sized_population": len(sized_szs), "outlier_cap_sz": cap,
+            "waiting_total": len(triggers.orders), "in_bands": in_bands,
+            "engine_excluded": dict(triggers.excluded)}
+
+
+def _cbucket() -> dict:
+    return {"orders": 0, "sized_orders": 0, "unsized_orders": 0, "sz": ZERO, "notional": ZERO, "users": set(),
+            "by_category": {}, "_largest": None}
+
+
+def _cadd(b: dict, g: Trigger) -> None:
+    cat = b["by_category"].get(category(g.kind, g.side))
+    if cat is None:
+        cat = b["by_category"][category(g.kind, g.side)] = {"orders": 0, "sized_orders": 0, "unsized_orders": 0,
+                                                            "sz": ZERO, "notional": ZERO, "users": set()}
+    for x in (b, cat):
+        x["orders"] += 1
+        if g.user is not None:
+            x["users"].add(g.user)
+        if g.position_tpsl:
+            x["unsized_orders"] += 1
+        else:
+            x["sized_orders"] += 1
+            x["sz"] += g.sz
+            x["notional"] += g.sz * g.trigger_px
+    if not g.position_tpsl:
+        lg = b["_largest"]
+        n = g.sz * g.trigger_px
+        if lg is None or n > lg.sz * lg.trigger_px or (n == lg.sz * lg.trigger_px and g.oid < lg.oid):
+            b["_largest"] = g

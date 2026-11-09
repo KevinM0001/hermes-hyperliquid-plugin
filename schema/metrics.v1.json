@@ -1156,7 +1156,7 @@
     },
     "node.thinning_band": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
-      "formula": "per 0.5% band out to 10% from the mid, bids below and asks above: depth_usd = sum(px*sz) of resting orders in the band; usd_per_1_price = depth_usd / (mid * 0.005); orders; the largest single order and its share (dominated over 50%); sharpest drop = the largest ratio usd_per_1_price[k] / usd_per_1_price[k+1] moving away from the price, with its band and distance (an empty next band is called empty)",
+      "formula": "per 0.5% band out to 10% from the mid, bids below and asks above: depth_usd = sum(px*sz) of resting orders in the band; usd_per_1_price = depth_usd / (mid * 0.005); cumulative_from_price_usd = sum of depth_usd from the band nearest the price out to and including this one, same side (1.3.0); orders; the largest single order and its share (dominated over 50%); sharpest drop = the largest ratio usd_per_1_price[k] / usd_per_1_price[k+1] moving away from the price, with its band and distance (an empty next band is called empty)",
       "units": "USD; USD per $1 of price",
       "inputs": [
         "book"
@@ -1165,6 +1165,62 @@
       "window": "current book",
       "reset_rule": "replaced at every change",
       "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in; note: What's resting right now. Orders can be added or pulled at any moment; this isn't a forecast."
+    },
+    "node.stop_walk_ratio": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "side_convention": "fall side (sell stops and buy take-profits, below the price) against the bids below; rise side (buy stops and sell take-profits, above the price) against the asks above",
+      "window": "current",
+      "reset_rule": "replaced at every swap",
+      "formula": "stop map (Kevin's stop and liquidity map report): every waiting trigger lands in band k = floor(distance / 0.5%) out to 10% of the move that fires it (a sell stop or buy take-profit fires on a fall, a buy stop or sell take-profit on a rise; the feed carries no condition string, so the move follows from kind and side) or under one counted exclusion (node.stop_exclusions). Per band: notional_usd = sum(sz * trigger_px) over the orders with a stated size, with lower_bound (true when any order in the band has no size: the notional is at least this) and unknown_size_orders beside it; accounts = distinct users; by_category the same per category. walk.depth_at_and_beyond_usd = node.thinning_band depth_usd summed over the band and every band farther from the price on the walked side, to 10% (the report's 'bids at and below it'); walk.depth_between_usd = the bands nearer than it (thinning cumulative_from_price_usd of the band before, 0 for k = 0); ratio_pct = notional_usd / depth_at_and_beyond_usd x 100, to 4 significant figures (a tiny share is never a 0), with the same lower_bound and unknown_size_orders beside it. The reference price is the book mid, the thinning panel's",
+      "units": "USD; % of the walked depth",
+      "inputs": [
+        "trig_snapshot",
+        "trig_delta",
+        "book"
+      ],
+      "completeness_rule": "null with the family's state and reason unless the trigger family and the book are valid (the map needs the book for the reference price and the depth; it is {available: false, reason} without one, and withheld again when the book lapses by serving time); ratio_pct is null with ratio_reason when the band has no triggers, when its notional is unknown (every order whole-position: notional_usd and ratio_pct null with the reason 'every order is whole-position: size unknown, not 0', lower_bound false) or when the walked depth is 0; a band holding some whole-position orders has lower_bound true on its notional and on its ratio (understated, 'at least'), never a 0 for them; the venue checks the waiting set only at restart (venue_check)"
+    },
+    "node.stop_clusters": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "side_convention": "fall side (sell stops and buy take-profits, below the price) against the bids below; rise side (buy stops and sell take-profits, above the price) against the asks above",
+      "window": "current",
+      "reset_rule": "replaced at every swap",
+      "formula": "the 2 bands per side of node.stop_walk_ratio with the largest stated notional_usd (ties: the nearer band, then the more orders), fewer when fewer bands have one; each is the band's row plus rank and text: '<Sell-side|Buy-side> triggers at <near_px> to <far_px> (<from>% to <to>%): [at least ]$<notional> across <orders> orders from <accounts> accounts; the <bids at and below|asks at and above> it total $<depth_at_and_beyond>, so this cluster is [at least ]<ratio>% of the liquidity it would walk[; <unknown_size_orders> of <orders> orders report no size, so this is understated]' ('at least' and the last clause whenever unknown_size_orders > 0: the cluster is a lower bound) (money as the report: $1.90M, $320K; the share to two significant figures)",
+      "units": "USD; orders; accounts; %",
+      "inputs": [
+        "node.stop_walk_ratio"
+      ],
+      "completeness_rule": "as node.stop_walk_ratio: null (clusters_reason) without a valid book or once it lapses by serving time; a band whose notional is unknown never ranks; 'from N accounts' is said only because the feed's triggers carry their owner; a cluster made partly of whole-position orders says it is understated"
+    },
+    "node.stop_exclusions": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "side_convention": "fall side (sell stops and buy take-profits, below the price) against the bids below; rise side (buy stops and sell take-profits, above the price) against the asks above",
+      "window": "current",
+      "reset_rule": "replaced at every swap",
+      "formula": "what the stop map leaves out of its bands, each waiting trigger counted once under the first that applies, in this order: trailing_stops (the engine's count only: trailing stops never reach the feed, carve-out C-2, so no price or notional), implausible_price (trigger price outside [reference / 10, reference x 10] or not positive), size_outlier (a stated size above 100 x the market's median sized waiting trigger, the median over every sized waiting trigger of the market; whole-position orders never qualify), already_true_at_price (a fall trigger at or above the reference price, a rise trigger at or below it), beyond_range (more than 10% away); each with orders, sized and unknown-size orders, distinct accounts, notional_usd at the trigger price (null when no order has a size) and by_category; accounted says the bands and the exclusions add up to every waiting trigger",
+      "units": "orders; USD",
+      "inputs": [
+        "trig_snapshot",
+        "trig_delta",
+        "book mid"
+      ],
+      "completeness_rule": "{available: false, reason} without a valid book (nothing can be judged against a price); a count that can't be known from the feed is null with a reason (trailing stops' notional), never 0; nothing excluded here is in the map's bands"
+    },
+    "node.stop_census": {
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
+      "formula": "the stops panel's census, the sanity checks on the feed's resting trigger orders for the market, each count from the client state that already holds it: triggers_total = the applied waiting set now (snapshot and deltas; triggers_through_seq), unsized_total = its whole-position orders (size 0 on the wire), excluded_by_engine as the feed reports it; within_10pct, outside and unsized_within_10pct = the engine's own bands view (protocol 4.5: rows summed by kind and side, outside.below + outside.above, position_tpsl_orders), as it counted them at its ref_px and block, never a recount (bands_view carries ref_px, range_bps, width, lo, hi, block, block_time_ms, seq, by_category, outside, excluded_by_engine); excluded = the map's exclusions by reason (node.stop_exclusions) with excluded_by_engine; executable_orders_total = the client's resting executable book now; executable_within_10pct = its orders priced within the bands view's range_bps of its ref_px (the book mid when there is no bands view); executable_to_trigger_ratio = executable_orders_total / triggers_total, 2 decimals; snapshot_totals = the last complete snapshots' stated book_snapshot.total_orders and trig_snapshot.total_triggers with their block and block_time_ms, and their ratio",
+      "units": "orders; ratio",
+      "inputs": [
+        "trig_snapshot",
+        "trig_delta",
+        "bands",
+        "book_snapshot",
+        "book_delta"
+      ],
+      "side_convention": "by category: sell_stop_on_fall, buy_take_profit_on_fall (below the price), buy_stop_on_rise, sell_take_profit_on_rise (above it)",
+      "window": "current",
+      "reset_rule": "replaced at every swap; the bands view at every bands message; the snapshot totals at every complete snapshot",
+      "completeness_rule": "present whenever the stops panel is (the trigger family usable); a count whose source isn't valid is null with <name>_reason, never 0: the bands-view counts (within_10pct, outside, unsized_within_10pct, bands_view) without a valid bands view or once that family lapses by serving time, the book-built counts (excluded, executable_orders_total, executable_within_10pct, executable_to_trigger_ratio) without a valid book or once it lapses, snapshot_totals until both families' snapshots stated a total ('no snapshot totals yet'; a state offered from outside the stream has none); no skipped-block count exists: a capture gap is a new epoch and a fresh snapshot, and a crossed book is the INVALID rule"
     },
     "node.activity_buckets": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1465,6 +1521,6 @@
     "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check",
     "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
     "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution",
-    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals; Flow Deck card path (six 15 s points) and dominated_by, and a validation status on the card's regime labels (Commentary TOOL_PROPOSALS 1, 4 and 2, Nov 9), additive; deck.watch, Kevin's swing-context page per market (minute bars from the counted public trades under the coverage rules, ranges from the venue's closed candles, the verdict by his own rule), its serving-time withholding, and the hl_watch tool; node.flow_map, the Order Flow Map from node fills (Kevin's order-flow map report: taker flow over eight 15-minute buckets by risk opened, closed or flipped, account shares and the four readings), under market.node.live and market.node.replay, withheld with the tape at serving time"
+    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals; Flow Deck card path (six 15 s points) and dominated_by, and a validation status on the card's regime labels (Commentary TOOL_PROPOSALS 1, 4 and 2, Nov 9), additive; deck.watch, Kevin's swing-context page per market (minute bars from the counted public trades under the coverage rules, ranges from the venue's closed candles, the verdict by his own rule), its serving-time withholding, and the hl_watch tool; node.flow_map, the Order Flow Map from node fills (Kevin's order-flow map report: taker flow over eight 15-minute buckets by risk opened, closed or flipped, account shares and the four readings), under market.node.live and market.node.replay, withheld with the tape at serving time; the node stops panel's stop map (node.stop_walk_ratio, node.stop_clusters, node.stop_exclusions: trigger bands at the thinning panel's edges with the depth they would walk, the two largest clusters per side quoted as in Kevin's stop and liquidity map report, counted exclusions, lower_bound beside every notional and ratio, and a census block, node.stop_census, of the feed's waiting set against the engine's bands view, the book and the snapshots' stated totals) and node.thinning_band cumulative_from_price_usd, additive"
   ]
 }

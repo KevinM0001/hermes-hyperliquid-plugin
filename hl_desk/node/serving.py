@@ -16,6 +16,7 @@ shows itself, counting the served age and every second since it asked (app.js sn
 from __future__ import annotations
 
 from .client import delay_state
+from .panels import CENSUS_BANDS_KEYS, CENSUS_BOOK_KEYS, census_withheld
 
 USABLE = ("LIVE", "REPLAY")
 BUCKET_KEYS = ("new_long", "cover", "new_short", "exit")
@@ -66,6 +67,16 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
         out["ladder"] = {"available": False, "reason": why}
         out["walls"] = {"available": False, "reason": why}
         out["thinning"] = {"available": False, "reason": why, "note": (view.get("thinning") or {}).get("note")}
+        st = out.get("stops")
+        if isinstance(st, dict) and "map" in st:        # the stop map's depth, clusters and book-built census counts
+            cen = st.get("census")
+            out["stops"] = dict(st, map={"available": False, "reason": why}, clusters=None, clusters_reason=why,
+                                census=census_withheld(cen, why, CENSUS_BOOK_KEYS) if isinstance(cen, dict) else cen)
+    bands = fams.get("bands") or {}
+    if "stops" in out and bands.get("state") not in USABLE and (view["families"].get("bands") or {}).get("state") in USABLE:
+        st = out.get("stops")
+        if isinstance(st, dict) and isinstance(st.get("census"), dict):     # the census counts read from the bands view
+            out["stops"] = dict(st, census=census_withheld(st["census"], _why("bands", bands), CENSUS_BANDS_KEYS))
     if "stops" in out and trig.get("state") not in USABLE and (view["families"].get("triggers") or {}).get("state") in USABLE:
         why = _why("triggers", trig)
         out["stops"] = {"available": False, "reason": why}
