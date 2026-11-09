@@ -17723,6 +17723,7 @@
     ["Waiting stops", "stop and take-profit orders resting at each price, which the public feed never shows"],
     ["Wall watch", "the largest single resting orders near the price; public levels are aggregated, so no level can be shown as one order"],
     ["Liquidity heatmap and thinning", "the node's full book, sampled over 15 minutes and banded out to 10% from the price"],
+    ["Order flow map", "taker flow over eight 15-minute buckets by what each fill did to the taker's position, with account shares and readings"],
     ["Node tape", "the node's fills with liquidation, TWAP, incomplete and conflict flags"],
     ["Activity buckets and wallet splits", "new long, cover, new short and exit from node fills, on the Flow Deck cards, bursts and wallets"],
     ["Alerts", "burst alerts from node fills, ranked against Nov 3 to 7, and liquidation alerts"]
@@ -18722,6 +18723,105 @@
     }));
   }
 
+  // ---- Order Flow Map (node fills; Kevin's order-flow map report): eight clock-aligned 15-minute buckets of taker
+  // flow, buys up and sells down, each split by what the fill did to the taker's own position (opened risk solid,
+  // closed risk faded, flips striped), the account shares and the plugin's readings quoted verbatim. Everything is
+  // market.node.live.flow_map (schema 1.3.0 node.flow_map); nothing is scaled, filled in or computed here.
+  function hm(t) { const s = isoOf(t); return s ? s.slice(11, 16) : "?"; }
+  function ofmSeg(cls, v, scale) {
+    if (!isNum(v) || v <= 0 || !(scale > 0)) return null;
+    return h("i", { className: cls, style: { flexBasis: (v / scale * 100).toFixed(2) + "%" } });
+  }
+  function ofmTip(b) {
+    const lines = [hm(b.start_ms) + " to " + hm(b.end_ms) + " UTC" + (b.in_progress ? " (in progress)" : ""),
+      "buy " + usd(b.buy_usd) + " = open long " + usd(b.open_long_usd) + " + close short " + usd(b.close_short_usd) + " + flips to long " + usd(b.flip_to_long_usd),
+      "sell " + usd(b.sell_usd) + " = close long " + usd(b.close_long_usd) + " + open short " + usd(b.open_short_usd) + " + flips to short " + usd(b.flip_to_short_usd),
+      "net " + usd(b.net_usd, true) + " \u00b7 risk added " + usd(b.risk_added_usd) + " \u00b7 risk removed " + usd(b.risk_removed_usd),
+      intf(b.fills) + " fills, " + intf(b.accounts) + " taker accounts" + (isNum(b.top_account_share_pct) ? ", top account " + num(b.top_account_share_pct, 1, 1) + "%" : "") +
+        (b.unclassified_fills ? ", " + intf(b.unclassified_fills) + " unclassified (" + usd(b.unclassified_usd) + ")" : "") + (b.unreadable_fills ? ", " + intf(b.unreadable_fills) + " unreadable" : "")];
+    if (b.complete === false && b.reason) lines.push(b.reason);
+    return lines.join("\n");
+  }
+  function OfmColumns(props) {
+    const bks = props.buckets || [];
+    const scale = bks.reduce(function (m, b) { return Math.max(m, isNum(b.buy_usd) ? b.buy_usd : 0, isNum(b.sell_usd) ? b.sell_usd : 0); }, 0);
+    return h("div", { className: "hd-ofm-cols", role: "img", "aria-label": "Order flow map: eight 15-minute buckets, buys up and sells down" },
+      bks.map(function (b, i) {
+        return h("div", { key: b.start_ms || i, className: cx("hd-ofm-col", b.complete === false && !b.in_progress && "hd-ofm-partial", b.in_progress && "hd-ofm-live"), title: ofmTip(b) },
+          h("div", { className: "hd-ofm-up" }, ofmSeg("hd-bg-bid hd-ofm-flip", b.flip_to_long_usd, scale), ofmSeg("hd-bg-bid hd-ofm-close", b.close_short_usd, scale), ofmSeg("hd-bg-bid", b.open_long_usd, scale)),
+          h("div", { className: "hd-ofm-dn" }, ofmSeg("hd-bg-ask", b.open_short_usd, scale), ofmSeg("hd-bg-ask hd-ofm-close", b.close_long_usd, scale), ofmSeg("hd-bg-ask hd-ofm-flip", b.flip_to_short_usd, scale)),
+          h("div", { className: "hd-ofm-t" }, hm(b.start_ms), b.in_progress ? h("span", { className: "hd-ofm-now" }, " now") : null, b.complete === false && !b.in_progress ? h("span", { className: "hd-dim" }, " part") : null));
+      }),
+      scale > 0 ? h("div", { className: "hd-ofm-scale" }, "full height = " + usd(scale) + " of taker flow in one bucket") : null);
+  }
+  function OfmTable(props) {
+    const bks = props.buckets || [];
+    const cols = [["start", function (b) { return hm(b.start_ms); }], ["buy", function (b) { return usd(b.buy_usd); }], ["sell", function (b) { return usd(b.sell_usd); }],
+      ["net", function (b) { return usd(b.net_usd, true); }], ["open long", function (b) { return usd(b.open_long_usd); }], ["close short", function (b) { return usd(b.close_short_usd); }],
+      ["open short", function (b) { return usd(b.open_short_usd); }], ["close long", function (b) { return usd(b.close_long_usd); }], ["flips", function (b) { return usd(b.flip_usd); }],
+      ["fills", function (b) { return intf(b.fills); }], ["accounts", function (b) { return intf(b.accounts); }],
+      ["covered", function (b) { return isNum(b.coverage_s) ? intf(b.coverage_s) + " s" : "?"; }]];
+    return h("div", { className: "hd-scroll" }, h("table", { className: "hd-table hd-ofm-table" },
+      h("thead", null, h("tr", null, cols.map(function (c) { return h("th", { key: c[0], className: c[0] === "start" ? "" : "hd-r" }, c[0]); }))),
+      h("tbody", null, bks.map(function (b, i) {
+        return h("tr", { key: b.start_ms || i, className: cx(b.complete === false && "hd-dim"), title: b.complete === false ? (b.reason || "") : "" },
+          cols.map(function (c) { return h("td", { key: c[0], className: c[0] === "start" ? "hd-num" : "hd-r hd-num" }, c[1](b)); }));
+      }))));
+  }
+  function OfmWindow(props) {
+    const w = props.w;
+    if (!w) return null;
+    const holes = w.uncovered || [];
+    return h("div", { className: "hd-ofm-win" },
+      h("span", null, "window ", h("b", null, hm(w.start_ms) + " to " + hm(w.end_ms) + " UTC"), " \u00b7 " + intf(w.buckets) + " buckets of " + intf((w.bucket_s || 0) / 60) + " min"),
+      h("span", null, "covered by node fills: ", h("b", null, isNum(w.coverage_s) ? (w.coverage_s >= 120 ? intf(w.coverage_s / 60) + " min" : intf(w.coverage_s) + " s") : "?"),
+        w.complete ? " \u00b7 complete" : holes.length ? " \u00b7 " + intf(holes.length) + (holes.length === 1 ? " hole: " : " holes: ") + holes.map(function (u) { return hm(u.start_ms) + " to " + hm(u.end_ms) + (u.why ? " (" + u.why + ")" : ""); }).join("; ") : ""));
+  }
+  function OfmBody(props) {
+    const fm = props.fm;
+    const acc = fm.accounts || {};
+    const top = acc.top || null;
+    return h(Fragment, null,
+      h(OfmWindow, { w: fm.window }),
+      h(OfmColumns, { buckets: fm.buckets }),
+      h("div", { className: "hd-ofm-legend" },
+        h("span", null, h("i", { className: "hd-bg-bid" }), "open long"), h("span", null, h("i", { className: "hd-bg-bid hd-ofm-close" }), "close short"),
+        h("span", null, h("i", { className: "hd-bg-ask" }), "open short"), h("span", null, h("i", { className: "hd-bg-ask hd-ofm-close" }), "close long"),
+        h("span", null, h("i", { className: "hd-bg-bid hd-ofm-flip" }), "flips"), h("span", { className: "hd-dim" }, "hatched column: not fully covered; hover a column for its numbers")),
+      h("ul", { className: "hd-ofm-readings" }, (fm.readings || []).map(function (r, i) {
+        return h("li", { key: i }, h("span", { className: "hd-ofm-kind" }, r.kind || ""), r.text);
+      })),
+      // The shares are in the concentration reading above, so this line only adds what it can't carry: the address
+      // (one click to its wallet view), the count of accounts and the basis.
+      top || isNum(acc.distinct) ? h("div", { className: "hd-ofm-acc" },
+        top && top.address ? h(Fragment, null, "most active taker account ", h(Addr, { address: top.address })) : null,
+        isNum(acc.distinct) ? " \u00b7 " + intf(acc.distinct) + " taker accounts" : "", isNum(acc.basis_usd) ? " \u00b7 shares of " + usd(acc.basis_usd) + " aggressive flow" : "",
+        isNum(acc.unattributed_usd) && acc.unattributed_usd > 0 ? " \u00b7 " + usd(acc.unattributed_usd) + " unattributed" : "") : null,
+      props.compact ? null : h("details", { className: "hd-ofm-fold" }, h("summary", null, "Per-bucket table"), h(OfmTable, { buckets: fm.buckets })),
+      props.compact ? null : h("div", { className: "hd-notes-foot" }, "Descriptions, not signals: direction from each taker's own position effect, never from price; each fill once, the taker side only; " +
+        (fm.totals ? intf(fm.totals.fills) + " fills in the window" : "") + "."));
+  }
+  function OrderFlowMapPanel(props) {
+    const v = props.v;
+    const fm = v && v.flow_map;
+    const gate = nodeGate(v, "flow_map", false);
+    return h(Panel, {
+      id: "node-flow-map", className: "hd-p-ofm", title: "Order flow map (node fills, 2 h)", nodeHook: "flow-map",
+      why: h(Fragment, null,
+        h("p", null, "Taker flow from the node's fills over the last two hours in eight 15-minute buckets aligned to the clock: buys up, sells down, " +
+          "full height the largest single bucket. Each fill is placed by what it did to the taker's own position, read from the position before the fill: " +
+          "opening a long or a short adds risk (solid), closing one removes it (faded), a fill that carried a position through zero is a flip (striped). " +
+          "That is the split a trader reads: whether selling is longs leaving or shorts arriving. The sentences are the plugin's readings of the same numbers, " +
+          "quoted as served. Buckets not fully covered by the node fills say so and are never scaled up; the last bucket is still in progress."),
+        fm && fm.counting ? h("p", { className: "hd-dim" }, fm.counting) : null),
+      badges: h(NodeProv, { v: v, what: "fills" }),
+      status: h(NodeStatus, { v: v, fams: ["flow"], extra: fm && fm.totals && isNum(fm.totals.fills)
+        ? h("span", { className: "hd-prov-item" }, listCount("window", fm.totals.fills, "fills", null)) : null })
+    },
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["flow"] }),
+    gate ? h(Fragment, null, fm && fm.window ? h(OfmWindow, { w: fm.window }) : null, gate) : h(OfmBody, { fm: fm }));
+  }
+
   function NodeTapeTable(props) {
     const rows = props.rows || [];
     if (!rows.length) return h("div", { className: "hd-empty hd-pad" }, "No node fills in the observed window yet.");
@@ -19117,6 +19217,7 @@
     const wg = nodeGate(v, "walls", true);
     const tg = nodeGate(v, "thinning", true);
     const tpg = nodeGate(v, "tape", false);
+    const fmg = nodeGate(v, "flow_map", false);
     const hg = heatGate(v);
     return h("div", { className: "hd-replay-grid" },
       fam,
@@ -19155,6 +19256,8 @@
           v.thinning.note ? h("div", { className: "hd-thin-note" }, v.thinning.note) : null,
           h(ThinDrop, { d: g(v, "thinning", "bids_below", "sharpest_drop"), side: "bid" }),
           h(ThinDrop, { d: g(v, "thinning", "asks_above", "sharpest_drop"), side: "ask" }))),
+      h(ReplayBox, { title: "Order flow map", mode: mode, wide: true },
+        fmg || h(OfmBody, { fm: v.flow_map, compact: true })),
       h(ReplayBox, { title: "Node tape (latest fills)", mode: mode, wide: true },
         v.tape ? h(TapeCoverage, { c: v.tape.coverage }) : null,
         tpg || h(NodeTapeTable, { rows: (v.tape.rows || []).slice(0, 8), maxHeight: "260px" })),
@@ -20634,6 +20737,17 @@
       if (lapsed("triggers") && out.stops) out.stops = { available: false, reason: why("triggers") };
       if (lapsed("flow") && out.tape) out.tape = { available: false, reason: "node fills " + fams.flow.state + ": " + fams.flow.reason,
         coverage: (view.tape || {}).coverage };
+      // The Order Flow Map goes with the tape: buckets, totals, shares and readings withheld; the window, provenance
+      // and the lapsed status with its reason stay (hl_desk/node/serving.py). While usable, it carries the aged status.
+      const fm = out.flow_map;
+      if (fm && typeof fm === "object" && fams.flow) {
+        if (fm.available && !USABLE[fams.flow.state]) {
+          out.flow_map = { available: false, reason: "node fills " + fams.flow.state + ": " + fams.flow.reason, stream: "node fills",
+            provenance: fm.provenance, freshness: fams.flow, window: fm.window };
+        } else if (fm.available) {
+          out.flow_map = Object.assign({}, fm, { freshness: fams.flow });
+        }
+      }
       return out;
     }
     function deckNode(deck) {
@@ -21307,7 +21421,9 @@
           h("summary", null, "Observed depth",
             h("span", { className: "hd-foldcard-note" }, "folded: open it for the bands and the observed depth per book kind, with their freshness and reasons")),
           h(DepthPanel, { m: m })),
-        h(SectionHead, { title: "Flow", note: "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
+        h(SectionHead, { title: "Flow", note: non ? "the order flow map from the node's fills, who is aggressive, the Flow Deck's regimes and alerts, and the tape"
+          : "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
+        non ? h("div", { className: "hd-row hd-row-c" }, h(OrderFlowMapPanel, { v: nlive })) : null,
         h("div", { className: "hd-row hd-row-b" },
           h(FlowPanel, { m: m }),
           h(DeckPanel, { resp: resp })),
