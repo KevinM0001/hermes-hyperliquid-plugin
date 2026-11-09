@@ -77,3 +77,20 @@ the price ladder to its right (his reference: Hyperliquid's own trade page). Sam
 
 The public websocket reconnected at 18:53:05Z (the collector's conn #23), so the after shots show a segment that is
 seconds old: one candle, the 90 s windows not yet complete. That is the data at that moment, not the layout.
+
+## Volume bars, a crosshair readout, and the observed depth folded (2026-11-09, 19:08Z, Kevin's direction)
+
+Kevin's three reference screenshots (Hyperliquid, Breakout, Bullish) all carry volume under the candles and an
+open/high/low/close readout; Bullish's page was also his cue to take the depth panel out of the main view. Same
+review dashboard, same capture setup. The before views are `82` and `84` above.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `86-chart-volume-readout.png` | The market row with volume bars under the candles (each candle's `volume_usd`, buy and sell colours at 50 %) and the readout at the top left (the latest candle, marked partial, O/H/L/C, change, volume) | 1700 px tall viewport, 19:08Z |
+| `87-depth-folded.png` | The Book section with the observed depth folded to one line at its end | scrolled to the Book heading |
+| `88-depth-fold-open.png` | The same fold opened: the Observed depth panel, unchanged inside | the fold's summary clicked |
+| `89-chart-no-label-boxes.png` | The chart without the label boxes on its price lines (Kevin: they moved around and hid the candles); the prices stay on the axis, the names in the legend | 1700 px tall viewport, 19:14Z |
+
+The readout follows the crosshair when a pointer is over the chart (headless Chrome has none here, so the shots show
+the latest candle). The volume bars sit on their own hidden scale in the bottom fifth of the chart; the candles keep
+the upper part. Nothing is computed in the tab: the change shown is the candle's close minus its open.
