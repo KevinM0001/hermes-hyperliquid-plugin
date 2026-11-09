@@ -761,7 +761,7 @@
     const sel = group !== "full" && ladders[group] ? ladders[group] : null;
     const lad = sel || full;
     const top = g(m, "book", "top") || {};
-    const f = sel ? (sel.freshness || g(m, "freshness", LADDER_FAM[group])) : g(m, "freshness", "book_full");
+    const f = sel ? (g(m, "freshness", LADDER_FAM[group]) || sel.freshness) : g(m, "freshness", "book_full");
     const groupSelect = kinds.length ? h("label", { className: "hd-group" }, "group",
       h("select", { value: group, "aria-label": "Price grouping", onChange: function (e) { setGroup(e.target.value); } },
         h("option", { value: "full" }, stepLabel(ladderStep(full.bids, full.asks)) + " (full precision)"),
@@ -2573,7 +2573,8 @@
       label: "Book pressure position: observed depth",
       why: h("p", null, "Exact notional within \u00b10.25/0.5/1% of mid only from full-precision levels that reach the band; aggregated buckets give a labeled approximation with its range. Imbalance is (bid \u2212 ask) / (bid + ask) for the band; positive means more bid depth."),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "l2Book" }),
-      status: h(Fragment, null, h(Fresh, { f: fr.book_full, label: "full" }), h(Fresh, { f: fr.book_sf4, label: "nSigFigs=4" }), h(Fresh, { f: fr.book_sf3, label: "nSigFigs=3" }))
+      status: h(Fragment, null, h(Fresh, { f: fr.book_full, label: "full" }), h(Fresh, { f: fr.book_sf4, label: "nSigFigs=4" }), h(Fresh, { f: fr.book_sf3, label: "nSigFigs=3" }),
+        fr.book_sf2 ? h(Fresh, { f: fr.book_sf2, label: "nSigFigs=2" }) : null)
     },
     h("div", { className: "hd-depth-head" }, h("span", null, "band"), h("span", { className: "hd-bid" }, "bids"), h("span", { className: "hd-ask" }, "asks"), h("span", { className: "hd-r" }, "imbalance")),
     bands.length ? bands.map(function (band) {
@@ -3222,7 +3223,7 @@
       return out;
     }
     // --- public (as hl_desk/serving_public.py)
-    const BOOK_LABEL = { book_full: "full precision", book_sf4: "nSigFigs=4", book_sf3: "nSigFigs=3" };
+    const BOOK_LABEL = { book_full: "full precision", book_sf4: "nSigFigs=4", book_sf3: "nSigFigs=3", book_sf2: "nSigFigs=2" };
     function ageBand(band, lapsedBooks) {
       const out = Object.assign({}, band);
       [["exact", "notional_usd"], ["approximate", "approx_usd"]].forEach(function (pv) {
@@ -3289,6 +3290,17 @@
         depth.bands = (depth.bands || []).map(function (b) { return ageBand(b, lapsedBooks); });
         book.depth = depth;
       }
+      // Grouped ladders (schema 1.3.0, book.ladders): a lapsed book's entry is withheld whole, as serving_public._age_ladders
+      // does; a kept entry carries the aged freshness block.
+      if (book.ladders) {
+        const lads = Object.assign({}, book.ladders);
+        Object.keys(lads).forEach(function (label) {
+          if (lapsedBooks[label]) { lads[label] = { reason: lapsedBooks[label] }; return; }
+          const fk = Object.keys(BOOK_LABEL).filter(function (k) { return BOOK_LABEL[k] === label; })[0];
+          if (fk && fr[fk] && lads[label] && typeof lads[label] === "object" && lads[label].bids) lads[label] = Object.assign({}, lads[label], { freshness: fr[fk] });
+        });
+        book.ladders = lads;
+      }
       out.book = book;
       if (why.ctx) {
         out.context = withhold(ms.context || {}, why.ctx);
@@ -3328,27 +3340,35 @@
       const ctx0 = ms.context;
       const f = (ms.freshness || {}).ctx;
       if (!ctx0 || !f || !NUM(f.max_age_s)) return ms;
+      const shown = Object.keys(ctx0).filter(function (k) {
+        const v = ctx0[k];
+        return !!(v && typeof v === "object" && !Array.isArray(v) && v.status === "unverified" && NUM(v.received_age_s) &&
+          v.value !== null && v.value !== undefined);
+      });
+      if (!shown.length) return ms;
+      // ageMarket has already added ageS to freshness.ctx.progress_age_s (aged_by_s says so); don't add it twice.
+      const prog = NUM(f.progress_age_s) ? f.progress_age_s + (NUM(f.aged_by_s) ? 0 : ageS) : null;
+      const lapsed = prog !== null && prog > f.max_age_s;
+      const gone = lapsed ? "activeAssetCtx unverified: no changed context for longer than the max age (no source time; cadence undocumented) " +
+        "(no progress for " + prog.toFixed(1) + " s, max age " + f.max_age_s + " s), " + when : null;
       const ctx = {};
-      let changed = false;
-      let gone = null;
       Object.keys(ctx0).forEach(function (k) {
         const v = ctx0[k];
-        if (v && typeof v === "object" && !Array.isArray(v) && v.status === "unverified" && NUM(v.received_age_s)) {
-          const age = Math.round((v.received_age_s + ageS) * 1000) / 1000;
-          if (v.value !== null && v.value !== undefined && age > f.max_age_s) {
-            gone = (f.field || "activeAssetCtx") + " unverified: no changed value within " + f.max_age_s +
-              " s (the last change was received " + age.toFixed(1) + " s ago), " + when;
-            ctx[k] = Object.assign({}, v, { value: null, received_age_s: age, reason: gone });
-          } else {
-            ctx[k] = Object.assign({}, v, { received_age_s: age });
-          }
-          changed = true;
-        } else {
-          ctx[k] = v;
-        }
+        if (shown.indexOf(k) < 0) { ctx[k] = v; return; }
+        const age = Math.round((v.received_age_s + ageS) * 1000) / 1000;
+        ctx[k] = lapsed
+          ? { value: null, unit: v.unit, reason: gone }
+          : Object.assign({}, v, { received_age_s: age, reason: "activeAssetCtx carries no source timestamp; a changed value was received " + age.toFixed(1) + " s ago" });
       });
-      if (!changed) return ms;
-      const out2 = Object.assign({}, ms, { context: ctx });
+      const fr2 = Object.assign({}, ms.freshness);
+      fr2.ctx = Object.assign({}, f, { reason: lapsed ? gone : "activeAssetCtx carries no source timestamp; a changed value was received " +
+        (NUM(prog) ? prog.toFixed(1) : "?") + " s ago" });
+      const out2 = Object.assign({}, ms, { context: ctx, freshness: fr2 });
+      if (Array.isArray(ms.unavailable)) {
+        out2.unavailable = ms.unavailable.map(function (u) {
+          return u && (u.field === f.field || u.field === "activeAssetCtx") ? Object.assign({}, u, { reason: fr2.ctx.reason }) : u;
+        });
+      }
       if (gone && ms.chart) {
         const lines = ms.chart.price_lines || [];
         const dropKinds = { mark: true, oracle: true };
