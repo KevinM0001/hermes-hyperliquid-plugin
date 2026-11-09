@@ -17114,6 +17114,7 @@
   // ------------------------------------------------------------------ formatting only
 
   function num(v, maxFrac, minFrac) {
+    if (!isNum(v)) return "?";                       // a missing field prints as "?", never breaks the tab
     return v.toLocaleString("en-US", { maximumFractionDigits: maxFrac, minimumFractionDigits: minFrac || 0 });
   }
   function signOf(v, plus) { return v < 0 ? MINUS : (plus && v > 0 ? "+" : ""); }
@@ -17293,6 +17294,21 @@
       h("div", { className: "hd-why-body" }, props.children));
   }
 
+  // A bug in one panel's code shows as a line in that panel; the rest of the tab, and the plugin's data, are unaffected.
+  class PanelBoundary extends React.Component {
+    constructor(props) { super(props); this.state = { err: null }; }
+    static getDerivedStateFromError(err) { return { err: err }; }
+    componentDidCatch(err) { try { (window.__hdErrs = window.__hdErrs || []).push(String((err && err.message) || err)); } catch (e) { /* nothing to do */ } }
+    render() {
+      if (this.state.err) {
+        return h("div", { className: "hd-pad hd-panel-error", role: "alert" },
+          "This panel hit an error in the tab's code (" + String((this.state.err && this.state.err.message) || this.state.err) + "). " +
+          "It stays hidden until the page is reloaded; the other panels and the plugin's data are unaffected.");
+      }
+      return this.props.children || null;
+    }
+  }
+
   function Panel(props) {
     return h("section", {
       className: cx("hd-card", props.className),
@@ -17307,7 +17323,7 @@
         props.sub ? h("p", null, props.sub) : null),
       props.badges ? h("div", { className: "hd-badges" }, props.badges) : null),
     props.status ? h("div", { className: "hd-card-status" }, props.status) : null,
-    h("div", { className: cx("hd-card-body", props.flush && "hd-flush") }, props.children));
+    h("div", { className: cx("hd-card-body", props.flush && "hd-flush") }, h(PanelBoundary, { id: props.id }, props.children)));
   }
 
   // A reading-order label between groups of panels (book, flow, wallets).
@@ -17723,6 +17739,7 @@
     ["Waiting stops", "stop and take-profit orders resting at each price, which the public feed never shows"],
     ["Wall watch", "the largest single resting orders near the price; public levels are aggregated, so no level can be shown as one order"],
     ["Liquidity heatmap and thinning", "the node's full book, sampled over 15 minutes and banded out to 10% from the price"],
+    ["Stop and liquidity map", "waiting triggers per 0.5% band beside the resting depth, walk ratios, the clusters and a census of the waiting set, every figure a lower bound where sizes are unknown"],
     ["Order flow map", "taker flow over eight 15-minute buckets by what each fill did to the taker's position, with account shares and readings"],
     ["Node tape", "the node's fills with liquidation, TWAP, incomplete and conflict flags"],
     ["Activity buckets and wallet splits", "new long, cover, new short and exit from node fills, on the Flow Deck cards, bursts and wallets"],
@@ -18723,6 +18740,158 @@
     }));
   }
 
+  // ---- Stop and liquidity map (node triggers against the full book; Kevin's stop and liquidity map report): per 0.5 %
+  // band out to 10 % on each side, the resting depth from the thinning panel beside the waiting triggers that would
+  // fire into it, the walk ratio (the band's trigger notional over the depth at and beyond it), the plugin's cluster
+  // sentences quoted verbatim, the exclusions it counted and the census of the waiting set. Everything is
+  // market.node.live.stops.{map, clusters, exclusions, census} and thinning (schema 1.3.0); nothing is computed here.
+  // Every notional and ratio is a lower bound where orders report no size; a null is shown with its reason, never 0.
+  function sig2(v) { return isNum(v) ? String(Number(v.toPrecision(2))) : "?"; }
+  function countOf(x) { return isNum(x) ? x : (x && isNum(x.orders) ? x.orders : null); }
+  const CAT_LABEL = { sell_stop_on_fall: "sell stops", buy_take_profit_on_fall: "buy take-profits", buy_stop_on_rise: "buy stops", sell_take_profit_on_rise: "sell take-profits" };
+  function catText(by) {
+    if (!by || typeof by !== "object") return "";
+    return Object.keys(by).map(function (k) {
+      const c = by[k];
+      if (isNum(c)) return (CAT_LABEL[k] || k) + " " + intf(c);
+      if (!c || typeof c !== "object" || !isNum(c.orders)) return null;
+      return (CAT_LABEL[k] || k) + " " + intf(c.orders) + (isNum(c.notional_usd) ? " (" + (c.lower_bound ? "at least " : "") + usd(c.notional_usd) + ")" : "");
+    }).filter(Boolean).join(", ");
+  }
+  function bandTip(b, th) {
+    const w = b.walk || {};
+    const lines = [qp(b.band.from_pct, 1) + " to " + qp(b.band.to_pct, 1) + "% " + (b.fires_on === "fall" ? "below" : "above") + " the reference: " + dpx(b.band.near_px) + " to " + dpx(b.band.far_px),
+      "resting depth in the band " + (th && isNum(th.depth_usd) ? usd(th.depth_usd) : "?") + (th && isNum(th.cumulative_from_price_usd) ? ", from the price out to it " + usd(th.cumulative_from_price_usd) : ""),
+      "triggers: " + intf(b.orders) + " orders from " + intf(b.accounts) + " accounts, " + intf(b.unknown_size_orders) + " with no stated size" + (isNum(b.notional_usd) ? "; stated notional " + (b.lower_bound ? "at least " : "") + usd(b.notional_usd) : "; " + (b.notional_reason || "no stated notional")),
+      catText(b.by_category)];
+    if (b.largest_order && isNum(b.largest_order.notional_usd)) lines.push("largest order " + usd(b.largest_order.notional_usd) + " at " + dpx(b.largest_order.trigger_px) + (isNum(b.largest_order.share_pct) ? " (" + num(b.largest_order.share_pct, 1, 1) + "% of the band)" : ""));
+    lines.push(isNum(w.ratio_pct) ? "walk: " + (w.lower_bound ? "at least " : "") + sig2(w.ratio_pct) + "% of the " + usd(w.depth_at_and_beyond_usd) + " resting at and beyond the band" + (isNum(w.depth_between_usd) ? "; " + usd(w.depth_between_usd) + " rests between the price and the band" : "")
+      : "walk: " + (w.ratio_reason || "not given"));
+    return lines.join("\n");
+  }
+  function StopMapSide(props) {
+    const side = props.side || {};
+    const bands = side.bands || [];
+    const thBands = (props.th && props.th.bands) || [];
+    const isFall = side.fires_on === "fall";
+    return h("div", { className: "hd-thin-side hd-smap-side" },
+      h("div", { className: "hd-wt-title" }, h("b", { className: isFall ? "hd-ask" : "hd-bid" }, side.label || (isFall ? "Sell-side triggers" : "Buy-side triggers")),
+        h("span", { className: "hd-dim" }, isFall ? " fire on a fall, into the bids below" : " fire on a rise, into the asks above",
+          isNum(side.members) ? " \u00b7 " + intf(side.members) + " orders in these bands" : "", isNum(side.depth_total_usd) ? " \u00b7 " + usd(side.depth_total_usd) + " resting out to 10%" : "")),
+      h("div", { className: "hd-scroll" },
+        h("table", { className: "hd-table hd-thin hd-smap" },
+          h("thead", null, h("tr", null,
+            h("th", { scope: "col" }, "Band"), h("th", { scope: "col", className: "hd-r", title: "the edge the move reaches first" }, "From"),
+            h("th", { scope: "col", className: "hd-r", title: "resting depth in the band, from the thinning panel" }, "Resting depth"),
+            h("th", { scope: "col", className: "hd-r", title: "stated notional of the waiting triggers in the band; a lower bound where orders report no size" }, "Triggers"),
+            h("th", { scope: "col", className: "hd-r", title: "the band's trigger notional over the depth resting at and beyond it, out to 10%" }, "Walk"))),
+          h("tbody", null, bands.map(function (b, i) {
+            const th = thBands[i] && thBands[i].from_pct === b.band.from_pct ? thBands[i] : null;
+            const dW = props.depthMax > 0 && th && isNum(th.depth_usd) ? Math.max(th.depth_usd > 0 ? 1 : 0, Math.round(th.depth_usd / props.depthMax * 100)) : 0;
+            const tW = props.trigMax > 0 && isNum(b.notional_usd) ? Math.max(b.notional_usd > 0 ? 1 : 0, Math.round(b.notional_usd / props.trigMax * 100)) : 0;
+            const w = b.walk || {};
+            return h("tr", { key: b.k, className: cx(props.ranked[b.fires_on + ":" + b.k] && "hd-smap-cluster"), title: bandTip(b, th) },
+              h("td", null, qp(b.band.from_pct, 1) + "\u2013" + qp(b.band.to_pct, 1) + "%", props.ranked[b.fires_on + ":" + b.k] ? h("span", { className: "hd-smap-rank" }, " #" + props.ranked[b.fires_on + ":" + b.k]) : null),
+              h("td", { className: "hd-r hd-dim" }, h(DPx, { v: b.band.near_px })),
+              h("td", { className: "hd-r hd-barcell" },
+                h("span", { className: cx("hd-bar", isFall ? "hd-bar-bid" : "hd-bar-ask"), style: { width: dW + "%" }, "aria-hidden": "true" }),
+                h("span", { className: "hd-barval" }, th && isNum(th.depth_usd) ? usd(th.depth_usd) : missing())),
+              h("td", { className: "hd-r hd-barcell" },
+                h("span", { className: cx("hd-bar hd-bar-trig", b.lower_bound && "hd-bar-lb"), style: { width: tW + "%" }, "aria-hidden": "true" }),
+                h("span", { className: "hd-barval" }, isNum(b.notional_usd) ? h(Fragment, null, (b.lower_bound ? "\u2265 " : "") + usd(b.notional_usd), h0(b))
+                  : h("span", { className: "hd-dim" }, b.orders ? intf(b.orders) + " unsized" : "none"))),
+              h("td", { className: "hd-r hd-num" }, isNum(w.ratio_pct) ? (w.lower_bound ? "\u2265 " : "") + sig2(w.ratio_pct) + "%" : h("span", { className: "hd-dim" }, b.orders ? "?" : "")));
+          })))));
+  }
+  function h0(b) { return b.unknown_size_orders ? h("span", { className: "hd-smap-unsized" }, " " + intf(b.unknown_size_orders) + "/" + intf(b.orders) + " unsized") : null; }
+  function Exclusions(props) {
+    const ex = props.ex;
+    if (!ex) return null;
+    if (ex.available === false) return h("div", { className: "hd-small" }, h("b", null, "Exclusions: "), h(Unavailable, { reason: ex.reason || "unavailable", compact: true }));
+    const items = [["trailing_stops", "trailing stops"], ["unclassified_by_engine", "unclassified by the engine"], ["implausible_price", "implausible trigger price"],
+      ["size_outlier", "size outliers"], ["already_true_at_price", "already true at the price"], ["beyond_range", "beyond 10%"]];
+    const acc = ex.accounted || {};
+    return h("div", { className: "hd-smap-excl" },
+      h("div", { className: "hd-small" }, h("b", null, "Left out of the bands, each trigger once: "), items.map(function (it, i) {
+        const x = ex[it[0]];
+        if (!x || !isNum(x.orders) || x.orders === 0) return null;
+        return h("span", { key: it[0], className: "hd-smap-ex", title: (x.rule || x.reason || "") + (x.by_category ? "\n" + catText(x.by_category) : "") },
+          it[1] + " " + intf(x.orders) + (isNum(x.notional_usd) ? " (" + (x.lower_bound ? "\u2265 " : "") + usd(x.notional_usd) + ")" : (x.reason && it[0] === "trailing_stops" ? " (count only)" : "")));
+      }).filter(Boolean).reduce(function (acc2, el, i) { return i ? acc2.concat([" \u00b7 ", el]) : [el]; }, []),
+        isNum(acc.waiting_triggers) ? h("span", { className: cx("hd-dim", acc.complete === false && "hd-tone-text-bad") }, " \u00b7 accounted " + intf(acc.waiting_triggers) + " waiting = " + intf(acc.in_bands) + " in the bands + " + intf(acc.excluded_here) + " left out" + (acc.complete === false ? " (they differ)" : "")) : null),
+      ex.size_outlier && ex.size_outlier.rule ? h("div", { className: "hd-small hd-dim" }, "Size-outlier rule: " + ex.size_outlier.rule) : null);
+  }
+  function censusKv(label, v, reason, title) {
+    return h(KV, { k: label }, v !== null && v !== undefined ? h("span", { title: title || undefined }, v) : h(Unavailable, { reason: reason || "not in snapshot", compact: true }));
+  }
+  function Census(props) {
+    const c = props.c;
+    if (!c) return null;
+    const bv = c.bands_view || null;
+    const st = c.snapshot_totals || null;
+    const ew = c.executable_within_10pct;
+    const w10 = countOf(c.within_10pct), out = countOf(c.outside), u10 = countOf(c.unsized_within_10pct);
+    return h("div", { className: "hd-smap-census" },
+      h("div", { className: "hd-subhead" }, c.label || "Census of the waiting set"),
+      h("div", { className: "hd-small hd-smap-kvs" },
+        censusKv("waiting triggers", isNum(c.triggers_total) ? intf(c.triggers_total) : null, c.triggers_total_reason, isNum(c.triggers_through_seq) ? "through seq " + c.triggers_through_seq : null),
+        censusKv("with no stated size", isNum(c.unsized_total) ? intf(c.unsized_total) + (isNum(c.triggers_total) && c.triggers_total > 0 ? " (" + num(c.unsized_total / c.triggers_total * 100, 0) + "%)" : "") : null, c.unsized_total_reason),
+        censusKv("within \u00b110% (engine's bands view)", isNum(w10) ? intf(w10) + (isNum(u10) ? ", " + intf(u10) + " unsized" : "") : null, c.within_10pct_reason, bv ? "ref " + dpx(bv.ref_px) + (isNum(bv.block) ? " at block " + bv.block : "") : null),
+        censusKv("outside \u00b110%", isNum(out) ? intf(out) : null, c.outside_reason, bv && bv.outside ? intf(bv.outside.below) + " below, " + intf(bv.outside.above) + " above" : null),
+        censusKv("executable orders now", isNum(c.executable_orders_total) ? intf(c.executable_orders_total) : null, c.executable_orders_total_reason),
+        censusKv("executable within \u00b110%", ew && isNum(ew.orders) ? intf(ew.orders) : null, c.executable_within_10pct_reason, ew ? "ref " + dpx(ew.ref_px) + " (" + (ew.ref_px_source || "") + ")" : null),
+        censusKv("executable per trigger, now", isNum(c.executable_to_trigger_ratio) ? num(c.executable_to_trigger_ratio, 2, 2) : null, c.executable_to_trigger_ratio_reason),
+        censusKv("snapshot totals", st ? intf(g(st, "book", "total_orders")) + " orders / " + intf(g(st, "triggers", "total_triggers")) + " triggers = " + (isNum(st.executable_to_trigger_ratio) ? num(st.executable_to_trigger_ratio, 2, 2) : "?") : null, c.snapshot_totals_reason, st ? (isNum(g(st, "book", "block")) ? "book snapshot at block " + g(st, "book", "block") : "") + (st.note ? "\n" + st.note : "") : null)),
+      c.note ? h("div", { className: "hd-small hd-dim" }, c.note) : null);
+  }
+  function StopMapPanel(props) {
+    const v = props.v;
+    const gate = nodeGate(v, "stops", false);
+    const st = gate ? null : v.stops;
+    const mp = st && st.map;
+    const th = v && v.thinning;
+    const ok = !gate && mp && mp.available !== false;
+    let depthMax = 0, trigMax = 0;
+    const ranked = {};
+    if (ok) {
+      [g(th, "bids_below", "bands"), g(th, "asks_above", "bands")].forEach(function (bs) { (bs || []).forEach(function (b) { if (isNum(b.depth_usd) && b.depth_usd > depthMax) depthMax = b.depth_usd; }); });
+      ["fall", "rise"].forEach(function (k) { ((mp.sides[k] || {}).bands || []).forEach(function (b) { if (isNum(b.notional_usd) && b.notional_usd > trigMax) trigMax = b.notional_usd; }); });
+      (st.clusters || []).forEach(function (c) { ranked[c.fires_on + ":" + c.k] = c.rank; });
+    }
+    const rules = (ok && mp.rules) || {};
+    return h(Panel, {
+      id: "stop-map", className: "hd-p-smap", title: "Stop and liquidity map (node triggers against the full book)", nodeHook: "stop-map",
+      why: h(Fragment, null,
+        h("p", null, "Per 0.5% band out to 10% on each side of the node book mid: the resting depth in the band (the thinning panel's own bands, so the two never disagree on an edge) " +
+          "beside the waiting trigger orders that would fire into it, sell-side triggers below the price and buy-side triggers above. The walk column is the band's trigger notional " +
+          "over everything resting at and beyond it out to 10%, the share of that liquidity the triggers could walk through if they all fired. The two largest bands per side are the " +
+          "clusters, quoted as the plugin wrote them. Where orders report no size (whole-position stops and take-profits), every money figure and ratio is a lower bound and says so; " +
+          "a band whose orders are all unsized shows no number, never a 0. This is a census of the engine's memory at the book time, not a history scan, and nothing here is a liquidation level."),
+        ok ? h("p", { className: "hd-dim" }, [rules.band, rules.notional, rules.walk, rules.clusters, rules.accounts].filter(Boolean).join(" ")) : null),
+      sub: ok && mp.as_of ? h("span", { className: "hd-dim" }, (mp.as_of.note || "") + (isNum(mp.as_of.block) ? " Block " + mp.as_of.block + "." : "")) : null,
+      badges: h(NodeProv, { v: v, what: "triggers + L4 book" }),
+      status: h(NodeStatus, { v: v, fams: ["triggers", "book", "bands"] })
+    },
+    gate ? null : h(FamNotes, { fams: v && v.families, names: ["triggers", "book"] }),
+    gate ? gate : h(Fragment, null,
+      ok ? h("div", { className: "hd-small" },
+        h(KV, { k: "reference" }, h(DPx, { v: mp.ref_px }), h("span", { className: "hd-dim" }, " " + (mp.ref_px_rule || "node book mid"))),
+        h(KV, { k: "bands" }, (isNum(mp.band_pct) ? pct(mp.band_pct, 1) : "0.5%") + " out to " + (isNum(mp.out_to_pct) ? pct(mp.out_to_pct, 0) : "10%")),
+        isNum(g(mp, "as_of", "book_time_ms")) ? h(KV, { k: "book time" }, hmsms(mp.as_of.book_time_ms) + " UTC") : null)
+        : h(Unavailable, { reason: (mp && mp.reason) || "stop map not in this snapshot", block: true }),
+      h("div", { className: "hd-subhead" }, "Clusters"),
+      st.clusters && st.clusters.length ? h("ol", { className: "hd-smap-clusters" }, st.clusters.map(function (c) {
+        return h("li", { key: c.rank, title: bandTip(c, null) }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text);
+      })) : h("div", { className: "hd-small hd-dim" }, st.clusters_reason || (st.clusters ? "No band has a stated notional, so nothing ranks." : "clusters not in this snapshot")),
+      ok ? h("div", { className: "hd-thin-pair hd-smap-pair" },
+        h(StopMapSide, { side: mp.sides.fall, th: th && th.bids_below, depthMax: depthMax, trigMax: trigMax, ranked: ranked }),
+        h(StopMapSide, { side: mp.sides.rise, th: th && th.asks_above, depthMax: depthMax, trigMax: trigMax, ranked: ranked })) : null,
+      ok ? h("div", { className: "hd-small hd-dim" }, "Bars: resting depth to the largest band on either side; triggers to the largest stated trigger notional; a hatched trigger bar is a lower bound (some orders in it report no size). Hover a row for its categories, largest order and depths.") : null,
+      h(Exclusions, { ex: st.exclusions }),
+      h(Census, { c: st.census }),
+      mp && mp.venue_check ? h("div", { className: "hd-small hd-venue-check" }, mp.venue_check) : null));
+  }
+
   // ---- Order Flow Map (node fills; Kevin's order-flow map report): eight clock-aligned 15-minute buckets of taker
   // flow, buys up and sells down, each split by what the fill did to the taker's own position (opened risk solid,
   // closed risk faded, flips striped), the account shares and the plugin's readings quoted verbatim. Everything is
@@ -19256,6 +19425,11 @@
           v.thinning.note ? h("div", { className: "hd-thin-note" }, v.thinning.note) : null,
           h(ThinDrop, { d: g(v, "thinning", "bids_below", "sharpest_drop"), side: "bid" }),
           h(ThinDrop, { d: g(v, "thinning", "asks_above", "sharpest_drop"), side: "ask" }))),
+      h(ReplayBox, { title: "Stop map (clusters)", mode: mode, wide: true },
+        sg || h(Fragment, null,
+          v.stops.clusters && v.stops.clusters.length ? h("ol", { className: "hd-smap-clusters" }, v.stops.clusters.map(function (c) { return h("li", { key: c.rank }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text); }))
+            : h("div", { className: "hd-small hd-dim" }, v.stops.clusters_reason || "no clusters in this replay view"),
+          v.stops.map && v.stops.map.available === false ? h("div", { className: "hd-small hd-dim" }, v.stops.map.reason) : null)),
       h(ReplayBox, { title: "Order flow map", mode: mode, wide: true },
         fmg || h(OfmBody, { fm: v.flow_map, compact: true })),
       h(ReplayBox, { title: "Node tape (latest fills)", mode: mode, wide: true },
@@ -20728,11 +20902,27 @@
       const was = view.families;
       const lapsed = function (k) { return fams[k] && !USABLE[fams[k].state] && was[k] && USABLE[was[k].state]; };
       const why = function (k) { return k + " " + fams[k].state + ": " + fams[k].reason; };
+      const CENSUS_BOOK_KEYS = ["excluded", "executable_orders_total", "executable_within_10pct", "executable_to_trigger_ratio"];
+      const CENSUS_BANDS_KEYS = ["within_10pct", "outside", "unsized_within_10pct", "bands_view"];
+      const censusWithheld = function (cen, reason, keys) {
+        const o = Object.assign({}, cen);
+        keys.forEach(function (k) { o[k] = null; o[k + "_reason"] = reason; });
+        return o;
+      };
       if (lapsed("book") && out.book) {
         out.book = Object.assign({}, out.book, { valid: false, reason: why("book") });
         out.ladder = { available: false, reason: why("book") };
         out.walls = { available: false, reason: why("book") };
         out.thinning = { available: false, reason: why("book"), note: (view.thinning || {}).note };
+        // The stop map's depth, clusters and book-built census counts go with the book (serving.py).
+        if (out.stops && typeof out.stops === "object" && "map" in out.stops) {
+          const cen = out.stops.census;
+          out.stops = Object.assign({}, out.stops, { map: { available: false, reason: why("book") }, clusters: null, clusters_reason: why("book"),
+            census: cen && typeof cen === "object" ? censusWithheld(cen, why("book"), CENSUS_BOOK_KEYS) : cen });
+        }
+      }
+      if (lapsed("bands") && out.stops && out.stops.census && typeof out.stops.census === "object") {
+        out.stops = Object.assign({}, out.stops, { census: censusWithheld(out.stops.census, why("bands"), CENSUS_BANDS_KEYS) });
       }
       if (lapsed("triggers") && out.stops) out.stops = { available: false, reason: why("triggers") };
       if (lapsed("flow") && out.tape) out.tape = { available: false, reason: "node fills " + fams.flow.state + ": " + fams.flow.reason,
@@ -21416,6 +21606,7 @@
         non ? h("div", { className: "hd-row hd-row-n2" }, h(StopsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(ThinningPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n3" }, h(StopMapPanel, { v: nlive })) : null,
         // The observed depth is out of the main view (Kevin, Nov 9): folded, with its data one click away.
         h("details", { className: "hd-foldcard", "data-panel": "depth-fold" },
           h("summary", null, "Observed depth",
