@@ -111,3 +111,19 @@ toward the top where traders can see it". Same review dashboard and capture setu
 The coordinator's two rules behind the removed rows are kept one click away: every not-fresh field with its reason
 is in the fold at the foot of the summary card, and the delay counter lives in the node strip in node mode. The
 aging or failed-poll note the bar carried is on the header's snapshot line when it applies.
+
+## Schema 1.3.0 live: context values, candle intervals, grouped ladders, Flow notes (2026-11-09, 21:07Z)
+
+The three plugin-side features Kevin asked for at 19:10Z, built the same evening on this branch by three agents
+and merged (`fdcbdce`, `843e340`, `49f15be`), with the tab side from this session. The review dashboard restarted on
+the merged code at 21:06Z (public live, the runner's node feed connected, no recording loaded); headless Chrome,
+1440 x 1900, BTC, about a minute after the collector's Start.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `94-merged-first-screen-unverified-values.png` | Mark/oracle, funding, open interest and day volume shown with the UNVERIFIED mark and "changed 1.8 s ago"; the mark and oracle lines on the chart labelled "(unverified)"; the ladder's new "group" select; the Flow notes card | 15s interval, full-precision ladder |
+| `95-merged-chart-1h-candles.png` | The chart on the 1h interval: 500 candles from the venue, the in-progress candle hollow and "unverified, received 0.3 s ago", volume in BTC, the readout and the history note; the Flow notes with the node state lines (bid and ask depth thinning sharpest) | 1h button |
+| `96-merged-ladder-grouped-10-and-1d.png` | The ladder grouped at the venue's nSigFigs=4 book (step 10, its own freshness chip) and the chart on 1d | the group select set to nSigFigs=4, the 1d button |
+
+Everything shown is the snapshot's or the route's own data; the tab computes nothing. The interval buttons poll the
+plugin's candles route for the selected interval only.
