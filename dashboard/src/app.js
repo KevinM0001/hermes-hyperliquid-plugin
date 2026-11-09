@@ -2766,6 +2766,25 @@
         h("div", { className: "hd-dn-wide" }, num_("accounts", "accounts", function (v) {
           return intf(v) + (n.accounts && n.accounts.unit ? " " + n.accounts.unit : "");
         })));
+    // The window's path: six 15 s points (the card's own tick data), each with its last price, move from the previous
+    // point and net aggressive flow; absent on a withheld card. Nothing computed here.
+    const path = card.path;
+    const pathEl = path && Array.isArray(path.points) ? h("div", { className: "hd-deck-path" },
+      h("span", { className: "hd-dn-label", title: path.note || "" }, "path"),
+      path.first_trade && isNum(path.first_trade.price) ? h("span", { className: "hd-dim" }, "from " + px(path.first_trade.price) + " at " + hms(path.first_trade.time_ms) + "Z") : null,
+      path.points.map(function (pt, i) {
+        const tone = isNum(pt.move_bps) ? (pt.move_bps > 0 ? "hd-bid" : (pt.move_bps < 0 ? "hd-ask" : "hd-dim")) : "hd-dim";
+        return h("span", { key: i, className: "hd-pp", title: pt.reason || ("to " + hms(pt.tick_ms) + "Z: " + (isNum(pt.trades) ? intf(pt.trades) + " trades" : "")) },
+          h("span", { className: "hd-dim" }, hms(pt.tick_ms).slice(3) + " "),
+          isNum(pt.price) ? px(pt.price) : "no trades", " ",
+          isNum(pt.move_bps) ? h("b", { className: tone }, bpsSigned(pt.move_bps)) : null, " ",
+          isNum(pt.net_flow_usd) ? h("span", { className: pt.net_flow_usd >= 0 ? "hd-bid" : "hd-ask" }, usdSigned(pt.net_flow_usd)) : null);
+      })) : null;
+    const dom = card.dominated_by;
+    const domEl = dom && dom.summary ? h("div", { className: cx("hd-deck-dom", dom.any && "hd-deck-dom-on"), title: dom.rule || "" },
+      h("span", { className: "hd-dn-label" }, dom.any ? "dominated" : "no dominance"), " ", dom.summary) : null;
+    const valid = (conf && conf.validation) || (live && live.validation) || (pending && pending.validation) || null;
+    const validEl = valid ? h("div", { className: "hd-dim hd-small" }, "labels: " + valid) : null;
     const twEl = h("div", { className: "hd-deck-tw" },
         h("span", { className: "hd-dn-label" }, "top wallet"),
         tw && tw.value ? h(Fragment, null,
@@ -2798,12 +2817,12 @@
     // Wide (the card under the summary): three columns, regime and foot; numbers and top wallet; buckets and meaning.
     if (props.wide) {
       return h("article", { className: "hd-deck-card hd-deck-wide", "aria-label": "Flow Deck " + name },
-        h("div", { className: "hd-dw-col" }, head, reasonEl, lcEl, states, foot),
-        h("div", { className: "hd-dw-col" }, grid, twEl),
+        h("div", { className: "hd-dw-col" }, head, reasonEl, lcEl, states, validEl, foot),
+        h("div", { className: "hd-dw-col" }, grid, pathEl, domEl, twEl),
         h("div", { className: "hd-dw-col" }, buckets, meaning));
     }
     return h("article", { className: "hd-deck-card", "aria-label": "Flow Deck " + name },
-      head, reasonEl, lcEl, states, rule, grid, twEl, buckets, meaning, foot);
+      head, reasonEl, lcEl, states, validEl, rule, grid, pathEl, domEl, twEl, buckets, meaning, foot);
   }
 
   function EventRow(props) {
@@ -2976,6 +2995,10 @@
       state.push({ key: "s-split", tag: "FLOW SPLIT", tone: "info",
         text: "buy: " + part("new_long", "new-long") + " \u00b7 " + part("cover", "cover") + " | sell: " + part("new_short", "new-short") + " \u00b7 " + part("exit", "exit") +
           (top ? " | largest: " + WORDS[top] : "") + " (" + (ab.window_label || "node fills over the card's window") + "; the venue's Open/Close tags on taker fills)" });
+    }
+    const domc = g(d, "card", "dominated_by");
+    if (domc && domc.any && domc.summary) {
+      state.push({ key: "s-dom", tag: "DOMINATED", tone: "warn", text: domc.summary + " (the card's 90 s window; a total should not stand in for the path)" });
     }
     const nl = g(m, "node", "live");
     if (nl && !nodeGate(nl, "thinning", true)) {
