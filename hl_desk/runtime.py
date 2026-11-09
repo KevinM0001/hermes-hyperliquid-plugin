@@ -231,6 +231,8 @@ class Runtime:
                 req.get("snapshot_id"), req.get("market"), req.get("window_min"), req.get("address"))}
         if op == "replay":
             return self._local_replay(req.get("cmd"), req.get("arg"))
+        if op == "candles":
+            return {"ok": True, "result": self._local_candles(req.get("market"), req.get("interval"), req.get("limit"))}
         if op in ("stop", "restart"):
             _spawn(getattr(self, op), f"{THREAD_NAME}-{op}")
             return {"ok": True, "message": f"{op} requested from another process; the owner (pid {os.getpid()}) is doing it"}
@@ -328,6 +330,44 @@ class Runtime:
         from . import info_client
         from .config import INFO_URL
         return info_client.fetch_wallet_current(INFO_URL, user, dex)
+
+    def candles(self, market: str, interval: str, limit=None) -> dict:
+        """Candle history and the in-progress candle for one followed market and interval (GET candles, hl_candles),
+        from the process that owns the collector and its candle store (hl_desk.candles). The first request starts
+        the candleSnapshot fetch on the store's workers and the websocket subscription; the answer is the loading
+        form until the fetch lands. Never blocks on the venue; when the owner is another process this is a socket
+        round trip, so call it from a worker thread."""
+        from .candles import INTERVALS
+        if interval not in INTERVALS:
+            return {"ok": False, "error": f"interval {interval!r} isn't supported; one of {', '.join(INTERVALS)}"}
+        if self._own():
+            return self._local_candles(market, interval, limit)
+        remote = self._ask({"op": "candles", "market": market, "interval": interval, "limit": limit})
+        if remote is None:
+            return {"ok": False, "state": "error", "market": market, "interval": interval,
+                    "reason": "the collector isn't running for this profile (start it with /hl start)"}
+        return remote.get("result") or {"ok": False, "state": "error", "market": market, "interval": interval,
+                                        "reason": remote.get("error") or "the owner returned nothing"}
+
+    def _local_candles(self, market, interval, limit) -> dict:
+        from .candles import DEFAULT_LIMIT, INTERVALS
+        c = self.collector
+        if c is None or not c.alive():
+            return {"ok": False, "state": "error", "market": market, "interval": interval,
+                    "reason": "the collector isn't running for this profile (start it with /hl start)"}
+        if interval not in INTERVALS:
+            return {"ok": False, "error": f"interval {interval!r} isn't supported; one of {', '.join(INTERVALS)}"}
+        if not c.desk.markets:
+            return {"ok": False, "state": "loading", "market": market, "interval": interval,
+                    "reason": "the collector is still loading the market metadata; ask again in a second"}
+        if market not in c.desk.markets:
+            return {"ok": False, "error": f"market {market!r} isn't followed; followed: {sorted(c.desk.markets)}"}
+        try:
+            limit = DEFAULT_LIMIT if limit is None else int(limit)
+        except (TypeError, ValueError):
+            return {"ok": False, "error": f"limit must be a whole number, got {limit!r}"}
+        c.candles.request(market, interval)
+        return c.candles.view(market, interval, limit)
 
 
 LATEST_MAX_AGE_S = 5.0

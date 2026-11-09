@@ -12,7 +12,7 @@ current data: when no owner answers, nothing is running.
 
 Protocol: one JSON object per line in each direction, one request per
 connection. Requests: {"op": "ping"|"status"|"snapshot"|"wallet_trades"|
-"stop"|"restart", ...}. Replies are JSON objects with "ok".
+"candles"|"replay"|"stop"|"restart", ...}. Replies are JSON objects with "ok".
 """
 
 from __future__ import annotations

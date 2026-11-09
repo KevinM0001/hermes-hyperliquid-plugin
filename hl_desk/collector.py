@@ -3,9 +3,12 @@
 Started only by hl_desk.runtime.start() (the /hl start command or the tab's
 Start button), never on import, registration, doctor or validate. It runs
 its own asyncio loop in its own thread, so nothing here touches the gateway
-event loop. Bounded: one thread, one websocket connection, at most 20
-subscriptions for the 4 default markets, 16 minutes of trades per market,
-a fixed snapshot ring. Reconnects back off from 1 s to 30 s.
+event loop. Bounded: one thread (plus the candle store's two fetch workers,
+hl_desk.candles), one websocket connection, at most 20 subscriptions for the
+4 default markets plus one candle subscription per (market, interval) the
+chart has asked for (at most 7 per market), 16 minutes of trades per market,
+a fixed snapshot ring, at most 5000 candles per (market, interval).
+Reconnects back off from 1 s to 30 s.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import threading
 import time
 
 from . import info_client
+from .candles import CandleStore
 from .config import DeskConfig
 from .feed import dispatch, dispatch_depth, subscriptions
 from .markets import MarketRegistry
@@ -57,6 +61,8 @@ class Collector:
         from .node.manager import NodeManager
         self.node = NodeManager(cfg, key_getter=node_key)     # node feed (optional) and explicit replays
         self.desk.node = self.node
+        self.candles = CandleStore(cfg.info_url)   # candle history per interval, fetched on demand off this loop
+        self.desk.candles = self.candles
         self.thread: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._stop: asyncio.Event | None = None
@@ -112,6 +118,7 @@ class Collector:
         finally:
             self._set_state("stopped")
             self._publish()
+            self.candles.close()
             loop.close()
             self._loop = None
 
@@ -189,6 +196,8 @@ class Collector:
                         ms.on_connect(self.conn)
                     for sub in subscriptions(list(self.desk.markets)):
                         await ws.send(json.dumps({"method": "subscribe", "subscription": sub}))
+                    for sub in self.candles.subscriptions_on_connect():    # candle intervals asked for so far
+                        await ws.send(json.dumps({"method": "subscribe", "subscription": sub}))
                     self._set_state("connected")
                     last_ping = time.monotonic()
                     while not self._stop.is_set():
@@ -200,6 +209,8 @@ class Collector:
                         if time.monotonic() - last_ping > PING_EVERY_S:
                             await ws.send(json.dumps({"method": "ping"}))   # keeps the server from idling us out
                             last_ping = time.monotonic()
+                        for sub in self.candles.take_pending():     # a chart interval asked for since we subscribed
+                            await ws.send(json.dumps({"method": "subscribe", "subscription": sub}))
                         try:
                             raw = await asyncio.wait_for(ws.recv(), timeout=1.0)
                         except asyncio.TimeoutError:

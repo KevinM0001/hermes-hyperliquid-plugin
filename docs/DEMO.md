@@ -17,3 +17,4 @@ Prerequisite for the chat step (0:58): the Hermes profile needs a configured inf
 Notes:
 - If a market is quiet, its trades status reads "unverified" and its flow values are unavailable. That is expected behavior, so show it rather than cutting it.
 - Panels marked "needs node mode" are out of the public-only build.
+- The chart's interval buttons (1m to 1d) show the venue's own candle history; its last candle is in progress and reads "unverified, received N s ago" (its updates carry no source time), so say that rather than calling it live.

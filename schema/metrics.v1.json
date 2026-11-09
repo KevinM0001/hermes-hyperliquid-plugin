@@ -835,8 +835,8 @@
     },
     "chart.candle": {
       "source": "plugin",
-      "formula": "per 15 s interval aligned to source-time multiples of 15 s: open = px of the first trade, high = max px, low = min px, close = px of the last trade (ordered by time then arrival), volume_usd = sum(px*sz) of its trades, summed exactly and rounded to cents once",
-      "units": "USD per coin (OHLC); USD notional (volume)",
+      "formula": "per 15 s interval aligned to source-time multiples of 15 s: open = px of the first trade, high = max px, low = min px, close = px of the last trade (ordered by time then arrival), volume_usd = sum(px*sz) of its trades, summed exactly and rounded to cents once; volume_base = sum(sz) of its trades (coin), summed exactly and rounded once to the market's szDecimals",
+      "units": "USD per coin (OHLC); USD notional (volume_usd); coin (volume_base)",
       "inputs": [
         "execution set"
       ],

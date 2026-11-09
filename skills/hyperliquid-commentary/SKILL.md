@@ -52,6 +52,7 @@ Each result has an `unavailable` list. Mention what matters for the question, fo
 - A Flow Deck card whose window is incomplete after a gap or at startup: say the window is incomplete.
 - A card with `revised`: say it was re-evaluated after late trades. A `regime_change_withdrawn` event: say that regime change was withdrawn, not that it happened.
 - `bbo` is always "freshness unverified": its values are never quoted; best bid and ask come from the book.
+- The in-progress candle of a chart interval (`hl_candles`, the tab's `GET candles`: `in_progress`) has no source timestamp: say "unverified, received N s ago" from its `received_age_s`, never fresh or live; the closed candles are the venue's own history.
 
 ## 5. Book language
 

@@ -9,6 +9,7 @@ snapshots by ID, so chat and screen show the same numbers.
 from __future__ import annotations
 
 import json
+import math
 import secrets
 from collections import deque
 
@@ -512,12 +513,14 @@ class MarketState:
             for t in self.store.window(first, wm, start_inclusive=True):
                 b = t.time // CANDLE_MS * CANDLE_MS
                 if cur is None or cur["t"] != b:
-                    cur = {"t": b, "time": b // 1000, "open": t.px, "high": t.px, "low": t.px, "close": t.px, "_vol": 0.0}
+                    cur = {"t": b, "time": b // 1000, "open": t.px, "high": t.px, "low": t.px, "close": t.px, "_vol": 0.0,
+                           "_szs": []}
                     candles.append(cur)
                 cur["high"] = max(cur["high"], t.px)
                 cur["low"] = min(cur["low"], t.px)
                 cur["close"] = t.px
                 cur["_vol"] += t.notional          # summed exactly, rounded once below
+                cur["_szs"].append(t.sz)
         lines = []
         for key, label in (("best_bid", "best bid"), ("best_ask", "best ask")):
             if top.get(key, {}).get("value") is not None:
@@ -538,14 +541,19 @@ class MarketState:
                 lines.append({"price": big["px"], "kind": f"largest_{side[:-1]}_level",
                               "label": f"largest returned {side[:-1]} level: {big['sz']} (API count "
                                        f"{big['api_count'] if big['api_count'] is not None else 'unavailable'}, aggregated)"})
+        sz_dec = (self.meta or {}).get("sz_decimals")
         for c in candles:
             c["volume_usd"] = rnd(c.pop("_vol"), 2)
+            base = math.fsum(c.pop("_szs"))     # the sizes' exact sum (coin), rounded once to the market's size step
+            c["volume_base"] = round(base, sz_dec) if isinstance(sz_dec, int) and not isinstance(sz_dec, bool) else base
             c["complete"] = c["t"] > (seg or 0) and c["t"] + CANDLE_MS - 1 <= (wm or 0)
         return {"candle_s": CANDLE_MS // 1000, "candles": candles, "price_lines": lines,
                 **({"price_lines_withheld": withheld} if withheld else {}),
                 "candles_note": ("each candle summarizes every public trade in its own aligned 15 s interval, from the boundary at or "
                                  "before (watermark - 15 min); 'complete' is false for a candle that starts at or before the segment "
-                                 "start or ends after the trades watermark"),
+                                 "start or ends after the trades watermark; volume_base is the sum of its trades' sizes (coin), "
+                                 "summed exactly and rounded once to the market's szDecimals"),
+                "intervals": getattr(self, "candle_intervals", {}),   # venue candle intervals loaded so far (GET candles)
                 "gaps": list(self.store.gaps)[-10:],
                 "note": "candles from public trades in the current coverage segment; price lines from the fast book, context and the 20-level book"}
 
@@ -594,6 +602,7 @@ class DeskState:
     def __init__(self, cfg: DeskConfig, mode: str = "LIVE") -> None:
         self.cfg = cfg
         self.node = None          # hl_desk.node.manager.NodeManager when running under a collector
+        self.candles = None       # hl_desk.candles.CandleStore under a collector: chart.intervals per market
         self.mode = mode
         self.run_id = secrets.token_hex(3)
         self.seq = 0
@@ -624,6 +633,7 @@ class DeskState:
             s.node_client = self.node.live_client() if self.node is not None else None
             # Node mode (a node feed is configured): bursts come from node fills, never public trades.
             s.node_bursts = self.node is not None and getattr(self.node, "live", None) is not None
+            s.candle_intervals = self.candles.summary(m) if self.candles is not None else {}
         return {
             "snapshot_id": sid,
             "built_at_ms": wall_ms,
