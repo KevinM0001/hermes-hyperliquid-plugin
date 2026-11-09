@@ -26,6 +26,11 @@ switched to Mono for two shots and set back. No run touched the node, production
 | `22-live-node-stops.png` | The Waiting stops panel in that run | scrolled to the panel |
 | `23-live-node-ladder.png` to `27-live-node-tape.png` | Node ladder, heatmap, wall watch, thinning, node tape in that run | scrolled to each panel |
 | `28-live-node-top-mono.png`, `29-live-node-stops-mono.png` | The same run in the Mono frame | theme switched on the isolated dashboard only, reset after |
+| `30-live-node-top.png`, `31-live-node-full.png` | Live node mode with current data (UI batch 3, second capture, 04:52 to 04:56Z): feed delay 1.5 s, every family LIVE | same read-only subscription to the runner's socket, Start pressed in the tab, 240 s later; the heatmap has about 6 of its 15 minutes (history since 04:49:56Z, the moment the book became valid) |
+| `32-live-node-stops.png` | The Waiting stops panel with live data (19,657 triggers accounted) | scrolled to the panel |
+| `33` to `37-live-node-*.png` | Node ladder, heatmap, wall watch, thinning, node tape with live data | scrolled to each panel |
+| `38-live-node-top-mono.png`, `39-live-node-full-mono.png`, `39b-live-node-stops-mono.png` | The same run in the Mono frame | theme switched on the isolated dashboard only, reset after |
+| `43-node-layout-proposed-ladder.png`, `44-node-layout-proposed-stops.png`, `45-node-layout-proposed-tapes.png` | Proposed node-mode layout (UI batch 3, not built): the order-level tables take the full row (node ladder, then heatmap; waiting stops, then wall watch; node tape above the public tape) | mock-up in the file-based harness on the live 04:56Z snapshots, a temporary CSS override, reverted; compare with `33`, `32`, `37` |
 | `40-nofm-a-label.png` | "N of M" option (a), UI batch 4: a plain label in the Tape panel's status line, "latest 40 of 450 trades in the window" | mock-up in the file-based harness on the recorded BTC snapshot (40 tape rows, 450 counted trades); temporary edit, not committed |
 | `41-nofm-b-expander.png` | Option (b): the label plus a "Show all 450" button; disabled in the mock because the snapshot carries only the newest 40 rows | same |
 | `42-nofm-c-scroll.png` | Option (c): the count in the panel title ("Tape 40 of 450") and a fixed-height scrolling list | same |
