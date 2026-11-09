@@ -43,7 +43,9 @@ Also keep a manual override per market, and rank each live burst against the ref
 | `3354a4155f153fa725594c8004b0bb25f26ad9c9` | The fourth evidence commit: the response to review 3, Kevin's batch 3, and the logs at `088babf`. Codex h1 review 4 reviewed it: REVISE, B1 to B3 blocking, D1 and D2 deferred. |
 | `0d7829403d1c72faad6ffd323b59fdfe566ef5a6` | Fix for h1 review 4: liquidation bursts at each executions message's own block time; only complete position effects count; window labels and depth resolution |
 | `fa8b6f492da63e09477f5f06cdc8f28f51a0da24` | Review 4's B1 completed (final code): liquidation bursts also re-arm at watermarks, so a quiet market's second burst isn't missed; B1 tests through `hl_alerts` and the tab, and on the unretimed recording |
-| this commit | This report updated, `evidence/review-response-3354a4155f153fa725594c8004b0bb25f26ad9c9.md`, and the official logs at the final code. No code. |
+| `f5db32e725a652ae1a13963000ed01c7cc39216c` | The fifth evidence commit: the response to review 4 and the logs at `fa8b6f4`. Codex h1 review 5 reviewed it: REVISE, B1 blocking (**deferred by Kevin**), D1 and D2 deferred. |
+| `e8044519c0483811753a18663f35828012ceb990` | Docs only: `docs/DEMO.md` says to wait at least 10 s after pressing Start before opening the node ladder (review 5's B1, deferred by Kevin) |
+| this commit | This report updated and `evidence/review-response-f5db32e725a652ae1a13963000ed01c7cc39216c.md`. No code. |
 
 - Author and committer of every commit: `KevinM0001 <210251245+KevinM0001@users.noreply.github.com>`. No other email appears in any commit object.
 - Nothing was pushed. `v1-public-btc` is still `593211d`. The review never creates or moves it.
@@ -127,6 +129,8 @@ The rank of a manual-threshold burst is still against the Nov 3 to 7 reference. 
 - the tab then showed the manual labels, and after unsetting all three, the automatic labels.
 
 ## Official checks at `fa8b6f4` (the final code; logs in `evidence/logs/burst-calibration/`)
+
+`e804451`, the only later non-evidence commit, adds one line to `docs/DEMO.md`. No test, check or tool reads that file, so the results below stand for it too.
 
 | Check | Result | Log |
 | --- | --- | --- |
@@ -269,6 +273,33 @@ Codex reviewed `56c65e3`: REVISE, with two blocking findings and two deferred. A
   - the empty view never appeared;
   - the aborted polls were said in the delay bar.
 - Node mode on the recorded feed was checked again at `edc5a6c`: no empty views, and the same 10 bursts and ranks.
+
+## Codex h1 review 5 (REVISE) and Kevin's decisions
+
+Codex reviewed `f5db32e` (code `fa8b6f4`): REVISE, with one blocking finding and two deferred. As planned, Kevin stopped the loop at this verdict. The response is `evidence/review-response-f5db32e725a652ae1a13963000ed01c7cc39216c.md`.
+- **Everything else Codex tried worked:** the public-only install, the tools, the tab, and the prescribed chat rehearsal.
+  - In the rehearsal, the answer gave each approximate depth band its own book (nSigFigs=4 for ±0.25%, nSigFigs=3 for ±0.5%) and labelled the flow window separately. Codex: "the required chat rehearsal now supports" review 4's B3.
+  - Codex's caveat: in that startup run the flow and wallet windows happened to cover the same span. Its independent tests cover their differing spans after five minutes.
+- **B1, deferred by Kevin.** The node ladder's "last 10 s" columns (added, absorbed, pulled, unknown) read 0 before 10 s of change history exist, after a start or a reconnect.
+  - Codex's finding is quoted in full in the response. The fix is described there and was not built.
+  - `docs/DEMO.md` says to wait at least 10 s after Start before opening the node ladder (`e804451`).
+- **D1 and D2:** deferred, as before.
+
+**Why the chat step takes 64 to 75 s (D2).** Kevin asked. This is measured read-only from the per-event timestamps in the stream logs of the three timed runs (reviews 4 and 5, `claude-sonnet-4-6`, the exact demo prompt). [measured]
+
+| Run | Total | Before the answer: model turns | Tool execution | Calls | Answer: wait, then writing | Answer length |
+| --- | --- | --- | --- | --- | --- | --- |
+| Review 4, first | 63.6 s | 16.8 s | 0.1 s | 9 | 1.3 s + 42.5 s | 4,937 chars, 761 words, ≈ 1,230 tokens |
+| Review 4, header ID | 71.2 s | 12.1 s | 0.1 s | 8 | 0.9 s + 55.5 s | 6,261 chars, 827 words, ≈ 1,570 tokens |
+| Review 5 | 75.0 s | 20.2 s | 0.6 s | 8 | 1.7 s + 49.1 s | 6,007 chars, 859 words, ≈ 1,500 tokens |
+
+- **The calls.** The calls are: load the skill; describe the tools; then `hl_status`, `hl_market`, `hl_flow`, `hl_context`, `hl_alerts` and `hl_wallets`, the last five issued together. They return ~38 to 39 kB in all.
+- **Where the time goes.**
+  - **Writing the answer:** 42 to 56 s, about two-thirds of the total. It streams at ~112 to 121 characters a second.
+  - **The model's turns before the answer:** 12 to 20 s. The first turn alone, which loads the skill, is 7 to 15 s.
+  - **The tools themselves:** under 1 s.
+- **Two earlier runs (review 3)** took 53.6 s and 55.5 s, for answers of 3,713 and 4,749 characters. So the time follows the answer's length.
+- **What would fit 22 s:** at least ~12 s goes before any answer text, so the slot leaves room for roughly 1,000 characters (a few sentences). The answer runs to 5,000 to 6,000 characters because the skill asks for every section (book, flow, context, alerts, wallets, coverage). A shorter prompt, or a short-answer mode in the skill, would be needed to fit; otherwise the script's timing changes. [inferred]
 
 ## Codex h1 review 4 (REVISE) and the fix
 
