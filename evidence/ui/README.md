@@ -26,6 +26,9 @@ switched to Mono for two shots and set back. No run touched the node, production
 | `22-live-node-stops.png` | The Waiting stops panel in that run | scrolled to the panel |
 | `23-live-node-ladder.png` to `27-live-node-tape.png` | Node ladder, heatmap, wall watch, thinning, node tape in that run | scrolled to each panel |
 | `28-live-node-top-mono.png`, `29-live-node-stops-mono.png` | The same run in the Mono frame | theme switched on the isolated dashboard only, reset after |
+| `40-nofm-a-label.png` | "N of M" option (a), UI batch 4: a plain label in the Tape panel's status line, "latest 40 of 450 trades in the window" | mock-up in the file-based harness on the recorded BTC snapshot (40 tape rows, 450 counted trades); temporary edit, not committed |
+| `41-nofm-b-expander.png` | Option (b): the label plus a "Show all 450" button; disabled in the mock because the snapshot carries only the newest 40 rows | same |
+| `42-nofm-c-scroll.png` | Option (c): the count in the panel title ("Tape 40 of 450") and a fixed-height scrolling list | same |
 
 What the data says in these shots is the data: the public runs are live Hyperliquid public data at the time stamped in
 each header; the recorded feed's blocks are from Nov 7, so its families read STALE (delay about 110,000 s) and the node
