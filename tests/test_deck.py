@@ -10,6 +10,7 @@ import pytest
 
 from hl_desk import deck, schema
 from hl_desk.trades import Trade
+from hl_desk.util import iso_ms
 
 from helpers import A, B, C, T0, make_desk, open_segment, trade, build
 
@@ -254,7 +255,7 @@ def test_card_reports_confirmed_live_and_pending_separately():
     assert card["live_classification"]["state"] == "THIN"
     assert card["live_classification"]["meaning"]["state"] == "THIN"
     assert card["confirmed_regime"]["meaning"]["state"] == "ABSORBING"
-    assert card["pending"] == {"state": "THIN", "ticks": 1, "of": 2}
+    assert card["pending"] == {"state": "THIN", "ticks": 1, "of": 2, "validation": deck.VALIDATION}
 
 
 # --- burst alerts ---------------------------------------------------------------------
@@ -385,3 +386,166 @@ def test_unresolved_is_gone_everywhere():
 
 def json_text(p):
     return p.read_text()
+
+
+# --- the window's path, dominance and the labels' validation status (Commentary TOOL_PROPOSALS 1, 4 and 2; Nov 9) ----
+
+class _Fixed:
+    """A store serving one fixed trade list, filtered to the window asked for."""
+
+    def __init__(self, rows):
+        self.rows = rows
+
+    def window(self, s, e, start_inclusive=True):
+        return [t for t in self.rows if (s <= t.time if start_inclusive else s < t.time) and t.time <= e]
+
+
+def _card_at(rows, tick_ms):
+    eng = deck.DeckEngine("BTC", 10e6)
+    eng.reset_segment(T0)
+    eng._tick(_Fixed(rows), tick_ms, None)
+    return eng, eng.card(None)
+
+
+def test_path_is_six_points_that_add_up_to_the_window_and_chain_to_its_move():
+    """Tick T0+105 s, window [T0+15 s, T0+105 s]: the points end at T0+30, 45, 60, 75, 90 and 105 s. The trade at the
+    window start belongs to the first point and one on a boundary to the point it ends; the fourth 15 s has no trades."""
+    t = T0 + 105_000
+    rows = [_t(1, T0 + 15_000, 100.0, 1000.0, "B", A, B),      # the window start: point 1, buy $100,000
+            _t(2, T0 + 30_000, 101.0, 500.0, "A", B, C),       # on the boundary: point 1, sell $50,500
+            _t(3, T0 + 31_000, 102.0, 2000.0, "A", B, C),      # point 2, sell $204,000
+            _t(4, T0 + 50_000, 99.0, 100.0, "B", A, B),        # point 3, buy $9,900
+            _t(5, T0 + 80_000, 103.0, 300.0, "B", C, B),       # point 5, buy $30,900 (point 4 has no trades)
+            _t(6, T0 + 105_000, 104.0, 10.0, "A", B, A)]       # the tick itself: point 6, sell $1,040
+    eng, card = _card_at(rows, t)
+    path, n = card["path"], card["numbers"]
+    pts = path["points"]
+    assert path["point_s"] == 15 and len(pts) == 6
+    assert [p["tick_ms"] for p in pts] == [T0 + 30_000 + k * 15_000 for k in range(6)]
+    assert pts[-1]["tick"] == card["tick"] and pts[0]["tick_ms"] - 15_000 == card["window_start_ms"]
+    assert [p["trades"] for p in pts] == [2, 1, 1, 0, 1, 1]
+    assert path["first_trade"] == {"time": iso_ms(T0 + 15_000), "time_ms": T0 + 15_000, "price": 100.0}
+    assert pts[0]["net_flow_usd"] == pytest.approx(100_000 - 50_500) and pts[0]["volume_usd"] == pytest.approx(150_500)
+    assert pts[0]["price"] == 101.0 and pts[0]["move_bps"] == pytest.approx(100.0)              # 100 -> 101
+    assert pts[1]["price"] == 102.0 and pts[1]["move_bps"] == pytest.approx((102 - 101) / 101 * 1e4)
+    empty = pts[3]
+    assert empty["price"] is None and empty["move_bps"] is None and empty["reason"] == "no trades in this 15 s"
+    assert empty["net_flow_usd"] == 0 and empty["volume_usd"] == 0 and empty["trades"] == 0      # real zeros
+    assert "reason" not in pts[0]
+    assert pts[4]["move_bps"] == pytest.approx((103 - 99) / 99 * 1e4)       # measured from the last priced point
+    # The points partition the window: they add up to the card's net flow and volume and compound to its move.
+    assert sum(p["net_flow_usd"] for p in pts) == pytest.approx(n["net_flow_usd"]["value"])
+    assert sum(p["volume_usd"] for p in pts) == pytest.approx(n["volume_usd"]["value"])
+    chained = 1.0
+    for p in pts:
+        if p["move_bps"] is not None:
+            chained *= 1 + p["move_bps"] / 1e4
+    assert (chained - 1) * 1e4 == pytest.approx(n["move_bps"]["value"], abs=1e-2)
+    assert pts[-1]["price"] == n["price"]["value"] == 104.0
+    assert "plugin addition" in path["note"]
+
+
+def test_dominated_by_names_the_tick_print_and_address_over_half_with_their_shares():
+    """Point 2 holds C's four $150,000 sells; points 3 to 6 each hold a $200,000 buy by A and a $150,000 sell by B. Net
+    -$400,000 on $2M volume: the one tick carries 150% of the net (the rest netted the other way) but only 30% of the
+    volume; no print dominates; by net B and C tie at -$600,000 and the lowest address is named."""
+    t = T0 + 105_000
+    rows = [_t(10 + i, T0 + 31_000 + i, 100.0, 1500.0, "A", B, C) for i in range(4)]
+    for k, base in enumerate((46_000, 61_000, 76_000, 91_000)):
+        rows += [_t(20 + 2 * k, T0 + base, 100.0, 2000.0, "B", A, C),
+                 _t(21 + 2 * k, T0 + base + 1000, 100.0, 1500.0, "A", A, B)]
+    eng, card = _card_at(rows, t)
+    d = card["dominated_by"]
+    assert d["any"] is True and d["threshold_pct"] == 50.0
+    nf, vol = d["net_flow"], d["volume"]
+    assert nf["basis_usd"] == pytest.approx(-400_000) and vol["basis_usd"] == pytest.approx(2_000_000)
+    assert nf["tick"]["tick_ms"] == T0 + 45_000 and nf["tick"]["net_flow_usd"] == pytest.approx(-600_000)
+    assert nf["tick"]["share_pct"] == pytest.approx(150.0) and nf["tick"]["dominates"] is True
+    assert nf["print"]["tid"] == 10 and nf["print"]["side"] == "A" and nf["print"]["taker"] == C
+    assert nf["print"]["notional_usd"] == pytest.approx(150_000) and nf["print"]["share_pct"] == pytest.approx(37.5)
+    assert nf["print"]["dominates"] is False
+    assert nf["wallet"]["address"] == B and nf["wallet"]["net_aggressive_usd"] == pytest.approx(-600_000)
+    assert nf["wallet"]["share_pct"] == pytest.approx(150.0) and nf["wallet"]["dominates"] is True
+    assert vol["tick"]["tick_ms"] == T0 + 45_000 and vol["tick"]["share_pct"] == pytest.approx(30.0)
+    assert vol["tick"]["dominates"] is False
+    assert vol["print"]["tid"] == 20 and vol["print"]["share_pct"] == pytest.approx(10.0) and not vol["print"]["dominates"]
+    assert vol["wallet"]["address"] == A and vol["wallet"]["share_pct"] == pytest.approx(40.0) and not vol["wallet"]["dominates"]
+    assert vol["wallet"]["share_pct"] == card["numbers"]["top_wallet"]["share_pct"]
+    assert d["summary"] == (f"one tick (the 15 s to {iso_ms(T0 + 45_000)}) carries 150% of the window's net aggressive flow; "
+                            f"one address ({B}) carries 150% of the window's net aggressive flow")
+    assert "not to be recomputed" in d["rule"]
+
+
+def test_dominated_by_when_nothing_dominates_below_the_net_floor_and_with_no_trades():
+    t = T0 + 105_000
+    # Three equal $40,000 buys by three addresses in three points: every share is a third; ties name the earliest
+    # tick and print and the lowest address.
+    rows = [_t(1, T0 + 20_000, 100.0, 400.0, "B", C, B), _t(2, T0 + 40_000, 100.0, 400.0, "B", B, A),
+            _t(3, T0 + 55_000, 100.0, 400.0, "B", A, C)]
+    eng, card = _card_at(rows, t)
+    d = card["dominated_by"]
+    assert d["any"] is False
+    assert d["summary"] == ("no single tick, print or address carries more than 50% of the window's net aggressive flow "
+                            "or of its volume")
+    for part in (d["net_flow"], d["volume"]):
+        assert part["tick"]["tick_ms"] == T0 + 30_000 and part["print"]["tid"] == 1 and part["wallet"]["address"] == A
+        assert all(part[k]["share_pct"] == pytest.approx(100 / 3, abs=1e-3) and part[k]["dominates"] is False
+                   for k in ("tick", "print", "wallet"))
+    # Net +$10,000 is under the $100K floor: no net shares, with the reason; the volume shares still say one tick is 55%.
+    rows = [_t(1, T0 + 20_000, 100.0, 600.0, "B", A, B), _t(2, T0 + 40_000, 100.0, 500.0, "A", B, C)]
+    eng, card = _card_at(rows, t)
+    d = card["dominated_by"]
+    assert d["net_flow"] == {"basis_usd": None, "reason": "net aggressive flow below the $100K floor: shares of it aren't computed",
+                             "tick": None, "print": None, "wallet": None}
+    assert d["volume"]["tick"]["share_pct"] == pytest.approx(60_000 / 110_000 * 100) and d["volume"]["tick"]["dominates"]
+    assert d["any"] is True and d["summary"].endswith("(net aggressive flow below the $100K floor: its shares aren't computed)")
+    # No trades at all: six empty points, no first trade, no basis for any share.
+    eng, card = _card_at([], t)
+    assert card["live_classification"]["state"] == "QUIET"
+    assert all(p["trades"] == 0 and p["price"] is None and p["reason"] == "no trades in this 15 s" for p in card["path"]["points"])
+    assert card["path"]["first_trade"]["price"] is None and card["path"]["first_trade"]["reason"] == "no trades in window"
+    d = card["dominated_by"]
+    assert d["any"] is False and d["volume"]["basis_usd"] == 0.0 and d["volume"]["reason"] == "no aggressive volume in window"
+    assert d["volume"]["tick"] is None and d["net_flow"]["basis_usd"] is None
+
+
+def test_path_dominance_and_validation_served_by_hl_alerts_and_absent_from_a_withheld_card():
+    import json
+    from hl_desk import tools
+    from hl_desk.serving_public import withheld_card
+    from helpers import SnapRT
+    desk = make_desk()
+    ms = desk.markets["BTC"]
+    open_segment(ms, T0)
+    tid = 1
+    for k in range(0, 9):                     # A buys $500,000 every 15 s
+        t = T0 + 1000 + k * 15_000
+        ms.on_trades([trade("BTC", t, 100.0, 5000.0, "B", A, B, tid)], 0, t)
+        tid += 1
+    snap = build(desk, 1)
+    card = snap["markets"]["BTC"]["deck"]["card"]
+    assert card["complete"] and len(card["path"]["points"]) == 6
+    assert all(p["trades"] == 1 and p["net_flow_usd"] == pytest.approx(500_000) for p in card["path"]["points"])
+    d = card["dominated_by"]
+    assert d["any"] is True and d["net_flow"]["tick"]["dominates"] is False      # each tick is a sixth
+    assert d["volume"]["wallet"]["address"] == A and d["volume"]["wallet"]["share_pct"] == pytest.approx(100.0)
+    assert d["volume"]["wallet"]["share_pct"] == card["numbers"]["top_wallet"]["share_pct"]
+    assert d["summary"] == (f"one address ({A}) carries 100% of the window's net aggressive flow; "
+                            f"one address ({A}) carries 100% of the window's volume")
+    v = schema.load()["regimes"]["validation"]["status"]
+    assert v == "descriptive; no predictive test on record"
+    assert card["confirmed_regime"]["validation"] == card["live_classification"]["validation"] == deck.VALIDATION == v
+    alerts = json.loads(tools.run_tool("hl_alerts", {"market": "BTC"}, SnapRT(snap)))
+    served = alerts["cards"]["BTC"]["card"]
+    assert served["path"] == card["path"] and served["dominated_by"] == card["dominated_by"]
+    assert served["confirmed_regime"]["validation"] == v
+    # Withheld at serving time (trades lapsed) or incomplete at build time: neither field is carried, like tick and
+    # window_start_ms; the serving-time card still equals the build's own withheld card key for key.
+    w = withheld_card(card, "trades stale: test")
+    assert "path" not in w and "dominated_by" not in w and "tick" not in w
+    built = ms.deck.card("trades stale: test")           # the snapshot's activity_buckets are node-enriched: keys compared
+    assert set(w) == set(built)
+    assert {k: v for k, v in w.items() if k != "activity_buckets"} == {k: v for k, v in built.items() if k != "activity_buckets"}
+    for key in ("deck.path", "deck.dominated_by"):
+        s = schema.load()["metrics"][key]
+        assert s["plugin_addition"] is True and "complete card" in s["completeness_rule"]

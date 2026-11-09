@@ -971,6 +971,41 @@
       "reset_rule": "cleared at every gap with the rest of the deck",
       "completeness_rule": "the displayed card's numbers always equal the execution set's totals for its window; delivering trades late or in order ends in the same card, latch and regime changes"
     },
+    "deck.path": {
+      "source": "plugin (Commentary TOOL_PROPOSALS 1, path; Nov 9)",
+      "plugin_addition": true,
+      "formula": "the card's window as six 15 s points, one per deck tick from t - 75 s to t: point k holds the execution set's trades with time in (t - 90 s + (k-1)*15 s, t - 90 s + k*15 s], the first point also the trade at t - 90 s (the window is start-inclusive), so the points partition the window and their net flows and volumes add up to deck.net_flow and deck.volume. price = px of the point's last trade; move_bps = (price - ref) / ref * 10000 with ref the previous priced point's price (the window's first trade's px for the first point), so the points chain from the window's first trade to its last and compound to deck.move_bps; net_flow_usd and volume_usd as deck.net_flow and deck.volume over the point's trades; trades = their count. first_trade names the window's first trade (time, price)",
+      "units": "per point: tick (ISO) and tick_ms, price USD per coin, move_bps bps, net_flow_usd and volume_usd USD notional, trades count",
+      "inputs": [
+        "execution set"
+      ],
+      "side_convention": "net positive = net taker buying; move positive = price up",
+      "window": "deck.window, as six consecutive 15 s points",
+      "reset_rule": "per tick",
+      "completeness_rule": "present only on a complete card: absent, like tick and window_start_ms, when the window is incomplete or trades aren't fresh (the card's regime reason covers it). A point with no trades has price and move_bps null with reason 'no trades in this 15 s' and a real zero net flow and volume (the window is complete); the next priced point's move is measured from the last priced one. first_trade is null with a reason when the window has no trades"
+    },
+    "deck.dominated_by": {
+      "source": "plugin (Commentary TOOL_PROPOSALS 4, dominated_by; Nov 9)",
+      "plugin_addition": true,
+      "formula": "for the window's net aggressive flow (deck.net_flow) and for its aggressive volume (deck.volume): the largest single tick (deck.path point), print (execution) and taker address, each with share_pct = its amount / the window's * 100 and dominates = share_pct > 50 (the node panels' rule for one order in a band). For net flow the amount is the piece's net in the net's direction (a tick's net flow, a print's notional on the net's side, an address's aggressive bought minus aggressive sold) over |deck.net_flow|; for volume the piece's gross aggressive notional over deck.volume. any = some piece dominates; summary states the dominating pieces in words, with full addresses",
+      "threshold": {
+        "dominant_share_pct": 50,
+        "compare": ">",
+        "min_abs_net_usd": 100000
+      },
+      "units": "percent; amounts USD notional",
+      "inputs": [
+        "execution set",
+        "deck.path",
+        "deck.net_flow",
+        "deck.volume"
+      ],
+      "side_convention": "net flow shares are in the net's direction (positive = with the net); volume shares unsigned",
+      "window": "deck.window",
+      "reset_rule": "per tick",
+      "ties": "ticks and prints: the earliest; addresses: the lowest address (as deck.top_wallet)",
+      "completeness_rule": "present only on a complete card (absent when the window is incomplete or trades aren't fresh). Net flow shares need |deck.net_flow| >= 100000 (the IMPACT floor): under it net_flow has basis_usd null with the reason and no pieces, never 0%; volume shares need deck.volume > 0 (otherwise basis_usd is a real 0 with the reason and no pieces). A share over 100% is real: the other pieces netted the opposite way. The shares are computed here and are not to be recomputed by a reader"
+    },
     "node.family_state": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
       "formula": "per family (book, triggers, depth, bands, flow): INVALID if not recovered; REPLAY for a valid replay family; UNKNOWN when client wall - pub_ms < -1000 ms; STALE when no freshness-advancing watermark since the family became valid; otherwise from the node feed's delay (Kevin, Nov 8): delay(t) = wall at the market's latest timed watermark's receipt - its block_time_ms + monotonic time since receipt, averaged exactly over the last 5000 ms (or since the first watermark) = delay_ms; STALE when delay_ms > 30000; BEHIND (shown as DELAYED) when delay_ms > 10000; else LIVE. Heartbeats never count, so a silent feed's delay keeps growing",
@@ -1261,7 +1296,12 @@
         "text": "No qualifying executions occurred in the complete observed window. This is distinct from an unavailable or unverified feed."
       }
     },
-    "meanings_source": "GPT review R11 finding 9's replacement text, adopted by Kevin on Nov 8. Regimes are heuristic classifications of the stated execution-window measurements; their labels do not establish a cause, a participant's intent or remaining size, or a profitable trading opportunity. hl_deck's original GUIDE wording is no longer shown."
+    "meanings_source": "GPT review R11 finding 9's replacement text, adopted by Kevin on Nov 8. Regimes are heuristic classifications of the stated execution-window measurements; their labels do not establish a cause, a participant's intent or remaining size, or a profitable trading opportunity. hl_deck's original GUIDE wording is no longer shown.",
+    "validation": {
+      "status": "descriptive; no predictive test on record",
+      "source": "Commentary TOOL_PROPOSALS 2 (Nov 9): a validation status next to every Flow Deck label, so the reliability line is quoted from the result, not recalled. The record holds no predictive test of any regime label (commentary study, 'not proposed: a forecasting or signal field'); the labels are heuristic classifications of the window's measurements (meanings_source)",
+      "shown": "confirmed_regime.validation, live_classification.validation and pending.validation on the Flow Deck card: the same string for every regime label"
+    }
   },
   "alerts": {
     "burst": {
@@ -1359,6 +1399,6 @@
     "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check",
     "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
     "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution",
-    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals"
+    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals; Flow Deck card path (six 15 s points) and dominated_by, and a validation status on the card's regime labels (Commentary TOOL_PROPOSALS 1, 4 and 2, Nov 9), additive"
   ]
 }

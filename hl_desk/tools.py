@@ -60,7 +60,9 @@ SCHEMAS = {
         "name": "hl_alerts",
         "description": ("The Flow Deck for Hyperliquid markets (ported from the author's terminal Flow Deck, hl_deck.py): each market's current regime "
                         "(e.g. ABSORBING, VACUUM-DOWN) with its plain-language meaning, when it started and how long it has held, "
-                        "the 90 s window's move, net flow, volume, IMPACT, PRESSURE and top wallet, plus the events list of regime "
+                        "the 90 s window's move, net flow, volume, IMPACT, PRESSURE and top wallet, its path (six 15 s points: time, "
+                        "price, move, net flow) and dominated_by (whether one tick, print or address carries more than half of the "
+                        "net flow or volume, with the share), each label's validation status, plus the events list of regime "
                         "changes and burst alerts (aggressive buying or selling over a per-market threshold within 60 s) with the "
                         "wallets behind each burst."),
         "parameters": {"type": "object", "properties": {"market": {"type": "string", "description": "Optional: one market only."},

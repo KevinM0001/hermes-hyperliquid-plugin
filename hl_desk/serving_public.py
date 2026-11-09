@@ -98,7 +98,8 @@ def _age_band(band: dict, lapsed: dict) -> dict:
 
 def withheld_card(card: dict, reason: str) -> dict:
     """The Flow Deck card exactly as the build makes it when trades aren't fresh (deck.DeckEngine.card): the same
-    keys, and the last confirmed regime as {regime: its state, since_ms, since, as_of_tick_ms, note}."""
+    keys, and the last confirmed regime as {regime: its state, since_ms, since, as_of_tick_ms, note}. A complete card's
+    tick, window bounds, path and dominated_by aren't carried (the reason covers them), as the build doesn't carry them."""
     out = {k: card[k] for k in ("market", "window_s", "tick_s") if k in card}
     tick = card.get("last_complete_tick_ms", card.get("tick_ms"))   # a complete card names its tick tick_ms
     out.update({"regime": na(reason), "confirmed_regime": None, "live_classification": None, "pending": None,

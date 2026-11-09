@@ -24,6 +24,20 @@ REVISABLE_TICKS = WINDOW_MS // TICK_MS + 2
 NODE_REASON = "needs node mode: public trades carry no open/close direction"
 IMPACT_UNIT = "bps per $1M: absolute observed trade-price change per $1M of net aggressive flow (descriptive ratio)"
 PRESSURE_UNIT = "ratio: aggressive buy notional / aggressive sell notional"
+PATH_POINTS = WINDOW_MS // TICK_MS
+NO_TRADES_15S = "no trades in this 15 s"
+# The node panels' rule for a band (one order over half of it), applied to the card's window (schema deck.dominated_by).
+DOMINANT_SHARE_PCT = 50.0
+VALIDATION = schema.load()["regimes"]["validation"]["status"]
+PATH_NOTE = ("the window as six 15 s points ending at each deck tick: price is the point's last trade price, move_bps the "
+             "change from the previous point (the window's first trade for the first point), net_flow_usd and volume_usd its "
+             "aggressive flow; the points add up to the window's net flow and volume and chain to its move; a point with no "
+             "trades has price and move null with the reason and a real zero flow (plugin addition, schema deck.path)")
+DOMINANCE_RULE = ("a piece dominates when it carries more than 50% of the window's net aggressive flow (in the net's "
+                  "direction) or of its aggressive volume, the node panels' rule for one order in a band; for each measure the "
+                  "largest tick, print and taker address are named with their shares, computed here from the window's "
+                  "executions and not to be recomputed; net shares need |net| >= $100K (the IMPACT floor); a share over 100% "
+                  "means the other pieces netted the opposite way (plugin addition, schema deck.dominated_by)")
 
 
 def window_metrics(trades, pressure: float | None = None) -> dict:
@@ -64,6 +78,118 @@ def window_metrics(trades, pressure: float | None = None) -> dict:
             "top_aggressive_bought": top_ab, "top_aggressive_sold": top_as,
             "top_net_aggressive": (top_ab - top_as) if top else None,
             "price": trades[-1].px if trades else None}
+
+
+def window_path(trades, start_ms: int) -> list[dict]:
+    """The window as six 15 s points, one per deck tick (schema deck.path). Point k holds the trades with time in
+    (start + (k-1)*15 s, start + k*15 s], the first one also the trade at the window start (the window is start-inclusive),
+    so the points partition the window and their nets add up to its net. price is the point's last trade price and move_bps
+    the change from the previous priced point (the window's first trade for the first point): the points chain from the
+    window's first trade to its last. trades are ordered by (time, seq)."""
+    points, ref, i, n = [], (trades[0].px if trades else None), 0, len(trades)
+    for k in range(1, PATH_POINTS + 1):
+        e = start_ms + k * TICK_MS
+        j = n if k == PATH_POINTS else i
+        while j < n and trades[j].time <= e:
+            j += 1
+        chunk, i = trades[i:j], j
+        buy = sum(t.notional for t in chunk if t.side == "B")
+        sell = sum(t.notional for t in chunk if t.side == "A")
+        p = {"tick_ms": e, "n": len(chunk), "net": buy - sell, "vol": buy + sell, "price": None, "move_bps": None}
+        if chunk:
+            px = chunk[-1].px
+            p["price"] = px
+            p["move_bps"] = (px - ref) / ref * 10000 if ref else None
+            ref = px
+        points.append(p)
+    return points
+
+
+def path_block(trades, points: list[dict]) -> dict:
+    first = ({"time": iso_ms(trades[0].time), "time_ms": trades[0].time, "price": trades[0].px} if trades
+             else {"time": None, "time_ms": None, "price": None, "reason": "no trades in window"})
+    pts = []
+    for p in points:
+        q = {"tick": iso_ms(p["tick_ms"]), "tick_ms": p["tick_ms"], "price": p["price"], "move_bps": rnd(p["move_bps"], 4),
+             "net_flow_usd": rnd(p["net"], 2), "volume_usd": rnd(p["vol"], 2), "trades": p["n"]}
+        if p["n"] == 0:
+            q["reason"] = NO_TRADES_15S
+        pts.append(q)
+    return {"points": pts, "point_s": TICK_MS // 1000, "first_trade": first, "note": PATH_NOTE}
+
+
+def _largest(items, amount):
+    """The item with the largest amount: on a tie the first in order (addresses are passed sorted, so the lowest wins)."""
+    best, best_a = None, None
+    for it in items:
+        a = amount(it)
+        if best is None or a > best_a:
+            best, best_a = it, a
+    return best, best_a
+
+
+def dominance(trades, points: list[dict], m: dict) -> dict:
+    """schema deck.dominated_by: for the window's net aggressive flow and for its volume, the largest single tick (path
+    point), print and taker address, each with its share and whether it dominates (more than half), and a summary."""
+    net, vol = m["net"], m["vol"]
+    gross: dict[str, float] = {}
+    wnet: dict[str, float] = {}
+    for t in trades:
+        if t.taker is None:
+            continue
+        gross[t.taker] = gross.get(t.taker, 0.0) + t.notional
+        wnet[t.taker] = wnet.get(t.taker, 0.0) + (t.notional if t.side == "B" else -t.notional)
+    named: list[str] = []
+
+    def piece(kind, it, amount, basis, label, key, value):
+        share = amount / basis * 100
+        dom = share > DOMINANT_SHARE_PCT
+        if kind == "tick":
+            out = {"tick": iso_ms(it["tick_ms"]), "tick_ms": it["tick_ms"]}
+            what = f"one tick (the 15 s to {out['tick']})"
+        elif kind == "print":
+            out = {"time": iso_ms(it.time), "time_ms": it.time, "side": it.side, "px": it.px, "sz": it.sz,
+                   "notional_usd": rnd(it.notional, 2), "taker": it.taker, "tid": it.tid}
+            what = f"one print ({out['time']}, {'buy' if it.side == 'B' else 'sell'} ${it.notional:,.0f})"
+        else:
+            out = {"address": it[0]}
+            what = f"one address ({it[0]})"
+        out |= {key: rnd(value, 2), "share_pct": rnd(share, 4), "dominates": dom}
+        if kind == "wallet":
+            out["note"] = "an address, not an identified owner"
+        if dom:
+            named.append(f"{what} carries {share:.0f}% of the window's {label}")
+        return out
+
+    if abs(net) >= C["MIN_NET_IMPACT_usd"]:
+        sign, side, basis = (1, "B", net) if net > 0 else (-1, "A", -net)
+        tk, a = _largest(points, lambda p: sign * p["net"])
+        pr, b = _largest([t for t in trades if t.side == side], lambda t: t.notional)
+        wl, c = _largest(sorted(wnet.items()), lambda kv: sign * kv[1])
+        net_part = {"basis_usd": rnd(net, 2),
+                    "tick": piece("tick", tk, a, basis, "net aggressive flow", "net_flow_usd", tk["net"]),
+                    "print": piece("print", pr, b, basis, "net aggressive flow", "notional_usd", pr.notional),
+                    "wallet": (piece("wallet", wl, c, basis, "net aggressive flow", "net_aggressive_usd", wl[1])
+                               if wl else None)}
+        net_note = ""
+    else:
+        net_part = {"basis_usd": None, "reason": "net aggressive flow below the $100K floor: shares of it aren't computed",
+                    "tick": None, "print": None, "wallet": None}
+        net_note = " (net aggressive flow below the $100K floor: its shares aren't computed)"
+    if vol > 0:
+        tk, a = _largest(points, lambda p: p["vol"])
+        pr, b = _largest(trades, lambda t: t.notional)
+        wl, c = _largest(sorted(gross.items()), lambda kv: kv[1])
+        vol_part = {"basis_usd": rnd(vol, 2),
+                    "tick": piece("tick", tk, a, vol, "volume", "volume_usd", tk["vol"]),
+                    "print": piece("print", pr, b, vol, "volume", "notional_usd", pr.notional),
+                    "wallet": piece("wallet", wl, c, vol, "volume", "volume_usd", wl[1]) if wl else None}
+    else:
+        vol_part = {"basis_usd": 0.0, "reason": "no aggressive volume in window", "tick": None, "print": None, "wallet": None}
+    summary = ("; ".join(named) if named else
+               "no single tick, print or address carries more than 50% of the window's net aggressive flow or of its volume")
+    return {"any": bool(named), "threshold_pct": DOMINANT_SHARE_PCT, "rule": DOMINANCE_RULE,
+            "net_flow": net_part, "volume": vol_part, "summary": summary + net_note}
 
 
 def classify(m: dict | None, node_mode: bool = False) -> tuple[str, str | None]:
@@ -242,7 +368,9 @@ class DeckEngine:
         # SPARSE (hl_deck 450-453) is a flag on the live classification: it never enters the latch or the events.
         # hl_deck applies it only when the window has trades (an empty window is QUIET) and isn't a vacuum.
         sparse = 0 < m["n"] < C["SPARSE_MAX_TRADES"] and live not in ("VACUUM-UP", "VACUUM-DOWN")
-        self.last_tick = {"tick_ms": t, "complete": True, "metrics": m, "live": live, "live_tag": tag, "sparse": sparse}
+        points = window_path(trades, start)
+        self.last_tick = {"tick_ms": t, "complete": True, "metrics": m, "live": live, "live_tag": tag, "sparse": sparse,
+                          "path": path_block(trades, points), "dominated_by": dominance(trades, points, m)}
         self.last_complete_tick_ms = t
 
     # --- bursts ----------------------------------------------------------
@@ -327,14 +455,15 @@ class DeckEngine:
                        na(f"no regime confirmed yet: a classification must repeat on {C['CONFIRM_TICKS']} consecutive complete ticks")),
             "confirmed_regime": ({"state": self.confirmed, "tag": self.confirmed_tag, "since_ms": self.since_ms,
                                   "since": iso_ms(self.since_ms), "held_s": held, "as_of_tick": iso_ms(t),
-                                  "meaning": meaning_block(self.confirmed)} if self.confirmed is not None else None),
+                                  "meaning": meaning_block(self.confirmed), "validation": VALIDATION}
+                                 if self.confirmed is not None else None),
             "live_classification": {"state": lt["live"], "tag": lt["live_tag"], "tick": iso_ms(t),
                                     "describes": "this tick's window numbers below",
                                     "sparse": lt["sparse"],
                                     "sparse_note": meaning_block("SPARSE")["text"] if lt["sparse"] else None,
-                                    "meaning": meaning_block(lt["live"])},
-            "pending": ({"state": self.pending[0], "ticks": self.pending[1], "of": C["CONFIRM_TICKS"]}
-                        if self.pending[0] else None),
+                                    "meaning": meaning_block(lt["live"]), "validation": VALIDATION},
+            "pending": ({"state": self.pending[0], "ticks": self.pending[1], "of": C["CONFIRM_TICKS"],
+                         "validation": VALIDATION} if self.pending[0] else None),
             "numbers": {
                 "price": val(m["price"], "USD") if m["price"] is not None else na("no trades in window", "USD"),
                 "move_bps": move,
@@ -347,6 +476,10 @@ class DeckEngine:
                 "accounts": val(m["accounts"], "taker addresses"),
                 "trades": val(m["n"], "trades"),
             },
+            # The window's path and whether one piece dominates it (Commentary TOOL_PROPOSALS 1 and 4): complete-card
+            # fields, absent from a withheld card like tick and window_start_ms.
+            "path": lt["path"],
+            "dominated_by": lt["dominated_by"],
             "activity_buckets": self._buckets(),
         })
         if lt.get("revised"):

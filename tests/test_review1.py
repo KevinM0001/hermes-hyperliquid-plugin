@@ -330,7 +330,7 @@ def test_every_published_metric_has_a_schema_entry():
                  "context.day_notional_volume", "context.prev_day_px",
                  "deck.price", "deck.move_bps", "deck.net_flow", "deck.volume", "deck.impact", "deck.pressure",
                  "deck.activity_buckets", "deck.top_wallet", "deck.top_wallet_net_aggressive", "deck.accounts",
-                 "deck.trade_count", "wallets.window", "wallets.unique_execution_notional", "wallets.executions",
+                 "deck.trade_count", "deck.path", "deck.dominated_by", "wallets.window", "wallets.unique_execution_notional", "wallets.executions",
                  "wallets.bought", "wallets.sold", "wallets.aggressive_bought", "wallets.aggressive_sold",
                  "wallets.participation", "wallets.net_bought", "wallets.buy_share", "wallets.sell_share",
                  "wallets.ranked_list", "chart.candle", "chart.price_line"]
