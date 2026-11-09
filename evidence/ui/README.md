@@ -59,3 +59,21 @@ refused connections since 05:05Z), so the live node panels say so and the Replay
 | `71-review-nov5-loading.png` | What the tab shows while the plugin loads the recording: "No snapshot. the latest snapshot is 89.9 s old: the collector isn't publishing" (the whole load took 1 min 50 s; the Start call itself timed out at 10 s and the replay appeared when the load ended) | 82 s after pressing Start in the Replay area |
 | `72-review-nov5-full.png` | The whole tab with the Replay area playing: Families and the L4 ladder summary side by side in half a row each (before the width change), waiting stops, walls, thinning, node tape, the heatmap filling (24 samples) | 13:49Z; the ladder table scrolled to its right-hand columns |
 | `73-review-nov5-full-after.png` | The same view at `c616fbf`: the Families strip and the L4 ladder summary take the full row (two `wide` props); replay position 14:12Z of the recording, heatmap with a full 15-minute window | 14:30Z, page reloaded after the bundle sync; no restart, the recording kept playing |
+
+## The market row: chart left, ladder right, directly under the summary (2026-11-09, 18:50Z, Kevin's direction)
+
+Kevin, reviewing the interactive dashboard, asked for the price chart on the left directly under the summary cards and
+the price ladder to its right (his reference: Hyperliquid's own trade page). Same isolated review dashboard on a spare port
+(public live; the runner's socket refused; the Nov 5 replay in the Replay area), headless Chrome, 1440 px wide, BTC.
+
+| File | What it shows | How |
+| --- | --- | --- |
+| `80-market-row-before-top.png` | Before: the first screen ends at the node strip; chart and ladder were in the Book section below the node panels | bundle `c616fbf`, 18:49Z |
+| `81-market-row-before-full.png` | Before: the whole tab | same |
+| `82-market-row-after-top.png` | After: the chart on the left and the ladder on the right, straight under the delay bar | the market-row change, 18:57Z |
+| `83-market-row-after-full.png` | After: the whole tab (node strip, then Book with the node panels and the observed depth, then Flow, Wallets, Replay) | same |
+| `84-market-row-after-row.png` | After: the whole market row in one frame (1700 px tall viewport); the chart grows to the ladder's height | same, 18:58Z |
+| `85-market-row-after-book.png` | After: the Book section under the row (node panels, then the observed depth on its own full row) | scrolled to the Book heading, 18:58Z |
+
+The public websocket reconnected at 18:53:05Z (the collector's conn #23), so the after shots show a segment that is
+seconds old: one candle, the 90 s windows not yet complete. That is the data at that moment, not the layout.
