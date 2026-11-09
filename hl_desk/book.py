@@ -239,12 +239,25 @@ def _row(px, sz, n) -> dict:
     return row
 
 
+def largest_level(rows: list[dict], side: str) -> dict | None:
+    """The returned level with the largest aggregate size on one side (ties to the level nearer the top of book):
+    the same level as the chart's 'largest returned … level' price line."""
+    if not rows:
+        return None
+    return dict(max(rows, key=lambda r: (r["sz"], -r["px"] if side == "asks" else r["px"])))
+
+
 def ladder_rows(bids: list, asks: list, problems: dict | None = None) -> dict:
     out = {
         "bids": [_row(*lv) for lv in bids],
         "asks": [_row(*lv) for lv in asks],
         "api_count_note": API_COUNT_NOTE,
         "aggregated": True,
+    }
+    out["largest"] = {
+        "bid": largest_level(out["bids"], "bids"), "ask": largest_level(out["asks"], "asks"),
+        "by": ("the largest aggregate size (coin) among the returned levels on that side, ties to the level nearer the "
+               "top; an aggregated level, never one order; the same level as the chart's largest-level price line"),
     }
     if problems and (problems.get("bid") or problems.get("ask")):
         out["malformed_levels"] = problems

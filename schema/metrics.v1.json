@@ -239,6 +239,18 @@
       "reset_rule": "replaced by every push",
       "completeness_rule": "only the levels Hyperliquid returned (at most 20 per side per the docs); levels are aggregated, never individual orders; a level whose px or sz is missing, not a number or not positive is never summed, and makes that side's totals (and, at the best level, the mid) unavailable with a reason; n (API count) is a whole number >= 0, otherwise null with a reason, never truncated"
     },
+    "book.largest_level": {
+      "source": "plugin",
+      "formula": "per side, the returned level with the largest aggregate size sz (coin), ties to the level nearer the top of book; reported as the whole level {px, sz, api_count, notional_usd} in levels.largest (hl_market) and drawn as the chart's largest-level price line. Commentary names the largest level only from this field (Codex h1 review 2, B3)",
+      "units": "px USD per coin; sz coin; notional USD",
+      "inputs": [
+        "l2Book full (20 levels, no nSigFigs)"
+      ],
+      "side_convention": "bid and ask separately",
+      "window": "latest push",
+      "reset_rule": "replaced by every push",
+      "completeness_rule": "only among the levels Hyperliquid returned (at most 20 per side); null when that side has no returned level; withheld with the ladder when the 20-level book isn't fresh; an aggregated level, never an individual order"
+    },
     "book.depth_band": {
       "source": "handoff; Kevin's decision 10 (GPT review R11 finding 10)",
       "bands_pct": [
@@ -1318,6 +1330,7 @@
     "1.1.0 (Handoff 1c Part B): node.* metrics from the l4-livefeed protocol v2, additive; no public-data metric changed",
     "1.2.0 (burst calibration, Kevin's choice A): node-mode bursts on node fills with the calibration's rule (alerts.burst.node_mode), automatic thresholds from a dated calibration with a manual override, and a rank against the calibration's reference; the public-trades burst rule is unchanged and is public mode's",
     "1.2.0 also (Kevin, Nov 8, node-mode flicker): node.family_state comes from the node feed's delay, the latest watermark's age averaged over 5 s, LIVE up to 10 s, BEHIND (shown as DELAYED) above it, STALE above 30 s; the tab never blanks for a delay",
-    "1.2.0 also (Codex h1 review 1): public statuses are re-judged at a latest snapshot's served age, and the tab ages what it shows the same way, withholding lapsed values in place"
+    "1.2.0 also (Codex h1 review 1): public statuses are re-judged at a latest snapshot's served age, and the tab ages what it shows the same way, withholding lapsed values in place",
+    "1.2.0 also (Codex h1 review 2): book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)"
   ]
 }

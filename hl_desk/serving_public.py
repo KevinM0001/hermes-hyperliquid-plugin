@@ -68,13 +68,19 @@ def _age_band(band: dict, lapsed: dict) -> dict:
 
 
 def withheld_card(card: dict, reason: str) -> dict:
-    """The Flow Deck card as the build makes it when trades aren't fresh (deck.DeckEngine.card)."""
-    out = {k: card[k] for k in ("market", "window_s", "tick_s", "last_complete_tick_ms", "activity_buckets") if k in card}
+    """The Flow Deck card exactly as the build makes it when trades aren't fresh (deck.DeckEngine.card): the same
+    keys, and the last confirmed regime as {regime: its state, since_ms, since, as_of_tick_ms, note}."""
+    out = {k: card[k] for k in ("market", "window_s", "tick_s") if k in card}
+    tick = card.get("last_complete_tick_ms", card.get("tick_ms"))   # a complete card names its tick tick_ms
     out.update({"regime": na(reason), "confirmed_regime": None, "live_classification": None, "pending": None,
+                "last_complete_tick_ms": tick,
                 "numbers": {k: na(reason) for k in CARD_NUMBERS}})
-    if card.get("confirmed_regime"):
-        out["last_confirmed"] = {"regime": card["confirmed_regime"], "as_of_tick_ms": card.get("last_complete_tick_ms"),
-                                 "note": "historical: the confirmed regime when the snapshot was built"}
+    if "activity_buckets" in card:
+        out["activity_buckets"] = card["activity_buckets"]
+    cr = card.get("confirmed_regime")
+    if isinstance(cr, dict) and cr.get("state") is not None:
+        out["last_confirmed"] = {"regime": cr["state"], "since_ms": cr.get("since_ms"), "since": cr.get("since"),
+                                 "as_of_tick_ms": tick, "note": "historical: the last complete tick's confirmed regime"}
     elif card.get("last_confirmed"):
         out["last_confirmed"] = card["last_confirmed"]
     return out
@@ -118,6 +124,7 @@ def age_market(ms: dict, age_s: float, when: str) -> dict:
         drop_lines |= {"best_bid": why["book_fast"], "best_ask": why["book_fast"]}
     if "book_full" in why:
         book["ladder"] = {"bids": [], "asks": [], "reason": why["book_full"],
+                          "largest": {"bid": None, "ask": None, "reason": why["book_full"]},
                           "api_count_note": (book.get("ladder") or {}).get("api_count_note")}
         drop_lines |= {"largest_bid_level": why["book_full"], "largest_ask_level": why["book_full"]}
     lapsed_books = {BOOK_LABEL[k]: why[k] for k in BOOK_LABEL if k in why}

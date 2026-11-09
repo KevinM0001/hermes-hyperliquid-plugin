@@ -19731,15 +19731,22 @@
       });
       return o;
     }
+    // The Flow Deck card exactly as the build makes it when trades aren't fresh (hl_desk/serving_public.withheld_card).
     function withheldCard(card, r) {
       const o = {};
-      ["market", "window_s", "tick_s", "last_complete_tick_ms", "activity_buckets"].forEach(function (k) { if (k in card) o[k] = card[k]; });
+      ["market", "window_s", "tick_s"].forEach(function (k) { if (k in card) o[k] = card[k]; });
+      const tick = "last_complete_tick_ms" in card ? card.last_complete_tick_ms : (card.tick_ms === undefined ? null : card.tick_ms);
       o.regime = NA(r); o.confirmed_regime = null; o.live_classification = null; o.pending = null;
+      o.last_complete_tick_ms = tick;
       o.numbers = {};
       ["move_bps", "net_flow_usd", "volume_usd", "impact", "pressure", "trades", "accounts", "top_wallet"].forEach(function (k) { o.numbers[k] = NA(r); });
-      if (card.confirmed_regime) o.last_confirmed = { regime: card.confirmed_regime, as_of_tick_ms: card.last_complete_tick_ms,
-        note: "historical: the confirmed regime when the snapshot was built" };
-      else if (card.last_confirmed) o.last_confirmed = card.last_confirmed;
+      if ("activity_buckets" in card) o.activity_buckets = card.activity_buckets;
+      const cr = card.confirmed_regime;
+      if (cr && typeof cr === "object" && cr.state !== undefined && cr.state !== null) {
+        o.last_confirmed = { regime: cr.state, since_ms: cr.since_ms === undefined ? null : cr.since_ms,
+          since: cr.since === undefined ? null : cr.since, as_of_tick_ms: tick,
+          note: "historical: the last complete tick's confirmed regime" };
+      } else if (card.last_confirmed) o.last_confirmed = card.last_confirmed;
       return o;
     }
     // --- node (as hl_desk/node/serving.py): a LIVE family whose delay bound has passed a limit
@@ -19858,7 +19865,8 @@
         drop.best_bid = drop.best_ask = why.book_fast;
       }
       if (why.book_full) {
-        book.ladder = { bids: [], asks: [], reason: why.book_full, api_count_note: (book.ladder || {}).api_count_note };
+        book.ladder = { bids: [], asks: [], reason: why.book_full, largest: { bid: null, ask: null, reason: why.book_full },
+          api_count_note: (book.ladder || {}).api_count_note };
         drop.largest_bid_level = drop.largest_ask_level = why.book_full;
       }
       const lapsedBooks = {};

@@ -17,6 +17,16 @@ def val(value: Any, unit: str | None = None, reason: str | None = None) -> dict:
     return out
 
 
+def median(values):
+    """The median of a non-empty collection: the middle value, or the mean of the two middle values when there is an
+    even number (Decimals stay exact)."""
+    s = sorted(values)
+    n = len(s)
+    if n == 0:
+        raise ValueError("median of no values")
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
 def na(reason: str, unit: str | None = None) -> dict:
     return val(None, unit, reason)
 

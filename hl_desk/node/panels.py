@@ -17,6 +17,7 @@ from decimal import Decimal
 
 from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
+from ..util import median
 from .proto import fmt, num
 
 ZERO = Decimal(0)
@@ -129,9 +130,8 @@ def _track_walls(mf, ps: PanelState, t: int) -> None:
                 cands.extend(book.orders[o] for o in oids)
         if not cands:
             continue
-        sizes = sorted(o.sz * o.px for o in cands)
-        median = sizes[len(sizes) // 2]
-        big = sorted((o for o in cands if o.sz * o.px >= median * WALL_MIN_MULTIPLE),
+        med = median(o.sz * o.px for o in cands)       # the mean of the two middle notionals when their count is even
+        big = sorted((o for o in cands if o.sz * o.px >= med * WALL_MIN_MULTIPLE),
                      key=lambda o: (-(o.sz * o.px), o.oid))[:WALLS_PER_SIDE]
         for o in big:
             current[o.oid] = o

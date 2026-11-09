@@ -18,7 +18,7 @@ from .config import DeskConfig
 from .deck import DeckEngine
 from .freshness import NS, FieldTracker
 from .trades import TradeStore
-from .util import dex_of, fnum, iso_ms, na, rnd, val
+from .util import dex_of, fnum, iso_ms, median, na, rnd, val
 
 CTX_KEYS = ("markPx", "oraclePx", "midPx", "funding", "openInterest", "dayNtlVlm", "prevDayPx")
 WALLET_WINDOWS_MIN = (1, 5, 15)
@@ -220,7 +220,8 @@ class MarketState:
             top = bk.top_of_book(fast["bids"], fast["asks"], fast.get("bad_top"))
             top["book_time_ms"] = fast["time_ms"]
         r_full = reason_for("book_full")
-        ladder = ({"bids": [], "asks": [], "reason": r_full or "no full book yet", "api_count_note": bk.API_COUNT_NOTE}
+        ladder = ({"bids": [], "asks": [], "reason": r_full or "no full book yet", "api_count_note": bk.API_COUNT_NOTE,
+                   "largest": {"bid": None, "ask": None, "reason": r_full or "no full book yet"}}
                   if r_full or full is None else bk.ladder_rows(full["bids"], full["asks"], full.get("problems")) | {"book_time_ms": full["time_ms"]})
         depth_books = []
         for kind, label in (("book_full", "full precision"), ("book_sf4", "nSigFigs=4"), ("book_sf3", "nSigFigs=3")):
@@ -440,7 +441,7 @@ class MarketState:
     def _clock(self) -> dict:
         if not self.offsets:
             return {"offset_ms": None, "clock_skew_suspected": None}
-        med = sorted(self.offsets)[len(self.offsets) // 2]
+        med = median(self.offsets)                  # the mean of the two middle offsets when their count is even
         warn = schema.freshness_field("clock_skew")["warn_abs_ms"]
         return {"offset_ms": med, "warn_abs_ms": warn, "clock_skew_suspected": abs(med) > warn,
                 "note": ("local wall clock minus source time at receipt. Progress ages use the monotonic clock; source recency "
@@ -491,7 +492,7 @@ class MarketState:
         for side in ("bids", "asks"):
             rows = ladder.get(side) or []
             if rows:
-                big = max(rows, key=lambda r: (r["sz"], -r["px"] if side == "asks" else r["px"]))
+                big = bk.largest_level(rows, side)          # the same level as hl_market's levels.largest
                 lines.append({"price": big["px"], "kind": f"largest_{side[:-1]}_level",
                               "label": f"largest returned {side[:-1]} level: {big['sz']} (API count "
                                        f"{big['api_count'] if big['api_count'] is not None else 'unavailable'}, aggregated)"})

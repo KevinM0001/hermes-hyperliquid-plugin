@@ -23,6 +23,7 @@ Use this skill when the user asks what a Hyperliquid market is doing, what the d
 ## 2. Say only what the tools returned
 
 - Every number you state must appear in a tool result. Don't compute new metrics, extrapolate, forecast or fill gaps.
+- Don't rank or compare rows yourself (largest, smallest, most, biggest). Name a largest level only from `levels.largest.bid` / `levels.largest.ask` in `hl_market`, quoting its price, size, API count and notional as given; it is an aggregated level, never one order. For anything else, use a ranked field the result provides (for example the wallet lists' `rank`), or describe the rows without a superlative.
 - Quote units the way the result gives them: USD notional, bps, coin, funding per 1 hour, shares in percent.
 - If a value is `null`, it is unavailable: say so and give its `reason`. Never call it zero, and never fill it in from an earlier answer.
 
