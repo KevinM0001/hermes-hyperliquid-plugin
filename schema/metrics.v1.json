@@ -1113,7 +1113,7 @@
     },
     "node.liquidation_burst": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
-      "formula": "liquidations (counted once each) within 60 s of block time >= liq_burst_count (default 2) or their notional >= liq_burst_usd (default 1,000,000); rearms when the window falls below both; evaluated at each node executions message at its own block time t, over (t - 60 s, t] (Codex h1 review 4, B1)",
+      "formula": "liquidations (counted once each) within 60 s of block time >= liq_burst_count (default 2) or their notional >= liq_burst_usd (default 1,000,000); rearms when the window falls below both; evaluated at each node executions message and each watermark at its own block time t, over (t - 60 s, t] (Codex h1 review 4, B1): it fires once when the window reaches a threshold and re-arms when the window falls below both, a quiet market's at its watermarks",
       "units": "count; USD",
       "inputs": [
         "node.liquidation"
@@ -1334,6 +1334,6 @@
     "1.2.0 also (Codex h1 review 2): book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)",
     "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check",
     "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
-    "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's own block time over (t - 60 s, t]; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution"
+    "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution"
   ]
 }
