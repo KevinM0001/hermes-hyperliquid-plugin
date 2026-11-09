@@ -343,6 +343,7 @@
 .hd-stat-value { font: 600 13px/1.4 var(--hd-mono); white-space: nowrap; color: var(--hd-text); }
 .hd-stat-value .hd-na { font-size: 11.5px; }
 .hd-stat-sub { font-size: 11px; color: var(--hd-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
+.hd-stat-shared { flex: 1 1 100%; font-size: 11px; color: var(--hd-muted); line-height: 1.35; }
 
 /* ---------------------------------------------------------------- tables */
 .hd-scroll { overflow: auto; }
@@ -586,6 +587,14 @@
 .hd-deck-states { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; font-size: 12px; }
 .hd-deck-state { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hd-deck-state > .hd-dn-label { min-width: 72px; }
+/* the selected market's card under the summary (Kevin, Nov 9): three columns */
+.hd-p-deckhero > .hd-card-body { padding: 10px 14px 12px; }
+.hd-deck-wide { display: grid; grid-template-columns: minmax(280px, 0.9fr) minmax(300px, 1fr) minmax(320px, 1.4fr); gap: 8px 28px; align-items: start; padding: 0; background: transparent; }
+.hd-dw-col { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.hd-deck-wide .hd-deck-states { margin: 2px 0; }
+.hd-deck-wide .hd-deck-meaning { border-top: 0; padding-top: 0; }
+.hd-deck-note { padding: 0 0 2px; }
+@media (max-width: 1000px) { .hd-deck-wide { grid-template-columns: minmax(0, 1fr); } }
 
 /* ================================================================ node mode (Handoff 1c Part B) */
 .hd-row-n { align-items: stretch; }
@@ -619,6 +628,7 @@
 /* node status strip */
 .hd-nodestrip { padding: 8px 14px; display: flex; flex-direction: column; gap: 6px; font-size: 11.5px; color: var(--hd-text-2); overflow: visible; border-left: 3px solid var(--hd-violet); }
 .hd-nodestrip-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.hd-nodestrip .hd-delaybar { padding: 0; height: auto; min-height: 22px; } /* the delay counter, inside the strip since Nov 9 */
 .hd-nodestrip-why { font-family: var(--hd-mono); font-weight: 600; white-space: normal; }
 
 /* a panel built on an invalid (or crossed) node book */

@@ -456,27 +456,33 @@
     const ctx = g(m, "context") || {};
     const fr = g(m, "freshness") || {};
     const unitsNote = ctx.units_note || "";
+    // When every context value is withheld for the same reason (today: activeAssetCtx carries no source timestamp),
+    // the reason is written once under the four labels instead of four times (Kevin, Nov 9).
+    const fields = [ctx.mark, ctx.oracle, ctx.funding_pct_per_hour, ctx.open_interest_usd, ctx.day_notional_volume];
+    const reasons = fields.map(function (f) { return valueOf(f) === null ? reasonOf(f) : null; });
+    const shared = reasons[0] && reasons.every(function (x) { return x === reasons[0]; }) ? reasons[0] : null;
     return h("div", { className: "hd-stats" },
       h(Stat, {
         label: "Mark / oracle", f: fr.ctx,
         value: h(Fragment, null, h(V, { m: ctx.mark, fmt: px, compact: true }), " / ", h(V, { m: ctx.oracle, fmt: px, compact: true })),
-        sub: firstReason([ctx.mark, ctx.oracle]) || (valueOf(ctx.prev_day_px) !== null ? "prev day px " + px(ctx.prev_day_px.value) : "prev day px: " + reasonOf(ctx.prev_day_px))
+        sub: shared ? null : firstReason([ctx.mark, ctx.oracle]) || (valueOf(ctx.prev_day_px) !== null ? "prev day px " + px(ctx.prev_day_px.value) : "prev day px: " + reasonOf(ctx.prev_day_px))
       }),
       h(Stat, {
         label: "Funding, 1h", f: fr.ctx,
         value: h(V, { m: ctx.funding_pct_per_hour, fmt: pctSigned6, compact: true, title: unitsNote }),
-        sub: firstReason([ctx.funding_pct_per_hour]) || ("per 1 hour \u00b7 fraction " + (valueOf(ctx.funding) !== null ? String(ctx.funding.value) : "unavailable"))
+        sub: shared ? null : firstReason([ctx.funding_pct_per_hour]) || ("per 1 hour \u00b7 fraction " + (valueOf(ctx.funding) !== null ? String(ctx.funding.value) : "unavailable"))
       }),
       h(Stat, {
         label: "Open interest", f: fr.ctx,
         value: h(V, { m: ctx.open_interest_usd, fmt: usd, compact: true, title: unitsNote }),
-        sub: firstReason([ctx.open_interest_usd]) || (valueOf(ctx.open_interest) !== null ? sz(ctx.open_interest.value) + " " + (ctx.open_interest.unit || "") : "coin: " + reasonOf(ctx.open_interest))
+        sub: shared ? null : firstReason([ctx.open_interest_usd]) || (valueOf(ctx.open_interest) !== null ? sz(ctx.open_interest.value) + " " + (ctx.open_interest.unit || "") : "coin: " + reasonOf(ctx.open_interest))
       }),
       h(Stat, {
         label: "Day volume", f: fr.ctx,
         value: h(V, { m: ctx.day_notional_volume, fmt: usd, compact: true, title: unitsNote }),
-        sub: firstReason([ctx.day_notional_volume]) || "notional, Hyperliquid's day window"
-      }));
+        sub: shared ? null : firstReason([ctx.day_notional_volume]) || "notional, Hyperliquid's day window"
+      }),
+      shared ? h("div", { className: "hd-stat-shared", title: shared }, "all four unavailable for one reason: " + shared) : null);
   }
 
   function CollectorBox(props) {
@@ -548,6 +554,11 @@
         h("span", { className: "hd-prov-item" }, "snapshot ", h("code", { className: "hd-code" }, r.snapshot_id), " ",
           h(CopyButton, { text: r.snapshot_id, what: "snapshot ID" })),
         h("span", { className: "hd-prov-item" }, "built " + dateTime(r.built_at)),
+        // When the snapshot on screen has aged past a limit, or the last poll failed, it is said here (it was the
+        // delay bar's note until Nov 9); the next snapshot replaces the one on screen in place, nothing blanks.
+        props.aged || props.pollNote ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
+          title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
+          (props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "") + (props.aged ? "Snapshot on screen: " + props.aged : "")) : null,
         m ? h("span", { className: "hd-prov-item", title: prov.source }, "source: " + prov.source) : null,
         m ? h("span", { className: "hd-prov-item" }, "dex: " + (g(m, "meta", "dex_label") || prov.dex || "not in snapshot")) : null,
         m ? h("span", { className: "hd-prov-item" },
@@ -617,7 +628,7 @@
       : (lc ? "last confirmed " + lc.regime + " since " + hms(lc.since) + "Z" + (lc.note ? " \u00b7 " + lc.note : "")
         : "90 s window, a tick every " + (card.tick_s || 15) + " s");
     // What is unavailable and why: every non-fresh field with its reason, the card when it has none, and a clock
-    // warning. Each reason is clamped to two lines in the tile and written out in full behind "full reasons".
+    // warning, written out in full behind the "not fresh" fold at the foot of the card (Kevin, Nov 9: no row of its own).
     const whys = unavailable.map(function (u) {
       return { key: u.field, tone: toneOfStatus(u.status), field: u.field + " " + String(u.status).replace("_", " "), why: u.reason };
     });
@@ -665,14 +676,9 @@
             : h(Unavailable, { reason: reasonOf(tw) }),
           sub: tw && tw.value ? (tw.share_label || "share label not in snapshot") + " \u00b7 net aggr " +
             (isNum(tw.net_aggressive_usd) ? usdSigned(tw.net_aggressive_usd) : "unavailable") : "the card's 90 s window"
-        }),
-        h(Tile, {
-          label: "Unavailable now", wide: true, plain: true,
-          extra: h("span", { className: "hd-pill" }, String(whys.length)),
-          value: whys.length ? h(Fragment, null, whyList(false), h(Why, { label: "full reasons" }, whyList(true)))
-            : h("span", { className: "hd-tile-ok" }, "nothing: every field of " + m.market + " is fresh")
         })),
-      h("div", { className: "hd-ctx" }, h(HeaderStats, { m: m })));
+      h("div", { className: "hd-ctx" }, h(HeaderStats, { m: m }),
+        whys.length ? h(Why, { label: "not fresh: " + whys.length }, whyList(true)) : null));
   }
 
   // Public mode: one banner says what node mode adds and how to turn it on, in place of a note on every panel.
@@ -1161,10 +1167,10 @@
 
   // ---- node status strip (connection, producer, families, configuration)
 
-  // The node feed's delay for the market on screen, at the top of the tab (Kevin, Nov 8): the age of the latest
-  // watermark averaged over the last 5 s, from each snapshot (about once a second), with the state it gives. A fixed
-  // row, always present, so nothing below it moves; the note on the right says when the snapshot on screen has aged
-  // past a limit (the next snapshot replaces it in place; a delay never blanks the page).
+  // The node feed's delay for the market on screen: the age of the latest watermark averaged over the last 5 s, from
+  // each snapshot (about once a second), with the state it gives. In the node strip since Nov 9 (Kevin; from Nov 8 it
+  // was a row of its own under the summary); the aging and failed-poll notes it carried are on the header's snapshot
+  // line now. A delay never blanks the page: the next snapshot replaces the one on screen in place.
   function DelayBar(props) {
     const d = props.delay;
     const live = props.nodeOn && d && d.available;
@@ -1214,6 +1220,8 @@
           : h(Unavailable, { reason: (v && !nodeOn(v) && v.reason) || (ns ? NO_NODE : "needs node mode: the node status isn't in this snapshot") }),
         h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
         cfgLine),
+      // The node feed's delay (the latest watermark's age, 5 s average): in this strip since Nov 9, no longer a bar of its own.
+      h(DelayBar, { delay: props.delay, nodeOn: true }),
       live && nodeOn(v) ? h("div", { className: "hd-nodestrip-line" },
         h("span", { className: "hd-dim" }, props.market + " families"),
         h(FamChips, { fams: v.families }),
@@ -2567,14 +2575,13 @@
       return h(DeckNum, { label: label, isKey: key === field, strong: strong },
         h(V, { m: n[field], fmt: fmt, compact: compactIf(n[field]) }));
     }
-    return h("article", { className: "hd-deck-card", "aria-label": "Flow Deck " + name },
-      h("div", { className: "hd-deck-head" },
+    const head = h("div", { className: "hd-deck-head" },
         h("span", { className: "hd-deck-mkt" }, name),
-        h("span", { className: "hd-deck-px" }, h(V, { m: n.price, fmt: px, compact: true }))),
-      unavailable ? h("div", { className: "hd-deck-reason" }, h(Unavailable, { reason: cardReason })) : null,
-      lc ? h("div", { className: "hd-dim hd-small" }, "last confirmed: ", h(RegimeBadge, { regime: lc.regime }), " since " + hms(lc.since) + "Z" +
-        (isNum(lc.as_of_tick_ms) ? " as of tick " + hms(lc.as_of_tick_ms) + "Z" : "") + " \u00b7 " + (lc.note || "historical")) : null,
-      !unavailable ? h("div", { className: "hd-deck-states" },
+        h("span", { className: "hd-deck-px" }, h(V, { m: n.price, fmt: px, compact: true })));
+    const reasonEl = unavailable ? h("div", { className: "hd-deck-reason" }, h(Unavailable, { reason: cardReason })) : null;
+    const lcEl = lc ? h("div", { className: "hd-dim hd-small" }, "last confirmed: ", h(RegimeBadge, { regime: lc.regime }), " since " + hms(lc.since) + "Z" +
+        (isNum(lc.as_of_tick_ms) ? " as of tick " + hms(lc.as_of_tick_ms) + "Z" : "") + " \u00b7 " + (lc.note || "historical")) : null;
+    const states = !unavailable ? h("div", { className: "hd-deck-states" },
         h("div", { className: "hd-deck-state" },
           h("span", { className: "hd-dn-label" }, "confirmed"),
           conf ? h(Fragment, null, h(RegimeBadge, { regime: conf.state, title: "the latched regime (needs 2 consecutive ticks)" }),
@@ -2590,9 +2597,9 @@
         pending ? h("div", { className: "hd-deck-state hd-deck-pending" },
           h("span", { className: "hd-dn-label" }, "pending"),
           h(RegimeBadge, { regime: pending.state, unconfirmed: true }),
-          h("span", { className: "hd-deck-since" }, " " + pending.ticks + " of " + (pending.of || 2) + " ticks")) : null) : null,
-      h("div", { className: "hd-deck-rule", "aria-hidden": "true" }),
-      h("div", { className: "hd-deck-grid" },
+          h("span", { className: "hd-deck-since" }, " " + pending.ticks + " of " + (pending.of || 2) + " ticks")) : null) : null;
+    const rule = h("div", { className: "hd-deck-rule", "aria-hidden": "true" });
+    const grid = h("div", { className: "hd-deck-grid" },
         num_("move", "move_bps", bpsSigned),
         num_("net flow", "net_flow_usd", usdSigned),
         num_("vol", "volume_usd", usd),
@@ -2603,8 +2610,8 @@
           num_("PRESSURE", "pressure", function (v) { return num(v, 2, 2) + " buy/sell"; }, true)),
         h("div", { className: "hd-dn-wide" }, num_("accounts", "accounts", function (v) {
           return intf(v) + (n.accounts && n.accounts.unit ? " " + n.accounts.unit : "");
-        }))),
-      h("div", { className: "hd-deck-tw" },
+        })));
+    const twEl = h("div", { className: "hd-deck-tw" },
         h("span", { className: "hd-dn-label" }, "top wallet"),
         tw && tw.value ? h(Fragment, null,
           h("b", { className: "hd-num" }, isNum(tw.share_pct) ? pct(tw.share_pct, 0) : "share unavailable"), " ",
@@ -2614,25 +2621,34 @@
             (isNum(tw.aggressive_bought_usd) && isNum(tw.aggressive_sold_usd)
               ? " (bought " + usd(tw.aggressive_bought_usd) + " \u00b7 sold " + usd(tw.aggressive_sold_usd) + ")" : "")),
           h("div", { className: "hd-dim hd-small" }, (tw.share_label || "share label not in snapshot") + (tw.note ? " \u00b7 " + tw.note : "")))
-          : h(Unavailable, { reason: reasonOf(tw), compact: compactIf(tw) })),
-      h("div", { className: "hd-deck-buckets", "data-node-hook": "deck-activity-buckets", title: ab.hook ? "hook: " + ab.hook : undefined },
-        h(DeckBuckets, { ab: ab, nodeCfg: !!props.nodeSrc, nodeSrc: props.nodeSrc, flowFam: props.flowFam, cardIncomplete: card.complete !== true })),
-      liveMeaning ? h("div", { className: "hd-deck-meaning" },
+          : h(Unavailable, { reason: reasonOf(tw), compact: compactIf(tw) }));
+    const buckets = h("div", { className: "hd-deck-buckets", "data-node-hook": "deck-activity-buckets", title: ab.hook ? "hook: " + ab.hook : undefined },
+        h(DeckBuckets, { ab: ab, nodeCfg: !!props.nodeSrc, nodeSrc: props.nodeSrc, flowFam: props.flowFam, cardIncomplete: card.complete !== true }));
+    const meaning = liveMeaning ? h("div", { className: "hd-deck-meaning" },
         h("div", { className: "hd-deck-what" }, "now " + liveMeaning.state + " (this window):"),
         h("p", null, liveMeaning.text),
         conf && conf.meaning && conf.state !== live.state ? h(Fragment, null,
           h("div", { className: "hd-deck-what" }, "confirmed " + conf.meaning.state + ":"),
           h("p", null, conf.meaning.text)) : null,
         live.sparse && live.sparse_note ? h("div", { className: "hd-dim hd-small" }, "sparse: " + live.sparse_note) : null,
-        h("div", { className: "hd-dim hd-small" }, "Regimes are heuristic classifications of these window numbers; they don't establish a cause.")) : null,
-      h("div", { className: "hd-deck-foot" },
+        h("div", { className: "hd-dim hd-small" }, "Regimes are heuristic classifications of these window numbers; they don't establish a cause.")) : null;
+    const foot = h("div", { className: "hd-deck-foot" },
         isNum(card.window_start_ms) && isNum(card.window_end_ms)
           ? "window " + hms(card.window_start_ms) + "\u2013" + hms(card.window_end_ms) + " UTC (" + card.window_s + " s, tick every " + card.tick_s + " s)"
           : "window " + (card.window_s || "?") + " s, tick every " + (card.tick_s || "?") + " s",
         " ", h(Fresh, { f: d.trades_freshness, label: "trades" }),
         g(d, "provenance", "mode") && g(d, "provenance", "mode") !== "LIVE" ? h(ModeBadge, { mode: d.provenance.mode, title: d.provenance.source }) : null,
         props.snapshotId ? h(AskButton, { small: true, label: "ask Hermes",
-          question: askQuestion("card", name, props.snapshotId, conf ? conf.state : (live ? live.state : null)) }) : null));
+          question: askQuestion("card", name, props.snapshotId, conf ? conf.state : (live ? live.state : null)) }) : null);
+    // Wide (the card under the summary): three columns, regime and foot; numbers and top wallet; buckets and meaning.
+    if (props.wide) {
+      return h("article", { className: "hd-deck-card hd-deck-wide", "aria-label": "Flow Deck " + name },
+        h("div", { className: "hd-dw-col" }, head, reasonEl, lcEl, states, foot),
+        h("div", { className: "hd-dw-col" }, grid, twEl),
+        h("div", { className: "hd-dw-col" }, buckets, meaning));
+    }
+    return h("article", { className: "hd-deck-card", "aria-label": "Flow Deck " + name },
+      head, reasonEl, lcEl, states, rule, grid, twEl, buckets, meaning, foot);
   }
 
   function EventRow(props) {
@@ -2712,6 +2728,7 @@
     const names = (r.markets || []).filter(function (n) { return deck[n]; });
     const nodeSrc = g(r, "node_status", "live") || null;
     const chosen = g(r, "market", "market");
+    const others = names.filter(function (n) { return n !== chosen; });
     const flowFam = g(r, "market", "node", "live", "families", "flow") || null;
     const events = [];
     names.forEach(function (n) { (deck[n].events || []).forEach(function (e) { events.push(e); }); });
@@ -2722,9 +2739,11 @@
       why: h("p", null, "Each market's regime over a 90 s window, ported from hl_deck; regime changes and burst alerts below. In node mode, burst alerts come from node fills, ranked against Nov 3 to 7, and liquidation alerts are added. The agent can explain any card or event (hl_alerts): a card's ask button copies a ready question and opens the Chat page."),
       badges: h(Prov, { mode: r.mode, source: g(deck, names[0], "provenance", "source"), what: "trades" })
     },
-    h("div", { className: "hd-deck-cards" }, names.length ? names.map(function (n) {
-      return h(DeckCard, { key: n, name: n, d: deck[n], nodeSrc: nodeSrc, flowFam: n === chosen ? flowFam : null, snapshotId: r.snapshot_id });
-    }) : h("div", { className: "hd-empty" }, "No Flow Deck cards in this snapshot.")),
+    chosen && deck[chosen] ? h("div", { className: "hd-dim hd-small hd-deck-note" },
+      chosen + "'s card is at the top of the tab, under the summary; the other markets' cards are here.") : null,
+    h("div", { className: "hd-deck-cards" }, others.length ? others.map(function (n) {
+      return h(DeckCard, { key: n, name: n, d: deck[n], nodeSrc: nodeSrc, flowFam: null, snapshotId: r.snapshot_id });
+    }) : h("div", { className: "hd-empty" }, names.length ? "No other market's card in this snapshot." : "No Flow Deck cards in this snapshot.")),
     h("div", { className: "hd-events" },
       h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
         (events.length > 40 ? listCount("newest", 40, "events", events.length, "in this snapshot") : intf(events.length) + " events, newest first") +
@@ -2733,6 +2752,28 @@
       events.length ? h("ul", null, events.slice(0, 40).map(function (e, i) {
         return h(EventRow, { key: e.type + ":" + e.market + ":" + e.at_ms + ":" + (e.side || "") + ":" + i, e: e, nodeSrc: nodeSrc });
       })) : h("div", { className: "hd-empty" }, "No events in the current coverage yet.")));
+  }
+
+  // The selected market's Flow Deck card under the summary (Kevin, Nov 9): the regime, the window's numbers and the
+  // meaning where a trader looks first. The other markets' cards and the events stay in the Flow Deck panel below.
+  function DeckHero(props) {
+    const r = props.resp;
+    const name = g(r, "market", "market");
+    const d = g(r, "deck", name);
+    if (!name || !d) return null;
+    return h(Panel, {
+      id: "deck-hero", className: "hd-p-deckhero", title: "Flow Deck \u00b7 " + name,
+      label: "Flow Deck card for " + name,
+      why: h("p", null, "This market's regime over a 90 s window, ported from hl_deck: the confirmed regime needs two consecutive ticks, " +
+        "'now' is this tick's classification. The numbers are the window's own; the meaning text is a heuristic reading of them and " +
+        "establishes no cause. The other markets' cards and the events are in the Flow Deck panel further down."),
+      badges: h(Prov, { mode: r.mode, source: g(d, "provenance", "source"), what: "trades" })
+    },
+    h(DeckCard, {
+      name: name, d: d, wide: true, snapshotId: r.snapshot_id,
+      nodeSrc: g(r, "node_status", "live") || null,
+      flowFam: g(r, "market", "node", "live", "families", "flow") || null
+    }));
   }
 
   // ------------------------------------------------------------------ wallets
@@ -3558,19 +3599,20 @@
       h(Banners, { resp: resp, noSnap: noSnap, pollErr: pollErr, lastOkAt: lastOkAt, hidden: hidden }),
       h(Header, {
         resp: resp, noSnap: noSnap, selected: market, onMarket: chooseMarket,
-        busy: busy, action: action, onControl: control
-      }),
-      m ? h(Glance, { m: m, resp: resp, onOpen: openWallet }) : null,
-      h(DelayBar, {
-        delay: nlive && nlive.delay, nodeOn: nodeOn(nlive), aged: aged,
+        busy: busy, action: action, onControl: control, aged: aged,
         pollNote: pollErr && resp ? "Last poll failed at " + localClock(pollErr.at) + " (local): " + pollErr.message +
           "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null
       }),
-      // The market row, directly under the summary: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
+      m ? h(Glance, { m: m, resp: resp, onOpen: openWallet }) : null,
+      // The selected market's Flow Deck card under the summary (Kevin, Nov 9), where the unavailable list and the
+      // delay bar were; the delay counter is in the node strip (node mode), the aging note on the header's snapshot line.
+      m ? h(DeckHero, { resp: resp }) : null,
+      // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
       m ? h("div", { className: "hd-row hd-row-m" },
         h(PriceChart, { m: m }),
         h(Ladder, { m: m, nodeOn: non })) : null,
-      m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market }) : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,
+      m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market, delay: nlive && nlive.delay })
+        : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,
       m ? h(Fragment, null,
         h(SectionHead, { title: "Book", note: non ? "the node's order-level book; the public book's observed depth is folded at the end" : "the public book's observed depth, folded (the chart and ladder are above)" }),
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
