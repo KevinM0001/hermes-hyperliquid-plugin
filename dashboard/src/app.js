@@ -344,6 +344,11 @@
     const [shown, setShown] = useState(false);
     const q = props.question;
     function go() {
+      if (props.inPage !== false && askInPage(q)) {
+        setMsg("asked in the page");
+        setTimeout(function () { setMsg(null); }, 2500);
+        return;
+      }
       const nav = props.open !== false;
       function after(ok) {
         setMsg(ok ? (nav ? "copied \u00b7 opening chat" : "copied") : "copy failed: select the question below");
@@ -3022,6 +3027,209 @@
         (nl ? "; the node state lines appear once the node book and fills are usable." : ".")));
   }
 
+  // ---- Hermes in the page (Kevin, Nov 9): Ask Hermes starts a chat turn with the agent through the dashboard's own
+  // JSON-RPC socket (/api/ws; the URL comes from SDK.buildWsUrl, the way the plugin SDK says a plugin must open a
+  // socket; the token is never read here) and streams the answer into the panel. The session is a normal Hermes chat,
+  // kept in the Chat list and openable there; the model is the dashboard's configured one unless another is picked
+  // in the panel, for that session only (nothing is written to the configuration). The tab adds nothing to the answer.
+  const HD_ASK_EVENT = "hyperliquid-desk:ask";
+  function askInPage(question) {
+    if (!window.__hdAskPanel || typeof window.CustomEvent !== "function") return false;
+    window.dispatchEvent(new CustomEvent(HD_ASK_EVENT, { detail: { question: question } }));
+    const el = document.querySelector('[data-panel="hermes"]');
+    if (el && el.scrollIntoView) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    return true;
+  }
+  function openChatResume(storedId) {
+    const target = chatPath() + "?resume=" + encodeURIComponent(storedId);
+    try {
+      window.history.pushState({}, "", target);
+      window.dispatchEvent(new PopStateEvent("popstate", { state: {} }));
+      setTimeout(function () { if (window.location.pathname + window.location.search !== target) window.location.assign(target); }, 500);
+    } catch (e) {
+      window.location.assign(target);
+    }
+  }
+  // One chat turn over the dashboard's JSON-RPC socket. opts: question, title, model, provider; on: status, session,
+  // delta, done, error. Returns {stop, close}.
+  function hermesChat(opts, on) {
+    const st = { ws: null, n: 0, pending: {}, sid: null, closed: false };
+    function send(method, params) {
+      return new Promise(function (resolve, reject) {
+        const id = "hd" + (++st.n);
+        st.pending[id] = { resolve: resolve, reject: reject };
+        try { st.ws.send(JSON.stringify({ jsonrpc: "2.0", id: id, method: method, params: params || {} })); }
+        catch (e) { delete st.pending[id]; reject(e); }
+      });
+    }
+    function close() {
+      if (st.closed) return;
+      st.closed = true;
+      try { if (st.ws) st.ws.close(); } catch (e) { /* closing */ }
+    }
+    function stop() {
+      if (st.sid && !st.closed) send("session.interrupt", { session_id: st.sid }).catch(function () {});
+    }
+    Promise.resolve().then(function () { return SDK.buildWsUrl("/api/ws"); }).then(function (wsUrl) {
+      const ws = new WebSocket(wsUrl);
+      st.ws = ws;
+      ws.onopen = function () {
+        on.status("connected; opening a session" + ELLIPSIS);
+        const params = { title: opts.title, close_on_disconnect: true };
+        if (opts.model) params.model = opts.model;
+        if (opts.provider) params.provider = opts.provider;
+        send("session.create", params).then(function (res) {
+          st.sid = res.session_id;
+          on.session({ session_id: res.session_id, stored_session_id: res.stored_session_id || null, info: res.info || null });
+          on.status("asking" + ELLIPSIS);
+          return send("prompt.submit", { session_id: st.sid, text: opts.question });
+        }).catch(function (e) { on.error(errText(e)); close(); });
+      };
+      ws.onmessage = function (ev) {
+        let f;
+        try { f = JSON.parse(ev.data); } catch (e) { return; }
+        if (f && f.id !== undefined && st.pending[f.id]) {
+          const pnd = st.pending[f.id];
+          delete st.pending[f.id];
+          if (f.error) pnd.reject(new Error((f.error.message || "error") + (f.error.data ? " " + JSON.stringify(f.error.data) : "")));
+          else pnd.resolve(f.result);
+          return;
+        }
+        if (!f || f.method !== "event" || !f.params) return;
+        const type = f.params.type;
+        const pl = f.params.payload || {};
+        if (f.params.session_id && st.sid && f.params.session_id !== st.sid && type !== "session.title") return;
+        if (type === "message.delta") { if (typeof pl.text === "string") on.delta(pl.text); }
+        else if (type === "tool.start") on.status("using " + (pl.name || pl.tool || pl.tool_name || "a tool") + ELLIPSIS);
+        else if (type === "tool.complete") on.status("reading the result" + ELLIPSIS);
+        else if (type === "status.update" && pl.text) on.status(String(pl.text));
+        else if (type === "message.complete") { on.done({ text: pl.text, status: pl.status, error: pl.error }); close(); }
+      };
+      ws.onerror = function () { if (!st.closed) on.error("the dashboard's chat socket failed"); };
+      ws.onclose = function (ev) {
+        if (!st.closed) on.error("the chat socket closed (" + ev.code + ")" + (ev.reason ? ": " + ev.reason : "") +
+          (ev.code === 4401 ? "; the session token isn't available to this page" : ""));
+        st.closed = true;
+      };
+    }).catch(function (e) { on.error("could not build the socket URL: " + errText(e)); });
+    return { stop: stop, close: close };
+  }
+  // The dashboard's model options, read defensively (the route's shape is the dashboard's, not the plugin's).
+  function modelChoices(res) {
+    const out = [];
+    function add(provider, model, label, configured) {
+      if (!model) return;
+      out.push({ provider: provider || "", model: String(model), label: label || ((provider ? provider + " / " : "") + model), configured: configured !== false });
+    }
+    if (!res || typeof res !== "object") return out;
+    if (Array.isArray(res.options)) res.options.forEach(function (o) { if (o && typeof o === "object") add(o.provider, o.model || o.id || o.name, o.label, o.configured); });
+    if (Array.isArray(res.providers)) res.providers.forEach(function (pv) {
+      if (!pv || typeof pv !== "object") return;
+      const prov = pv.provider || pv.name || pv.id;
+      (Array.isArray(pv.models) ? pv.models : []).forEach(function (mm) {
+        if (typeof mm === "string") add(prov, mm, null, pv.configured);
+        else if (mm && typeof mm === "object") add(prov, mm.model || mm.id || mm.name, mm.label, mm.configured !== undefined ? mm.configured : pv.configured);
+      });
+    });
+    return out.filter(function (c) { return c.configured; }).slice(0, 60);
+  }
+  function HermesPanel(props) {
+    const r = props.resp;
+    const m = props.m;
+    const name = m.market;
+    const canChat = !!(SDK && typeof SDK.buildWsUrl === "function");
+    const [q, setQ] = useState(null);
+    const [answer, setAnswer] = useState("");
+    const [status, setStatus] = useState(null);
+    const [err, setErr] = useState(null);
+    const [busy, setBusy] = useState(false);
+    const [sess, setSess] = useState(null);
+    const [startedAt, setStartedAt] = useState(null);
+    const [tick, setTick] = useState(0);
+    const [modelInfo, setModelInfo] = useState(null);
+    const [choices, setChoices] = useState([]);
+    const [choice, setChoice] = useState("");
+    const chatRef = useRef(null);
+    const latest = useRef({});
+    latest.current = { name: name, choice: choice };
+    function start(question) {
+      const L = latest.current;
+      if (chatRef.current) { chatRef.current.stop(); chatRef.current.close(); chatRef.current = null; }
+      setQ(question); setAnswer(""); setErr(null); setSess(null); setBusy(true); setStartedAt(Date.now()); setStatus("connecting" + ELLIPSIS);
+      const parts = L.choice ? L.choice.split("|") : null;
+      chatRef.current = hermesChat({
+        question: question,
+        title: "Hyperliquid Desk \u00b7 " + L.name + " \u00b7 " + hms(Date.now()) + "Z",
+        provider: parts ? parts[0] : null, model: parts ? parts[1] : null
+      }, {
+        status: setStatus,
+        session: setSess,
+        delta: function (text) { setAnswer(function (a) { return a + text; }); },
+        done: function (res) {
+          setBusy(false);
+          if (res.status === "error") setErr(res.error || "the agent reported an error");
+          else setStatus(res.status === "interrupted" ? "stopped" : "done");
+          if (typeof res.text === "string" && res.text) setAnswer(function (a) { return a.length >= res.text.length ? a : res.text; });
+          chatRef.current = null;
+        },
+        error: function (text) { setErr(text); setBusy(false); setStatus(null); chatRef.current = null; }
+      });
+    }
+    useEffect(function () {
+      window.__hdAskPanel = canChat;
+      function onAsk(ev) { const d = ev && ev.detail; if (d && d.question) start(d.question); }
+      window.addEventListener(HD_ASK_EVENT, onAsk);
+      return function () {
+        window.__hdAskPanel = false;
+        window.removeEventListener(HD_ASK_EVENT, onAsk);
+        if (chatRef.current) chatRef.current.close();
+      };
+    }, [canChat]);
+    useEffect(function () {
+      if (!busy) return undefined;
+      const id = setInterval(function () { setTick(function (x) { return x + 1; }); }, 1000);
+      return function () { clearInterval(id); };
+    }, [busy]);
+    useEffect(function () {
+      if (!SDK || !SDK.api) return;
+      if (typeof SDK.api.getModelInfo === "function") {
+        Promise.resolve().then(function () { return SDK.api.getModelInfo(); }).then(setModelInfo).catch(function () {});
+      }
+      if (typeof SDK.api.getModelOptions === "function") {
+        Promise.resolve().then(function () { return SDK.api.getModelOptions(); }).then(function (res) { setChoices(modelChoices(res)); }).catch(function () {});
+      }
+    }, []);
+    const defaultQ = askQuestion("market", name, r.snapshot_id);
+    const elapsed = busy && startedAt ? Math.round((Date.now() - startedAt) / 1000) + tick * 0 : null;
+    return h(Panel, {
+      id: "hermes", className: "hd-p-hermes", title: "Hermes says \u00b7 " + name, label: "Ask Hermes in the page",
+      why: h("p", null, "Ask Hermes sends the question, with the snapshot ID on screen, to the agent through the dashboard's own chat " +
+        "socket and streams the answer here; the agent uses the hyperliquid commentary skill and the plugin's tools, and the tab adds " +
+        "nothing. The session is a normal Hermes chat: open it in the Chat page to continue. The model is the dashboard's configured " +
+        "one unless another configured model is picked here, for that session only. Nothing in the answer is a forecast; the skill " +
+        "says so itself."),
+      badges: h("span", { className: "hd-chip hd-tone-info", title: modelInfo ? JSON.stringify(modelInfo) : "" },
+        "model \u00b7 " + (modelInfo && modelInfo.model ? modelInfo.model : "the dashboard's"))
+    },
+    h("div", { className: "hd-hs-row" },
+      h("button", { type: "button", className: "hd-btn hd-btn-primary", disabled: !canChat || busy, onClick: function () { start(defaultQ); } },
+        busy ? "Asking" + ELLIPSIS : "Ask Hermes"),
+      busy ? h("button", { type: "button", className: "hd-btn", onClick: function () { if (chatRef.current) chatRef.current.stop(); } }, "Stop") : null,
+      sess && sess.stored_session_id ? h("button", { type: "button", className: "hd-btn", onClick: function () { openChatResume(sess.stored_session_id); } }, "Open in chat") : null,
+      choices.length ? h("label", { className: "hd-group hd-hs-model" }, "model",
+        h("select", { value: choice, disabled: busy, "aria-label": "Model for this question", onChange: function (e) { setChoice(e.target.value); } },
+          h("option", { value: "" }, "dashboard's" + (modelInfo && modelInfo.model ? " (" + modelInfo.model + ")" : "")),
+          choices.map(function (c) { return h("option", { key: c.provider + "|" + c.model, value: c.provider + "|" + c.model }, c.label); }))) : null,
+      h(AskButton, { small: true, label: "copy the question instead", question: defaultQ, inPage: false, open: false }),
+      !canChat ? h("span", { className: "hd-dim" }, "this dashboard's SDK has no socket builder, so the question can only be copied") : null),
+    q ? h("div", { className: "hd-hs-q", title: q }, "Q: " + q)
+      : h("div", { className: "hd-dim hd-small" }, "Asks the agent about " + name + " with the snapshot ID on screen; the answer streams here and the session stays in your Chat list."),
+    status || busy ? h("div", { className: "hd-hs-status" }, (status || "") + (elapsed !== null ? " \u00b7 " + elapsed + " s" : "") +
+      (sess && sess.info && sess.info.model ? " \u00b7 " + sess.info.model : "")) : null,
+    err ? h("div", { className: "hd-hs-err" }, h(Unavailable, { reason: err, block: true })) : null,
+    answer ? h("div", { className: "hd-hs-text" }, answer) : null);
+  }
+
   // ------------------------------------------------------------------ wallets
 
   function WalletTable(props) {
@@ -3910,6 +4118,7 @@
       // The selected market's Flow Deck card under the summary (Kevin, Nov 9), where the unavailable list and the
       // delay bar were; the delay counter is in the node strip (node mode), the aging note on the header's snapshot line.
       m ? h(DeckHero, { resp: resp }) : null,
+      m ? h(HermesPanel, { resp: resp, m: m }) : null,
       // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
       m ? h("div", { className: "hd-row hd-row-m" },
         h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(FlowNotes, { resp: resp, m: m })),

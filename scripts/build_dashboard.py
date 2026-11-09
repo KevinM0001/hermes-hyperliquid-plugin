@@ -10,7 +10,7 @@ Standard library only, deterministic, no minification. The bundle is:
 The Lightweight Charts file is checked against its pinned sha256 first (the readable standalone
 build of lightweight-charts 5.2.1 from the npm tarball, see vendor/lightweight-charts/README.md),
 and app.js is scanned for constructs the tab must never use (eval, dynamic import, script
-injection, raw fetch/WebSocket, exchange endpoints).
+injection, raw fetch, sockets other than the dashboard's own JSON-RPC socket via SDK.buildWsUrl, exchange endpoints).
 
 Usage:
     python3 scripts/build_dashboard.py [PLUGIN_ROOT] [--check]
@@ -45,7 +45,6 @@ FORBIDDEN = [
     (r"\.innerHTML\b|dangerouslySetInnerHTML", "raw HTML injection"),
     (r"(?<![\w.])fetch\s*\(", "raw fetch (use SDK.fetchJSON)"),
     (r"\bXMLHttpRequest\b", "XMLHttpRequest"),
-    (r"\bWebSocket\b", "WebSocket"),
     (r"/exchange\b", "exchange endpoint"),
     (r"fonts\.googleapis|fonts\.gstatic|cdn\.|unpkg\.com|jsdelivr", "remote resource"),
 ]
@@ -89,6 +88,13 @@ def build(root: Path) -> bytes:
         for mo in re.finditer(pattern, app_text, flags=re.MULTILINE):
             line = app_text.count("\n", 0, mo.start()) + 1
             problems.append(f"{app_path}:{line}: {what}")
+    # The one allowed socket: the dashboard's own JSON-RPC socket (/api/ws) with the URL built by the SDK, which is
+    # how the plugin SDK says a plugin must open a socket (the token is never read by the tab). Written exactly as
+    # `new WebSocket(wsUrl)` next to `SDK.buildWsUrl("/api/ws")`; any other use of the constructor is forbidden.
+    ws_uses = len(re.findall(r"\bWebSocket\b", app_text))
+    ws_allowed = app_text.count("new WebSocket(wsUrl)")
+    if ws_uses != ws_allowed or (ws_allowed and 'SDK.buildWsUrl("/api/ws")' not in app_text):
+        problems.append(f"{app_path}: WebSocket is allowed only as `new WebSocket(wsUrl)` with wsUrl from SDK.buildWsUrl(\"/api/ws\")")
     if problems:
         raise SystemExit("error: the tab source uses forbidden constructs:\n  " + "\n  ".join(problems))
     if 'REGISTRY.register(PLUGIN, App)' not in app_text or 'const PLUGIN = "hyperliquid-desk"' not in app_text:

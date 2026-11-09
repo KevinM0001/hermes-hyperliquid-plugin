@@ -87,6 +87,12 @@
 .hd-note-text { color: var(--hd-text-2); min-width: 0; line-height: 1.35; }
 .hd-note-state .hd-note-text { color: var(--hd-text); }
 .hd-notes-foot { font-size: 11px; color: var(--hd-muted); padding-top: 6px; }
+/* Hermes in the page */
+.hd-hs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.hd-hs-q { font: 500 11.5px/1.4 var(--hd-mono); color: var(--hd-muted); overflow: hidden; text-overflow: ellipsis; }
+.hd-hs-status { font: 500 11px/1.3 var(--hd-mono); color: var(--hd-muted); }
+.hd-hs-text { font: 400 13px/1.5 var(--hd-sans); color: var(--hd-text); white-space: pre-wrap; max-height: 380px; overflow: auto; background: #0A0A0A; border-radius: 4px; padding: 10px 12px; }
+.hd-hs-model select { max-width: 320px; }
 @media (max-width: 720px) { .hd-note-row { grid-template-columns: 1fr; } }
 .hd-row-m .hd-p-chart > .hd-card-body { flex: 1 1 auto; }
 .hd-row-m .hd-chart-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 480px; }
