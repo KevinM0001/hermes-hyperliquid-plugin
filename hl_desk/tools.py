@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import json
 import re
+import time
 
 from . import schema
 from .candles import INTERVALS as CANDLE_INTERVALS
 from .clock import ClockBound
+from .structure import CANDLES_USED, DEFAULT_INTERVALS, structure as market_structure
 from .util import dex_of, fnum, iso_ms, na, val
 
 ADDRESS_RE = re.compile(r"^0x[0-9a-fA-F]{40}$")
@@ -87,6 +89,26 @@ SCHEMAS = {
             "market": _MARKET_PROP,
             "interval": {"type": "string", "enum": list(CANDLE_INTERVALS), "description": "Candle interval (default 1h)."},
             "limit": {"type": "integer", "description": "How many of the most recent candles to return (default 100, max 500)."}},
+            "required": ["market"]},
+    },
+    "hl_structure": {
+        "name": "hl_structure",
+        "description": ("Multi-timeframe read of one Hyperliquid market from the venue's own candles, computed here (numbers only, "
+                        "no labels) so the answer is facts: for each interval (default 1d, 4h, 1h, 30m, 5m, 1m) over the most "
+                        "recent closed candles (30 days, 42 four-hour, 48 one-hour, 48 thirty-minute, 60 five-minute, 60 "
+                        "one-minute): the high and low with their times and where the last close sits between them "
+                        "(position_pct: 0 at the low, 100 at the high), the change over 1, 3 and all bars, the streak of closes, "
+                        "the last bar's range, body, direction and volume against the median, the largest bar, the volumes and "
+                        "the mean bar range; plus the prior day's candle and whether the last price is above its high or below "
+                        "its low. The in-progress candle is reported separately, unverified. The first call for a market starts "
+                        "the candle fetches and waits up to 3 s; an interval still 'loading' is answered by calling again a "
+                        "second later. Descriptive, not a forecast: use it to state what the data shows for and against each "
+                        "direction."),
+        "parameters": {"type": "object", "properties": {
+            "market": _MARKET_PROP,
+            "intervals": {"type": "array", "items": {"type": "string", "enum": list(CANDLE_INTERVALS)},
+                          "description": "Intervals to read, any subset of 1m, 5m, 15m, 30m, 1h, 4h, 1d "
+                                         "(default [\"1d\", \"4h\", \"1h\", \"30m\", \"5m\", \"1m\"])."}},
             "required": ["market"]},
     },
 }
@@ -440,8 +462,61 @@ def hl_candles(snap: dict, args: dict, rt=None) -> dict:
                      "'received N s ago' from in_progress.received_age_s")}
 
 
+STRUCTURE_WAIT_S, STRUCTURE_POLL_S = 3.0, 0.25      # how long hl_structure waits for first fetches, and how often it asks
+_sleep, _monotonic = time.sleep, time.monotonic     # replaced by the tests
+
+
+def _candle_views(rt, market: str, intervals: list[str]) -> tuple[dict | None, dict | None]:
+    """One store view per interval (the most recent N+1 candles), asked through the runtime as hl_candles does (local,
+    or over the owner socket from another process), polled every STRUCTURE_POLL_S for up to STRUCTURE_WAIT_S while any
+    first fetch is running. Returns (views, None), or (None, error) for a runtime-level error (the collector isn't
+    running); raises ValueError for an unknown market."""
+    deadline = _monotonic() + STRUCTURE_WAIT_S
+    while True:
+        views = {iv: rt.candles(market, iv, CANDLES_USED[iv] + 1) for iv in intervals}
+        for v in views.values():
+            if not v.get("ok") and "error" in v and "state" not in v:
+                raise ValueError(v["error"])
+            if v.get("state") == "error" and "failed_at" not in v:
+                return None, {"ok": False, "state": "error", "market": market, "reason": v.get("reason")}
+        left = deadline - _monotonic()
+        if left <= 0 or not any(v.get("state") == "loading" for v in views.values()):
+            return views, None
+        _sleep(min(STRUCTURE_POLL_S, left))
+
+
+def hl_structure(snap: dict, args: dict, rt=None) -> dict:
+    """A deterministic multi-timeframe read of one market's candles (hl_desk.structure), from the same candle store as
+    hl_candles and the tab, at serving time: per interval the statistics over the most recent closed candles with the
+    in-progress candle apart, and the prior day against the last price. The first call starts the fetches and waits up
+    to STRUCTURE_WAIT_S for them; an interval still loading says so and is answered on the next call."""
+    market = args.get("market")
+    if not market:
+        raise ValueError("market is required")
+    intervals = args.get("intervals")
+    if intervals is None:
+        intervals = list(DEFAULT_INTERVALS)
+    elif isinstance(intervals, str):
+        intervals = [s.strip() for s in intervals.split(",") if s.strip()]
+    if (not isinstance(intervals, list) or not intervals or len(set(intervals)) != len(intervals)
+            or any(iv not in CANDLE_INTERVALS for iv in intervals)):
+        raise ValueError(f"intervals must be a list of distinct intervals from {', '.join(CANDLE_INTERVALS)}")
+    if rt is None or not hasattr(rt, "candles"):
+        res = {"ok": False, "state": "error", "market": market,
+               "reason": "candles aren't available from this runtime (no collector with a candle store)"}
+    else:
+        views, err = _candle_views(rt, market, intervals)
+        res = err if err is not None else market_structure(market, intervals, views)
+    return {"tool": "hl_structure", **res, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
+            **_served(snap), "schema": snap["schema"], "disclaimer": DISCLAIMER,
+            "note": ("computed from the venue's candles in the collector's candle store when this is served, not from the "
+                     "snapshot (snapshot_id is the desk's state at the call); numbers only: say what they are, for and "
+                     "against each direction, and never turn them into a forecast; an interval in state 'loading' is "
+                     "answered by calling again in a second")}
+
+
 HANDLERS = {"hl_market": hl_market, "hl_flow": hl_flow, "hl_context": hl_context, "hl_status": hl_status,
-            "hl_alerts": hl_alerts, "hl_wallets": hl_wallets, "hl_candles": hl_candles}
+            "hl_alerts": hl_alerts, "hl_wallets": hl_wallets, "hl_candles": hl_candles, "hl_structure": hl_structure}
 
 
 _NODE_SOURCE_PROP = {"type": "string", "enum": ["live", "replay"],

@@ -14,6 +14,7 @@ provides_tools:
   - hl_alerts
   - hl_wallets
   - hl_candles
+  - hl_structure
   - node_status
   - node_book
   - node_stops
