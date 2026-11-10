@@ -301,6 +301,8 @@
 .hd-btn-primary { background: var(--hd-bid); border-color: var(--hd-bid); color: #000000; }
 .hd-btn-primary:hover:not(:disabled) { background: #46E59B; border-color: #46E59B; }
 .hd-btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.hd-btn-quiet { background: transparent; border-color: transparent; color: var(--hd-muted); }
+.hd-btn-quiet:hover { color: var(--hd-text); border-color: var(--hd-line); }
 .hd-toggle { display: inline-flex; gap: 0; padding: 2px; border-radius: 4px; background: var(--hd-track); }
 .hd-toggle .hd-btn-xs { background: transparent; color: var(--hd-muted); border-radius: 3px; min-height: 20px; }
 .hd-toggle .hd-btn-xs:hover:not(:disabled) { color: var(--hd-text); background: transparent; }

@@ -517,7 +517,9 @@
     const c = props.collector || {};
     const state = c.state || "unknown";
     const tone = state === "connected" ? "ok" : (state === "stopped" || state === "disconnected" ? "bad" : "warn");
-    const actions = [["start", "Start"], ["stop", "Stop"], ["restart", "Restart"]];
+    // One control for the state (Kevin, Nov 10): Start while stopped; small Stop and Restart links once it runs.
+    const running = state === "connected" || state === "connecting" || state === "warming_up";
+    const actions = running ? [["stop", "Stop"], ["restart", "Restart"]] : [["start", "Start"]];
     const a = props.action;
     let result = null;
     if (a) {
@@ -542,7 +544,7 @@
       h("div", { className: "hd-btn-row", role: "group", "aria-label": "Collector control" },
         actions.map(function (x) {
           return h("button", {
-            key: x[0], type: "button", className: "hd-btn", disabled: !!props.busy,
+            key: x[0], type: "button", className: cx("hd-btn", running ? "hd-btn-xs hd-btn-quiet" : "hd-btn-primary"), disabled: !!props.busy,
             onClick: function () { props.onControl(x[0]); }
           }, props.busy === x[0] ? x[1] + ELLIPSIS : x[1]);
         })),
