@@ -137,7 +137,7 @@ class PosStream:
         self.wm_hist: deque = deque()             # the stream's own timed watermarks: (receipt mono ns, receipt wall - block time)
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_applied": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0, "deltas_unapplied": 0,
-                         "unknown_kinds": 0, "sets": 0, "drops": 0}
+                         "unknown_kinds": 0, "sets": 0, "drops": 0, "watermarks_inconsistent": 0}
 
     def invalidate(self, reason: str) -> None:
         self.fam.invalidate(reason)
@@ -476,7 +476,12 @@ class FeedClient:
         f = ps.fam
         if f.valid:
             f.applied_through = seq
-        if kind == "watermark" and isinstance(bt, int) and not isinstance(bt, bool):
+        if kind == "watermark" and body.get("through_seq") != seq - 1:
+            # The market's rule (review B1) on the stream's own sequence: an inconsistent watermark is counted and
+            # ignored, advancing neither the stream's delay history nor its family's freshness.
+            ps.counters["watermarks_inconsistent"] += 1
+            mf.note("owner position stream watermark through_seq inconsistent: ignored", through=body.get("through_seq"), seq=seq)
+        elif kind == "watermark" and isinstance(bt, int) and not isinstance(bt, bool):
             # The stream's own delay history: its freshness is judged by its watermarks, not the market's.
             ps.wm_hist.append((mono_ns, wall_ms - bt))
             keep_ns = (self.cfg["delay_window_ms"] + 60_000) * 1_000_000

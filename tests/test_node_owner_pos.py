@@ -493,3 +493,26 @@ def test_the_shadow_runners_live_recording_gives_estimates_on_live_data():
     assert round(sum(r["notional_usd"] or 0 for r in rows)) == 11_830_242 and round(sum((r["estimate"] or {}).get("notional_usd") or 0 for r in rows)) == 10_947_770
     assert st["exclusions"]["size_outlier"]["orders"] == 0 and st["census"]["unsized_total"] == 1_710
     assert '"positions"' not in json.dumps(jsonable(v))
+
+
+def test_an_inconsistent_stream_watermark_never_advances_the_familys_freshness():
+    """Review B1 on the stream's own sequence: a watermark whose through_seq isn't its seq - 1 is counted and ignored;
+    the family stays STALE ("no freshness-advancing watermark") until the next consistent one."""
+    h, msgs = read_recording(HAND)
+    c = client(cfg=NO_AGE)
+    c.on_line(hello_from(h), msgs[0][0] - 1, 0)
+    first_wm = next(i for i, (_, m) in enumerate(msgs) if m.get("market") == S and m["kind"] == "watermark")
+    for i, (rx, m) in enumerate(msgs[:first_wm + 1]):
+        if i == first_wm:
+            m = dict(m, body={"through_seq": m["seq"] + 100})
+        c.on_line(m, rx, (i + 1) * 10 ** 9)
+    ps = c.markets[M].opos
+    now = (msgs[first_wm][0] + 100, (first_wm + 2) * 10 ** 9)
+    st = c.family_status(M, "owner_pos", *now)
+    assert ps.fam.valid and st["state"] == "STALE" and "no freshness-advancing watermark" in st["reason"]
+    assert ps.counters["watermarks_inconsistent"] == 1 and not ps.wm_hist
+    nxt = next(i for i, (_, m) in enumerate(msgs) if i > first_wm and m.get("market") == S and m["kind"] == "watermark")
+    for i, (rx, m) in enumerate(msgs[first_wm + 1:nxt + 1], first_wm + 1):
+        c.on_line(m, rx, (i + 1) * 10 ** 9)
+    now = (msgs[nxt][0] + 100, (nxt + 2) * 10 ** 9)
+    assert c.family_status(M, "owner_pos", *now)["state"] == "LIVE" and ps.counters["watermarks_inconsistent"] == 1
