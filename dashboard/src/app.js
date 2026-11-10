@@ -779,7 +779,7 @@
         }))) : null;
     // The ten levels nearest the spread on each side (Kevin, Nov 10): the ladder fits its card without an inner
     // scroll; the grouping dropdown widens the view. The venue's 20 levels per side stay in the snapshot.
-    const LADDER_SIDE_ROWS = 13;
+    const LADDER_SIDE_ROWS = 9;       // a shorter ladder (Kevin, Nov 10): the card ends with the chart beside it
     const bids = (lad.bids || []).slice(0, LADDER_SIDE_ROWS);
     const asks = (lad.asks || []).slice(0, LADDER_SIDE_ROWS);
     const boxRef = useRef(null);
@@ -2049,6 +2049,16 @@
       if (!why) return null;
       lines.push({ k: "node feed", el: h("span", { className: "hd-dim" }, "nothing to show right now: " + why) });
     }
+    // Folded (Kevin, Nov 10): the one line a trader scans, the Watch verdict (else the first line), with the feed's
+    // delay after it; "expand" in the head shows the whole brief.
+    const open = props.open === true;
+    let shown = lines;
+    if (!open) {
+      const pick = lines.filter(function (ln) { return ln.k === "watch"; })[0] || lines[0];
+      shown = [late && pick.k !== "node feed"
+        ? { k: pick.k, el: h(Fragment, null, pick.el || pick.t, h("span", { className: "hd-dim" }, " \u00b7 " + late)) }
+        : pick];
+    }
     return h(Panel, {
       id: "node-brief", className: "hd-p-brief", title: "What the node sees \u00b7 " + name, label: "What the node sees",
       why: h("p", null, "Sentences the plugin writes from the node's own order-level data: the order flow map's readings over the last two hours " +
@@ -2056,13 +2066,16 @@
         "wording, the largest single resting orders near the price with who placed them and when (public addresses; the plugin never guesses " +
         "who owns one), and the Watch verdict by Kevin's rule. Descriptions, not signals, and nothing here is a liquidation level. The full " +
         "panels are on the Node page."),
-      badges: h(NodeProv, { v: v, what: "fills + triggers + book" })
+      badges: h(Fragment, null,
+        props.onToggle ? h("button", { type: "button", className: "hd-btn hd-btn-xs hd-btn-quiet", onClick: props.onToggle, "aria-expanded": open },
+          open ? "collapse" : "expand") : null,
+        h(NodeProv, { v: v, what: "fills + triggers + book" }))
     },
-    h("div", { className: "hd-brief" }, lines.map(function (ln, i) {
+    h("div", { className: "hd-brief" }, shown.map(function (ln, i) {
       return h("div", { key: i, className: "hd-brief-row" }, h("span", { className: "hd-brief-k" }, ln.k), h("span", { className: "hd-brief-t" }, ln.el || ln.t));
     })),
-    h("div", { className: "hd-notes-foot" }, "Descriptions, not signals. ",
-      props.onNode ? h("button", { type: "button", className: "hd-btn hd-btn-xs hd-btn-quiet", onClick: props.onNode }, "open the Node page") : null));
+    open ? h("div", { className: "hd-notes-foot" }, "Descriptions, not signals. ",
+      props.onNode ? h("button", { type: "button", className: "hd-btn hd-btn-xs hd-btn-quiet", onClick: props.onNode }, "open the Node page") : null) : null);
   }
 
   // ---- Order Flow Map (node fills; Kevin's order-flow map report): eight clock-aligned 15-minute buckets of taker
@@ -2703,6 +2716,8 @@
     const nv = props.nv;
     const head = h("div", { className: "hd-wt-title" }, h(Badge, { kind: "node", title: "node fills" }, "NODE"), " ",
       h("b", null, "Wallet activity split"), h("span", { className: "hd-dim" }, " (new long, cover, new short, exit), from each wallet's own fills"),
+      s && s.available === true && s.window_label
+        ? h("span", { className: "hd-dim", title: s.as_of_note || undefined }, " \u00b7 " + s.window_label) : null,
       nodeOn(nv) ? h("span", { className: "hd-wsplit-prov" }, " ", h(FamChip, { name: "flow", f: g(nv, "families", "flow") }), " ",
         h("span", { className: "hd-dim", title: g(nv, "provenance", "stream") }, (g(nv, "provenance", "mode") || "?") + " \u00b7 " +
           (g(nv, "provenance", "source") || "source not in snapshot") + " \u00b7 epoch " + (isNum(g(nv, "provenance", "epoch")) ? nv.provenance.epoch : "none yet"))) : null);
@@ -2810,8 +2825,10 @@
     const head = h("div", { className: "hd-bucket-head" },
       h(Badge, { kind: "node", title: (ab.population || "node fills") + "\n" + nodeSrcText(props.nodeSrc) }, "NODE \u00b7 " + (ab.stream || "node fills")), " ",
       props.flowFam ? h(FamChip, { name: "flow", f: props.flowFam }) : null,
-      h("span", { className: "hd-dim" }, (ab.window_label || "activity buckets") +
-        (isNum(w.start_ms) && isNum(w.end_ms) ? " (" + hms(w.start_ms) + "\u2013" + hms(w.end_ms) + " UTC)" : "")),
+      // A shifted window (the node behind the card's window, Kevin, Nov 10) names its own times in the label; the
+      // "as of" note is its tooltip. A current window shows the card's times after the label.
+      h("span", { className: "hd-dim", title: ab.as_of_note || undefined }, (ab.window_label || "activity buckets") +
+        (!ab.as_of_note && isNum(w.start_ms) && isNum(w.end_ms) ? " (" + hms(w.start_ms) + "\u2013" + hms(w.end_ms) + " UTC)" : "")),
       props.nodeSrc ? h("span", { className: "hd-dim", title: props.nodeSrc.source }, nodeSrcText(props.nodeSrc)) : null);
     if (ab.available === true) {
       return h(Fragment, null, head,
@@ -4759,6 +4776,17 @@
       try { window.localStorage.setItem("hyperliquid-desk.view", v); } catch (e) { /* storage blocked */ }
       try { window.history.replaceState(null, "", v === "node" ? "#node" : window.location.pathname + window.location.search); } catch (e) { /* no history */ }
     }, []);
+    // "What the node sees" folds to its one-line verdict so the chart below stays in view (Kevin, Nov 10); folded
+    // unless this browser opened it, and the choice is kept here.
+    const [briefOpen, setBriefOpen] = useState(function () {
+      try { return window.localStorage.getItem("hyperliquid-desk.brief") === "open"; } catch (e) { return false; }
+    });
+    const toggleBrief = useCallback(function () {
+      setBriefOpen(function (o) {
+        try { window.localStorage.setItem("hyperliquid-desk.brief", o ? "closed" : "open"); } catch (e) { /* storage blocked */ }
+        return !o;
+      });
+    }, []);
     const [resp, setResp] = useState(null);
     const [noSnap, setNoSnap] = useState(null);
     const [gap, setGap] = useState(null);      // the route's "no current snapshot" answer while a snapshot stays on screen
@@ -4959,7 +4987,7 @@
       // ---- Desk: the public reading of the market
       m && view === "desk" ? h(Fragment, null,
         h(Glance, { m: m, resp: resp, onOpen: openWallet }),
-        non ? h(NodeBrief, { node: nlive, resp: resp, m: m, onNode: function () { chooseView("node"); } }) : null,
+        non ? h(NodeBrief, { node: nlive, resp: resp, m: m, open: briefOpen, onToggle: toggleBrief, onNode: function () { chooseView("node"); } }) : null,
         // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
         // A two-column grid (Kevin, Nov 10): the chart and the ladder share the first row and one height; Ask Hermes
         // and the Flow notes sit under the chart, the public Flow panel ("who is aggressive") under the ladder.
