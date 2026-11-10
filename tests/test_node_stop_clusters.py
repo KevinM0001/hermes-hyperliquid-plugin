@@ -1,8 +1,8 @@
 """The stops panel's stop map (Kevin's stop and liquidity map report): resting trigger orders by 0.5% band beside the
 resting depth they would walk, the two largest clusters per side quoted in the report's form, and the counted
 exclusions. Checked on the recorded xyz window against numbers computed here from the parsed book and trigger set with
-exact decimals, on hand-checked synthetic books and triggers (the ratios, the null forms, the exclusion counts), on the
-replay view, and through the serving-time gate."""
+exact decimals, on hand-checked synthetic books and triggers (the ratios, the null forms, the exclusion counts, the size
+test's bar: the depth at and beyond the order's band), on the replay view, and through the serving-time gate."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from node_helpers import OPTS, XYZ, client, feed, hello_from, jsonable, read_rec
 SP, XY = "xyz:SP500", "xyz:XYZ100"
 STEP = Decimal("0.005")
 BANDS = 20
-EXCL = ("implausible_price", "size_outlier", "already_true_at_price", "beyond_range")
+EXCL = ("implausible_price", "already_true_at_price", "beyond_range", "size_outlier")    # the map's order: size last
 D = Decimal
 
 
@@ -46,8 +46,11 @@ def _view(market, mode="LIVE", cfg=None):
 
 
 def _expected(c, market):
-    """The map from the client's parsed book and trigger set, computed here: depth per band per side, each trigger's
-    band or exclusion (the report's rules in the map's order), the median and the outlier cap."""
+    """The map from the client's parsed book and trigger set, computed here with exact decimals: depth per band per
+    side, the depth at and beyond each band (the bar of the size test), and each trigger's band or exclusion under the
+    report's rules in the map's order: implausible price, already true at the price, beyond 10%, and last a size
+    outlier, an order whose stated notional at its trigger price is above the depth at and beyond its band on the side
+    it fires into (the bids for a fall trigger, the asks for a rise trigger)."""
     mf = c.markets[market]
     book, trig = mf.book, mf.triggers
     mid = (book.best("B") + book.best("A")) / 2
@@ -64,19 +67,13 @@ def _expected(c, market):
         k = int(dist / STEP)
         if k < BANDS:
             depth[o.side][k] += o.px * o.sz
-    sized = sorted(g.sz for g in trig.orders.values() if not g.position_tpsl and g.sz > 0)
-    n = len(sized)
-    med = sized[n // 2] if n % 2 else (sized[n // 2 - 1] + sized[n // 2]) / 2
-    cap = med * 100
+    bars = {s: [sum(depth[s][k:], D(0)) for k in range(BANDS)] for s in ("B", "A")}
     bands = {"fall": [[] for _ in range(BANDS)], "rise": [[] for _ in range(BANDS)]}
     excl = {k: [] for k in EXCL}
     for g in trig.orders.values():
         px = g.trigger_px
         if px <= 0 or px > mid * 10 or px < mid / 10:
             excl["implausible_price"].append(g)
-            continue
-        if not g.position_tpsl and g.sz > cap:
-            excl["size_outlier"].append(g)
             continue
         falls = (g.kind == "stop") == (g.side == "A")       # a sell stop or a buy take-profit fires on a fall
         if (falls and px >= mid) or (not falls and px <= mid):
@@ -87,8 +84,18 @@ def _expected(c, market):
         if k >= BANDS:
             excl["beyond_range"].append(g)
             continue
+        if not g.position_tpsl and g.sz * px > bars["B" if falls else "A"][k]:
+            excl["size_outlier"].append(g)
+            continue
         bands["fall" if falls else "rise"][k].append(g)
-    return mid, depth, bands, excl, med, cap
+    return mid, depth, bars, bands, excl
+
+
+def _band_of(g, mid):
+    """(move, k) of a trigger inside the range, as the report places it."""
+    falls = (g.kind == "stop") == (g.side == "A")
+    dist = (mid - g.trigger_px) / mid if falls else (g.trigger_px - mid) / mid
+    return ("fall" if falls else "rise"), int(dist / STEP)
 
 
 def _notional(members):
@@ -107,10 +114,11 @@ def test_the_direction_a_trigger_fires_on_follows_its_kind_and_side():
 
 
 def test_recorded_window_bands_walk_and_exclusions_match_an_independent_calculation():
+    outliers = []
     for market in (SP, XY):
         c, v = _view(market)
         st, th = v["stops"], v["thinning"]
-        mid, depth, bands, excl, med, cap = _expected(c, market)
+        mid, depth, bars, bands, excl = _expected(c, market)
         m = st["map"]
         assert m["available"] and D(m["ref_px"]) == mid == D(th["mid"]) and m["as_of"]["book_time_ms"] == th["book_time_ms"]
         assert m["band_pct"] == 0.5 and m["out_to_pct"] == 10.0 and "current" not in m["as_of"]["note"] or "moment" in m["as_of"]["note"]
@@ -164,6 +172,9 @@ def test_recorded_window_bands_walk_and_exclusions_match_an_independent_calculat
                     assert abs(w["depth_between_usd"] - sum(b["depth_usd"] for b in th[key]["bands"][:k])) < 0.01 * k
                 assert abs(w["depth_at_and_beyond_usd"] - sum(b["depth_usd"] for b in th[key]["bands"][k:])) < 0.01 * BANDS
                 assert w["unknown_size_orders"] == unsized
+                assert beyond == bars[bside][k]
+                if row["largest_order"] is not None:      # a sized order left in a band is never worth more than it would walk
+                    assert row["largest_order"]["notional_usd"] <= w["depth_at_and_beyond_usd"]
                 if not members:
                     assert w["ratio_pct"] is None and w["ratio_reason"] == "no triggers in this band"
                 elif unsized == len(members):
@@ -188,18 +199,33 @@ def test_recorded_window_bands_walk_and_exclusions_match_an_independent_calculat
             assert ex[k]["notional_usd"] == (round(float(_notional(members)), 2) if ex[k]["sized_orders"] else None)
             assert ex[k]["lower_bound"] is bool(ex[k]["unknown_size_orders"] and ex[k]["sized_orders"])
             assert sum(ex[k]["by_category"].values()) == len(members)
-        assert f"({panels.fmt(med)} over {len([g for g in c.markets[market].triggers.orders.values() if not g.position_tpsl and g.sz > 0])} sized orders): cap {panels.fmt(cap)}" in ex["size_outlier"]["rule"]
+        # the size rule as served: one sentence, the test against the depth the band would walk, no median and no multiple
+        rule = ex["size_outlier"]["rule"]
+        assert rule.startswith("an order whose stated size, at its trigger price, is worth more than everything resting at and "
+                               "beyond its band out to 10% on the side it fires into")
+        assert "so it could not be walked through the book" in rule and rule.endswith("(whole-position) never qualify")
+        assert "median" not in rule and "100x" not in rule and "cap" not in rule
+        assert ex["order"] == ["trailing_stops (engine)", "implausible_price", "already_true_at_price", "beyond_range", "size_outlier"]
+        # every size outlier outweighs the exact depth at and beyond its band, the number the band's walk serves
+        for g in excl["size_outlier"]:
+            d, k = _band_of(g, mid)
+            bar = bars["B" if d == "fall" else "A"][k]
+            assert not g.position_tpsl and g.sz * g.trigger_px > bar
+            assert m["sides"][d]["bands"][k]["walk"]["depth_at_and_beyond_usd"] == round(float(bar), 2)
         acc = ex["accounted"]
         assert acc["complete"] and acc["waiting_triggers"] == len(c.markets[market].triggers.orders)
         assert acc["in_bands"] == sum(len(x) for d in bands for x in bands[d])
         assert acc["excluded_here"] == sum(len(x) for x in excl.values())
-        # the window has every case: sized and whole-position orders in bands, and every exclusion but one is non-empty
-        assert all(ex[k]["orders"] for k in ("implausible_price", "size_outlier", "beyond_range"))
+        # the window has every case: sized and whole-position orders in bands, an implausible price and a trigger beyond
+        # 10% in each market; the size test bites only where an order outweighs the depth at and beyond its band
+        assert all(ex[k]["orders"] for k in ("implausible_price", "beyond_range"))
         assert any(r["unknown_size_orders"] for s in m["sides"].values() for r in s["bands"])
+        outliers.append(ex["size_outlier"]["orders"])
         # nothing in the stops panel is called a liquidation: these are resting trigger orders
         assert "liquidation" not in json.dumps(st).lower()
         # the rows, the whole-position rule and the venue sentence are as they were
         assert st["rows"] and st["venue_check"] == panels.VENUE_CHECK and st["excluded_by_engine"]["trailing_stops"] is not None
+    assert sum(outliers) > 0            # the window exercises the size test: some order outweighs the depth beyond its band
 
 
 def test_recorded_window_clusters_are_the_two_largest_bands_per_side_quoted_in_the_reports_form():
@@ -256,7 +282,7 @@ BOOK = [[1, "B", "99.9", "10", _u(1), 1],       # bids: k0 999
 TRIG = [[11, "A", "stop", "99", "1", False, _u(11), 1],               # fall k2: $99
         [12, "A", "stop", "97.2", "2", False, _u(12), 1],             # fall k5: $194.4
         [13, "B", "take_profit", "97.1", "1", False, _u(13), 1],      # fall k5: $97.1 (a short's take-profit)
-        [14, "B", "stop", "102.5", "3", False, _u(11), 1],            # rise k5: $307.5
+        [14, "B", "stop", "102.5", "3", False, _u(11), 1],            # rise k5: $307.5 with nothing resting at and beyond it: a size outlier
         [15, "A", "take_profit", "101", "1", False, _u(15), 1],       # rise k2: $101
         [16, "A", "stop", "98.9", "0", True, _u(16), 1],              # fall k2, whole-position (no size)
         [17, "B", "take_profit", "96.1", "0", True, _u(17), 1],       # fall k7, whole-position, alone
@@ -265,8 +291,9 @@ TRIG = [[11, "A", "stop", "99", "1", False, _u(11), 1],               # fall k2:
         [20, "B", "stop", "90000000000", "1", False, _u(20), 1],      # implausible price
         [21, "A", "stop", "0.001", "1", False, _u(20), 1],            # implausible price
         [22, "A", "stop", "85", "1", False, _u(22), 1],               # 15% away: beyond the range
-        [23, "A", "stop", "98", "10000", False, _u(23), 1],           # 10,000 against a median of 1: a size outlier
-        [24, "B", "stop", "115", "0", True, _u(24), 1]]               # beyond the range, whole-position
+        [23, "A", "stop", "98", "10000", False, _u(23), 1],           # fall k4: $980,000 against the $2,910 of bids at and beyond it: a size outlier
+        [24, "B", "stop", "115", "0", True, _u(24), 1],               # beyond the range, whole-position
+        [25, "B", "stop", "102", "49", False, _u(25), 1]]             # rise k4: $4,998, just under the $5,100 of asks at and beyond it: stays
 
 
 def test_hand_checked_ratios_null_forms_and_exclusions():
@@ -308,23 +335,28 @@ def test_hand_checked_ratios_null_forms_and_exclusions():
     assert r["orders"] == 0 and r["notional_usd"] is None and "notional_reason" not in r and r["lower_bound"] is False
     assert r["walk"]["ratio_pct"] is None and r["walk"]["ratio_reason"] == "no triggers in this band"
     assert r["walk"]["depth_between_usd"] == 2979.0 and r["walk"]["depth_at_and_beyond_usd"] == 2910.0
-    # rise k2 walks the 5100 at 2%; rise k5 has nothing left to walk within 10%
+    # rise k2 walks the 5100 at 2%; rise k4 keeps the $4,998 order worth just less than the $5,100 at and beyond it (nearly
+    # all of what it would walk); rise k5 is empty: its $307.50 order had nothing resting at and beyond it within 10%, so
+    # it could not be walked at all and is a size outlier
     assert rise[2]["notional_usd"] == 101.0 and rise[2]["walk"]["depth_between_usd"] == 500.5
     assert rise[2]["walk"]["depth_at_and_beyond_usd"] == 5100.0 and rise[2]["walk"]["ratio_pct"] == 1.98
-    assert rise[5]["notional_usd"] == 307.5 and rise[5]["walk"]["depth_between_usd"] == 5600.5
-    assert rise[5]["walk"]["depth_at_and_beyond_usd"] == 0.0 and rise[5]["walk"]["ratio_pct"] is None
-    assert rise[5]["walk"]["ratio_reason"] == "no resting asks at and above it within 10%, so the share can't be given"
+    assert rise[4]["notional_usd"] == 4998.0 and rise[4]["orders"] == 1 and rise[4]["walk"]["depth_between_usd"] == 500.5
+    assert rise[4]["walk"]["depth_at_and_beyond_usd"] == 5100.0 and rise[4]["walk"]["ratio_pct"] == 98.0
+    assert rise[4]["band"] == {"lo": "102", "hi": "102.5", "near_px": "102", "far_px": "102.5", "from_pct": 2.0, "to_pct": 2.5}
+    assert rise[5]["orders"] == 0 and rise[5]["notional_usd"] is None and rise[5]["walk"]["ratio_pct"] is None
+    assert rise[5]["walk"]["ratio_reason"] == "no triggers in this band"
+    assert rise[5]["walk"]["depth_between_usd"] == 5600.5 and rise[5]["walk"]["depth_at_and_beyond_usd"] == 0.0
     assert rise[5]["band"]["near_px"] == "102.5" and rise[5]["band"]["far_px"] == "103"
     # clusters: the two largest stated notionals per side, in rank order, with the report's sentence
-    assert [(x["fires_on"], x["k"], x["rank"]) for x in cl] == [("fall", 5, 1), ("fall", 2, 2), ("rise", 5, 1), ("rise", 2, 2)]
+    assert [(x["fires_on"], x["k"], x["rank"]) for x in cl] == [("fall", 5, 1), ("fall", 2, 2), ("rise", 4, 1), ("rise", 2, 2)]
     assert cl[0]["text"] == ("Sell-side triggers at 97.5 to 97 (-2.5% to -3.0%): $292 across 2 orders from 2 accounts; "
                              "the bids at and below it total $3K, so this cluster is 10% of the liquidity it would walk")
     assert cl[1]["text"] == ("Sell-side triggers at 99 to 98.5 (-1.0% to -1.5%): at least $99 across 2 orders from 2 accounts; "
                              "the bids at and below it total $5K, so this cluster is at least 2.0% of the liquidity it would "
                              "walk; 1 of 2 orders reports no size, so this is understated")
     assert cl[1]["lower_bound"] is True and cl[1]["unknown_size_orders"] == 1 and cl[0]["lower_bound"] is False
-    assert cl[2]["text"] == ("Buy-side triggers at 102.5 to 103 (+2.5% to +3.0%): $308 across 1 order from 1 account; "
-                             "no resting asks at and above it within 10%, so the share can't be given")
+    assert cl[2]["text"] == ("Buy-side triggers at 102 to 102.5 (+2.0% to +2.5%): $5K across 1 order from 1 account; "
+                             "the asks at and above it total $5K, so this cluster is 98% of the liquidity it would walk")
     assert cl[3]["text"] == ("Buy-side triggers at 101 to 101.5 (+1.0% to +1.5%): $101 across 1 order from 1 account; "
                              "the asks at and above it total $5K, so this cluster is 2.0% of the liquidity it would walk")
     # exclusions, each counted once in the map's order, with their notional; the engine's trailing count beside them
@@ -332,26 +364,34 @@ def test_hand_checked_ratios_null_forms_and_exclusions():
     assert (ex["implausible_price"]["orders"], ex["implausible_price"]["accounts"]) == (2, 1)
     assert ex["implausible_price"]["notional_usd"] == 90000000000.0 and ex["implausible_price"]["by_category"] == {
         "buy_stop_on_rise": 1, "sell_stop_on_fall": 1}
-    assert ex["size_outlier"] == {"orders": 1, "sized_orders": 1, "unknown_size_orders": 0, "accounts": 1,
-                                  "notional_usd": 980000.0, "lower_bound": False, "by_category": {"sell_stop_on_fall": 1},
-                                  "rule": "a stated size above 100x the market's median sized waiting trigger (1 over 11 sized "
-                                          "orders): cap 100"}
+    # the size outliers: the $980,000 sell stop against $2,910 of bids at and beyond its band, and the $307.50 buy stop
+    # against no asks at all; the rule as served, one sentence, beside the counts it produced
+    assert ex["size_outlier"] == {"orders": 2, "sized_orders": 2, "unknown_size_orders": 0, "accounts": 2,
+                                  "notional_usd": 980307.5, "lower_bound": False,
+                                  "by_category": {"buy_stop_on_rise": 1, "sell_stop_on_fall": 1},
+                                  "rule": "an order whose stated size, at its trigger price, is worth more than everything "
+                                          "resting at and beyond its band out to 10% on the side it fires into (the bids "
+                                          "below for a fall trigger, the asks above for a rise trigger: the band's walk "
+                                          "depth_at_and_beyond_usd), so it could not be walked through the book; orders "
+                                          "with no stated size (whole-position) never qualify"}
     assert ex["already_true_at_price"]["orders"] == 2 and ex["already_true_at_price"]["notional_usd"] == 200.0
     assert ex["already_true_at_price"]["by_category"] == {"buy_stop_on_rise": 1, "sell_stop_on_fall": 1}
     assert ex["beyond_range"]["orders"] == 2 and ex["beyond_range"]["unknown_size_orders"] == 1
     assert ex["beyond_range"]["notional_usd"] == 85.0
-    assert ex["accounted"] == {"waiting_triggers": 14, "in_bands": 7, "excluded_here": 7, "complete": True}
-    assert ex["order"] == ["trailing_stops (engine)", *EXCL]
+    assert ex["accounted"] == {"waiting_triggers": 15, "in_bands": 7, "excluded_here": 8, "complete": True}
+    assert ex["order"] == ["trailing_stops (engine)", *EXCL] == ["trailing_stops (engine)", "implausible_price",
+                                                                 "already_true_at_price", "beyond_range", "size_outlier"]
+    assert "the size test last, inside the bands" in ex["note"]
     # the census: the applied set, the exclusions, the book in total and inside the range; no bands view and no
     # snapshot totals here, so those counts are null with the reason, never 0
     cen = out["census"]
-    assert (cen["triggers_total"], cen["unsized_total"], cen["executable_orders_total"]) == (14, 3, 5)
+    assert (cen["triggers_total"], cen["unsized_total"], cen["executable_orders_total"]) == (15, 3, 5)
     assert cen["excluded_by_engine"] == {"trailing_stops": 3, "unclassified": 0}
-    assert cen["excluded"] == {"implausible_price": 2, "size_outlier": 1, "already_true_at_price": 2, "beyond_range": 2,
+    assert cen["excluded"] == {"implausible_price": 2, "already_true_at_price": 2, "beyond_range": 2, "size_outlier": 2,
                                "excluded_by_engine": {"trailing_stops": 3, "unclassified": 0}}
     assert cen["executable_within_10pct"]["orders"] == 5 and cen["executable_within_10pct"]["ref_px"] == "100"
     assert cen["executable_within_10pct"]["ref_px_source"].startswith("the book mid") and cen["executable_within_10pct"]["range_bps"] == 1000
-    assert cen["executable_to_trigger_ratio"] == 0.36                       # 5 / 14
+    assert cen["executable_to_trigger_ratio"] == 0.33                       # 5 / 15
     assert cen["within_10pct"] is None and cen["within_10pct_reason"] == "no bands view from the engine yet"
     assert cen["outside"] is None and cen["unsized_within_10pct"] is None and cen["bands_view"] is None
     assert cen["snapshot_totals"] is None and cen["snapshot_totals_reason"] == "no snapshot totals yet"
@@ -383,23 +423,81 @@ def test_census_sums_the_engines_bands_view_and_counts_the_book_inside_its_range
 
 def test_whole_position_orders_never_count_as_size_outliers_and_never_make_a_zero():
     rows = [[1, "A", "stop", "99", "0", True, _u(1), 1], [2, "A", "stop", "98.9", "0", True, _u(2), 1],
-            [3, "B", "stop", "101", "0.001", False, _u(3), 1]]      # the only sized order sets the median
+            [3, "B", "stop", "101", "0.001", False, _u(3), 1],      # the only sized order: $0.10 against $5,100
+            [4, "B", "take_profit", "96.1", "0", True, _u(4), 1]]   # fall k7, whole-position, nothing resting at and beyond it
     mf = _mf(BOOK, rows)
     out = panels.stop_map(mf, panels.depth_bands(mf.book, mf.book.mid()), None)
     ex, fall = out["exclusions"], out["map"]["sides"]["fall"]["bands"]
-    assert ex["size_outlier"]["orders"] == 0 and "cap 0.1" in ex["size_outlier"]["rule"]
+    assert ex["size_outlier"]["orders"] == 0 and ex["size_outlier"]["notional_usd"] is None
+    assert ex["size_outlier"]["rule"].endswith("orders with no stated size (whole-position) never qualify")
     assert fall[2]["orders"] == 2 and fall[2]["notional_usd"] is None and fall[2]["sz"] is None
     assert fall[2]["notional_reason"] == "every order is whole-position: size unknown, not 0 (2 orders, none with a stated size)"
     assert fall[2]["lower_bound"] is False and fall[2]["walk"]["lower_bound"] is False
     assert fall[2]["walk"]["ratio_pct"] is None and fall[2]["walk"]["ratio_reason"] == fall[2]["notional_reason"]
+    # with no size there is nothing to weigh against the depth: the order at the empty band stays in it, size unknown
+    assert fall[7]["orders"] == 1 and fall[7]["unknown_size_orders"] == 1 and fall[7]["notional_usd"] is None
+    assert fall[7]["walk"]["depth_at_and_beyond_usd"] == 0.0 and fall[7]["walk"]["ratio_pct"] is None
+    assert fall[7]["walk"]["ratio_reason"] == fall[7]["notional_reason"]
     assert [(x["fires_on"], x["k"]) for x in out["clusters"]] == [("rise", 2)]    # a band without a stated notional never ranks
     rows_all = [r for s in out["map"]["sides"].values() for r in s["bands"]]
     assert all(r["notional_usd"] != 0 and r["walk"]["ratio_pct"] != 0 for r in rows_all)     # unknown, never 0
     assert all("; 0 of them" not in x["text"] for x in out["clusters"])
-    # no sized trigger at all: the size rule says so instead of a cap
+    assert out["exclusions"]["accounted"] == {"waiting_triggers": 4, "in_bands": 4, "excluded_here": 0, "complete": True}
+    # no sized trigger at all: nothing is excluded, the rule reads the same, and nothing ranks
     mf = _mf(BOOK, rows[:2])
     out = panels.stop_map(mf, panels.depth_bands(mf.book, mf.book.mid()), None)
-    assert "no sized trigger is waiting" in out["exclusions"]["size_outlier"]["rule"] and out["clusters"] == []
+    assert out["exclusions"]["size_outlier"]["orders"] == 0 and out["exclusions"]["size_outlier"]["rule"] == ex["size_outlier"]["rule"]
+    assert out["clusters"] == []
+
+
+def test_a_size_outlier_is_an_order_worth_more_than_the_depth_its_band_would_walk():
+    """The size test is absolute and per order (Kevin, Nov 9): the bar is the resting depth at and beyond the order's
+    band on the side it fires into, the band's walk depth_at_and_beyond_usd. Equal stays and a cent over goes; the bar is
+    the band's, so depth nearer the price than the band doesn't count; fall triggers are weighed against the bids and
+    rise triggers against the asks; nothing resting at and beyond a band makes every sized trigger there an outlier
+    while a whole-position order there stays; and the test comes last, so an order that is implausible, already true
+    or beyond 10% is counted there whatever its size."""
+    book = [[1, "B", "99", "10", _u(1), 1],         # bids: k2 $990
+            [2, "B", "95", "10", _u(2), 1],         # k10 $950: the bar for fall bands k3..k10
+            [3, "A", "101", "10", _u(3), 1],        # asks: k2 $1,010
+            [4, "A", "105", "10", _u(4), 1]]        # k10 $1,050: the bar for rise bands k3..k10
+    trig = [[11, "A", "stop", "95", "10", False, _u(11), 1],          # fall k10: $950, the bar exactly: stays
+            [12, "A", "stop", "95", "10.01", False, _u(12), 1],       # fall k10: $950.95, 95 cents over: an outlier
+            [13, "A", "stop", "97", "9", False, _u(13), 1],           # fall k6: $873 against the $950 beyond it (its own band empty): stays
+            [14, "B", "take_profit", "97", "10", False, _u(14), 1],   # fall k6 (a short's take-profit fires on a fall): $970 > $950: an outlier
+            [15, "A", "stop", "99", "19", False, _u(15), 1],          # fall k2: $1,881 against $1,940 (the 990 and the 950): stays
+            [16, "A", "stop", "96", "19", False, _u(16), 1],          # fall k8: $1,824 against $950 (the 990 nearer the price doesn't count): an outlier
+            [17, "B", "stop", "103", "10", False, _u(17), 1],         # rise k6: $1,030 against the $1,050 of asks beyond it: stays
+            [18, "B", "stop", "103", "10.2", False, _u(18), 1],       # rise k6: $1,050.60 > $1,050: an outlier
+            [19, "A", "stop", "94", "0.001", False, _u(19), 1],       # fall k12: $0.09 against nothing resting at and beyond it: an outlier
+            [20, "A", "stop", "94", "0", True, _u(20), 1],            # fall k12, whole-position: no stated size, never an outlier
+            [21, "A", "stop", "85", "10000", False, _u(21), 1],       # 15% away and huge: beyond_range, judged before size
+            [22, "A", "stop", "100.5", "10000", False, _u(22), 1],    # a fall trigger above the price and huge: already true, judged before size
+            [23, "A", "stop", "0.5", "10000", False, _u(23), 1]]      # an implausible price and huge: implausible_price
+    mf = _mf(book, trig)
+    out = panels.stop_map(mf, panels.depth_bands(mf.book, mf.book.mid()), None)
+    fall, rise, ex = out["map"]["sides"]["fall"]["bands"], out["map"]["sides"]["rise"]["bands"], out["exclusions"]
+    assert [b["walk"]["depth_at_and_beyond_usd"] for b in fall] == [1940.0] * 3 + [950.0] * 8 + [0.0] * 9
+    assert [b["walk"]["depth_at_and_beyond_usd"] for b in rise] == [2060.0] * 3 + [1050.0] * 8 + [0.0] * 9
+    assert (fall[10]["orders"], fall[10]["notional_usd"], fall[10]["walk"]["ratio_pct"]) == (1, 950.0, 100.0)
+    assert (fall[6]["orders"], fall[6]["notional_usd"], fall[6]["walk"]["ratio_pct"]) == (1, 873.0, 91.89)
+    assert (fall[2]["orders"], fall[2]["notional_usd"], fall[2]["walk"]["ratio_pct"]) == (1, 1881.0, 96.96)
+    assert fall[8]["orders"] == 0 and fall[12]["orders"] == 1 and fall[12]["unknown_size_orders"] == 1
+    assert fall[12]["notional_usd"] is None and fall[12]["walk"]["ratio_pct"] is None
+    assert (rise[6]["orders"], rise[6]["notional_usd"], rise[6]["walk"]["ratio_pct"]) == (1, 1030.0, 98.1)
+    assert sum(b["orders"] for b in fall + rise) == 5
+    so = ex["size_outlier"]
+    assert (so["orders"], so["sized_orders"], so["unknown_size_orders"], so["accounts"]) == (5, 5, 0, 5)
+    assert so["notional_usd"] == 4795.64                      # 950.95 + 970 + 1,824 + 1,050.60 + 0.094
+    assert so["by_category"] == {"buy_stop_on_rise": 1, "buy_take_profit_on_fall": 1, "sell_stop_on_fall": 3}
+    assert (ex["beyond_range"]["orders"], ex["beyond_range"]["notional_usd"]) == (1, 850000.0)
+    assert (ex["already_true_at_price"]["orders"], ex["already_true_at_price"]["notional_usd"]) == (1, 1005000.0)
+    assert (ex["implausible_price"]["orders"], ex["implausible_price"]["notional_usd"]) == (1, 5000.0)
+    assert ex["accounted"] == {"waiting_triggers": 13, "in_bands": 5, "excluded_here": 8, "complete": True}
+    assert [(x["fires_on"], x["k"]) for x in out["clusters"]] == [("fall", 2), ("fall", 10), ("rise", 6)]
+    assert out["clusters"][1]["text"] == ("Sell-side triggers at 95 to 94.5 (-5.0% to -5.5%): $950 across 1 order from 1 account; "
+                                          "the bids at and below it total $950, so this cluster is 100% of the liquidity it would walk")
+    assert not hasattr(panels, "MAP_OUTLIER_MULTIPLE")        # the median multiple is gone
 
 
 def test_without_a_valid_book_the_map_and_clusters_are_unavailable_with_the_reason():
@@ -410,7 +508,7 @@ def test_without_a_valid_book_the_map_and_clusters_are_unavailable_with_the_reas
     assert out["clusters"] is None and out["clusters_reason"] == out["map"]["reason"]
     assert out["exclusions"] == {"available": False, "reason": out["map"]["reason"]}
     cen = out["census"]                       # the feed-only counts stay; the book-built ones are null with the reason
-    assert cen["triggers_total"] == 14 and cen["unsized_total"] == 3 and cen["excluded_by_engine"]["trailing_stops"] == 3
+    assert cen["triggers_total"] == 15 and cen["unsized_total"] == 3 and cen["excluded_by_engine"]["trailing_stops"] == 3
     for k in ("excluded", "executable_orders_total", "executable_within_10pct", "executable_to_trigger_ratio"):
         assert cen[k] is None and cen[f"{k}_reason"] == out["map"]["reason"], k
     assert cen["within_10pct"] is None and cen["within_10pct_reason"] == "no bands view from the engine yet"

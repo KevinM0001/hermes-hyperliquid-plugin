@@ -40,7 +40,6 @@ TAPE_ROWS = 30
 VENUE_CHECK = ("checked against the venue only at restart: the engine compares its waiting-stop set with the venue's only when it restarts (its rebase check); during a run nothing compares them, so a stop the venue has already ended can stay shown until the next restart")
 STOPS_ROWS_RANGE_BPS = 200          # band rows shown within 2% of the mid; everything beyond is counted below/above
 BOOK_PANEL_FAMILIES = ("book",)
-MAP_OUTLIER_MULTIPLE = 100          # stop map: a stated size above 100x the market's median sized trigger is a size outlier
 MAP_PLAUSIBLE_RATIO = Decimal(10)   # stop map: a trigger price outside [ref/10, ref x 10] is implausible
 MAP_CLUSTERS_PER_SIDE = 2
 MAP_SIDES = {"fall": {"side": "sell", "label": "Sell-side triggers", "book_side": "bids_below", "book": "B",
@@ -51,6 +50,14 @@ MAP_SIDES = {"fall": {"side": "sell", "label": "Sell-side triggers", "book_side"
                       "members": "buy stops and sell (long) take-profits: they fire when the price rises to the band"}}
 MAP_NOTE = ("a census of the engine's waiting-trigger set and resting book at this block time (the node's live memory), "
             "not a scan of past orders: it describes that moment only, and the orders can be added or pulled at any time")
+# The stop map's size outlier (Kevin, Nov 9): an absolute test against the depth the order's band would walk, in
+# place of a multiple of the market's median stated size (on BTC that median was 0.00186, a cap near $14K, and the
+# multiple excluded 1,005 orders / $182M, more than every cluster together). It is judged last, inside the bands.
+MAP_SIZE_OUTLIER_RULE = ("an order whose stated size, at its trigger price, is worth more than everything resting at and "
+                         f"beyond its band out to {float(THIN_STEP * THIN_BANDS * 100):g}% on the side it fires into (the "
+                         "bids below for a fall trigger, the asks above for a rise trigger: the band's walk "
+                         "depth_at_and_beyond_usd), so it could not be walked through the book; orders with no stated "
+                         "size (whole-position) never qualify")
 
 
 class PanelState:
@@ -413,29 +420,28 @@ def stop_map(mf, depth: dict | None, unavailable: str | None) -> dict:
     book, same moment, that its triggers would walk (the band and every band farther out, the report's "bids at and
     below it"), the depth between the price and the band, and the trigger notional as a share of the walked depth;
     the two largest bands per side as quotable clusters. Stated notional is a lower bound where whole-position orders
-    sit (never 0), unknown when every order is one."""
+    sit (never 0), unknown when every order is one. The exclusions are judged in the census's order (implausible
+    price, already true at the price, beyond the range, size outlier last): the size test needs the band's walked
+    depth, the same exact sum the band's walk ratio divides by."""
     tr, book = mf.triggers, mf.book
     if unavailable is not None:
         why = f"needs a valid book for the reference price and the resting depth: {unavailable}"
         return {"map": {"available": False, "reason": why}, "clusters": None, "clusters_reason": why,
                 "exclusions": {"available": False, "reason": why}, "census": _census(mf, None, why)}
     mid = book.mid()
-    c = census(tr, mid, THIN_STEP, THIN_BANDS, MAP_OUTLIER_MULTIPLE, MAP_PLAUSIBLE_RATIO)
+    walked = {d: _walked_depth(depth[meta["book"]]) for d, meta in MAP_SIDES.items()}
+    c = census(tr, mid, THIN_STEP, THIN_BANDS, MAP_PLAUSIBLE_RATIO, {d: w["beyond"] for d, w in walked.items()})
     sides, candidates = {}, []
     for d, meta in MAP_SIDES.items():
-        dbands = depth[meta["book"]]
-        usds = [b["usd"] for b in dbands]
-        total = sum(usds, ZERO)
-        rows, cum = [], ZERO
+        dbands, w = depth[meta["book"]], walked[d]
+        rows = []
         for k, b in enumerate(c["bands"][d]):
-            between, cum = cum, cum + usds[k]
-            beyond = total - between
-            row = _map_row(d, meta, k, b, dbands[k], between, beyond)
+            row = _map_row(d, meta, k, b, dbands[k], w["between"][k], w["beyond"][k])
             rows.append(row)
             if row["notional_usd"]:
                 candidates.append((d, k, row))
         sides[d] = {**{x: meta[x] for x in ("side", "label", "book_side", "members")}, "fires_on": d,
-                    "depth_total_usd": usd(total), "bands": rows}
+                    "depth_total_usd": usd(w["total"]), "bands": rows}
     clusters = []
     for d in MAP_SIDES:
         ranked = sorted((x for x in candidates if x[0] == d), key=lambda x: (-x[2]["notional_usd"], x[1], -x[2]["orders"]))
@@ -466,6 +472,20 @@ def stop_map(mf, depth: dict | None, unavailable: str | None) -> dict:
             "clusters": clusters,
             "exclusions": _exclusions(c),
             "census": _census(mf, c, None)}
+
+
+def _walked_depth(dbands: list) -> dict:
+    """Per band of one book side, exact decimals: the depth between the price and the band (`between`, the bands
+    nearer than it) and the depth at and beyond it (`beyond`: the band and every band farther from the price, the
+    report's "bids at and below it"). `beyond` is the walk ratio's denominator and the size outlier's bar."""
+    usds = [b["usd"] for b in dbands]
+    total = sum(usds, ZERO)
+    between, beyond, cum = [], [], ZERO
+    for u in usds:
+        between.append(cum)
+        beyond.append(total - cum)
+        cum += u
+    return {"total": total, "between": between, "beyond": beyond}
 
 
 def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal, beyond: Decimal) -> dict:
@@ -573,20 +593,17 @@ def _cluster_text(row: dict) -> str:
 
 def _exclusions(c: dict) -> dict:
     eng = c["engine_excluded"]
-    med, cap = c["median_sz"], c["outlier_cap_sz"]
     rules = {"implausible_price": f"a trigger price outside [reference / {MAP_PLAUSIBLE_RATIO}, reference x {MAP_PLAUSIBLE_RATIO}] "
                                   "(a 90% fall or a 900% rise) or not positive: a data artifact, not a level",
-             "size_outlier": (f"a stated size above {MAP_OUTLIER_MULTIPLE}x the market's median sized waiting trigger "
-                              f"({fmt(med)} over {c['sized_population']} sized orders): cap {fmt(cap)}" if med is not None else
-                              f"a stated size above {MAP_OUTLIER_MULTIPLE}x the market's median sized waiting trigger; no sized "
-                              "trigger is waiting, so nothing is excluded"),
              "already_true_at_price": "a fall trigger at or above the reference price, or a rise trigger at or below it: its "
                                       "condition is already true, so it won't fire on the move the map implies (a stale bracket)",
-             "beyond_range": f"more than {float(THIN_STEP * THIN_BANDS * 100):g}% from the reference price"}
+             "beyond_range": f"more than {float(THIN_STEP * THIN_BANDS * 100):g}% from the reference price",
+             "size_outlier": MAP_SIZE_OUTLIER_RULE}
     out = {"available": True,
-           "note": "each waiting trigger is counted once, in a band or under the first exclusion that applies, in this order; "
-                   "nothing listed here is in the map's bands; trailing stops never reach the feed, so only the engine's count "
-                   "of them is known",
+           "note": "each waiting trigger is counted once, in a band or under the first exclusion that applies, in this order "
+                   "(the size test last, inside the bands, against the depth the order's band would walk); nothing listed "
+                   "here is in the map's bands; trailing stops never reach the feed, so only the engine's count of them is "
+                   "known",
            "order": ["trailing_stops (engine)", *CENSUS_EXCLUSIONS],
            "trailing_stops": {"orders": eng.get("trailing"), "notional_usd": None,
                               "reason": "not in the feed: the engine leaves trailing stops out (carve-out C-2: an activation "

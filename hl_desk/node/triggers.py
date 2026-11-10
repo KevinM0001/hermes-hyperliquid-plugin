@@ -17,11 +17,12 @@ from dataclasses import dataclass
 from decimal import Decimal, ROUND_FLOOR
 
 from .proto import dec
-from ..util import median
 
 ZERO = Decimal(0)
 DOMINANT_SHARE = Decimal("0.5")
-CENSUS_EXCLUSIONS = ("implausible_price", "size_outlier", "already_true_at_price", "beyond_range")
+# The stop map's exclusions in the order they are tested (each trigger once, first match); the size test comes
+# last because it needs the trigger's band: it is judged against the depth that band would walk.
+CENSUS_EXCLUSIONS = ("implausible_price", "already_true_at_price", "beyond_range", "size_outlier")
 
 
 @dataclass(slots=True)
@@ -173,26 +174,23 @@ def category(kind: str, side: str) -> str:
     return f"{'sell' if side == 'A' else 'buy'}_{kind}_on_{fires_on(kind, side)}"
 
 
-def census(triggers: "NodeTriggers", ref_px: Decimal, step: Decimal, n_bands: int, outlier_multiple: int,
-           plausible_ratio: Decimal) -> dict:
+def census(triggers: "NodeTriggers", ref_px: Decimal, step: Decimal, n_bands: int, plausible_ratio: Decimal,
+           walked_depth: dict) -> dict:
     """Every waiting trigger counted exactly once for the stop map: in a band of the move that fires it (bands of
-    `step` out to n_bands x step from ref_px, the thinning panel's edges) or under one exclusion, in this order:
-    implausible price (outside [ref/plausible_ratio, ref x plausible_ratio], or not positive), size outlier (a stated
-    size above outlier_multiple x the market's median sized waiting trigger), condition already true at ref_px (a fall
-    trigger at or above it, a rise trigger at or below it), beyond the range. Whole-position orders (size unknown)
-    are never size outliers and stay counted as unsized. Sizes and notionals are exact decimals."""
-    sized_szs = [g.sz for g in triggers.orders.values() if not g.position_tpsl and g.sz > 0]
-    med = median(sized_szs) if sized_szs else None
-    cap = None if med is None else med * outlier_multiple
+    `step` out to n_bands x step from ref_px, the thinning panel's edges) or under the first exclusion that applies,
+    in this order: implausible price (outside [ref/plausible_ratio, ref x plausible_ratio], or not positive),
+    condition already true at ref_px (a fall trigger at or above it, a rise trigger at or below it), beyond the
+    range, and last, inside the bands only, size outlier: a stated notional at the trigger price (sz x trigger_px)
+    above walked_depth[move][k], the resting depth at and beyond band k on the side the trigger fires into (the bids
+    from the band down to the range's edge for a fall, the asks from the band up to it for a rise: the depth the
+    band's walk ratio divides by), so the order could not be walked through the book. Whole-position orders (size
+    unknown) are never size outliers and stay counted as unsized. Sizes and notionals are exact decimals."""
     bands = {d: [_cbucket() for _ in range(n_bands)] for d in ("fall", "rise")}
     excluded = {k: _cbucket() for k in CENSUS_EXCLUSIONS}
     for g in triggers.orders.values():
         px = g.trigger_px
         if px <= 0 or px > ref_px * plausible_ratio or px < ref_px / plausible_ratio:
             _cadd(excluded["implausible_price"], g)
-            continue
-        if cap is not None and not g.position_tpsl and g.sz > cap:
-            _cadd(excluded["size_outlier"], g)
             continue
         d = fires_on(g.kind, g.side)
         if (d == "fall" and px >= ref_px) or (d == "rise" and px <= ref_px):
@@ -203,10 +201,12 @@ def census(triggers: "NodeTriggers", ref_px: Decimal, step: Decimal, n_bands: in
         if k >= n_bands:
             _cadd(excluded["beyond_range"], g)
             continue
+        if not g.position_tpsl and g.sz * px > walked_depth[d][k]:
+            _cadd(excluded["size_outlier"], g)
+            continue
         _cadd(bands[d][k], g)
     in_bands = sum(b["orders"] for d in bands for b in bands[d])
     return {"ref_px": ref_px, "step": step, "n_bands": n_bands, "bands": bands, "excluded": excluded,
-            "median_sz": med, "sized_population": len(sized_szs), "outlier_cap_sz": cap,
             "waiting_total": len(triggers.orders), "in_bands": in_bands,
             "engine_excluded": dict(triggers.excluded)}
 
