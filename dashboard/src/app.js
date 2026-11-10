@@ -588,30 +588,35 @@
           h(CollectorBox, { collector: collector, busy: props.busy, action: props.action, onControl: props.onControl,
             mode: r ? r.mode : null, modeTitle: prov.source }),
           r && shown ? h(AskButton, { question: askQuestion("market", shown, r.snapshot_id) }) : null)),
-      r ? h("div", { className: "hd-prov" },
-        h("span", { className: "hd-prov-item" }, "snapshot ", h("code", { className: "hd-code" }, r.snapshot_id), " ",
-          h(CopyButton, { text: r.snapshot_id, what: "snapshot ID" })),
-        h("span", { className: "hd-prov-item" }, "built " + dateTime(r.built_at)),
-        // When the snapshot on screen has aged past a limit, or the last poll failed, it is said here (it was the
-        // delay bar's note until Nov 9); the next snapshot replaces the one on screen in place, nothing blanks.
-        props.aged || props.pollNote ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
-          title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
-          (props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "") + (props.aged ? "Snapshot on screen: " + props.aged : "")) : null,
-        m ? h("span", { className: "hd-prov-item", title: prov.source }, "source: " + prov.source) : null,
-        m ? h("span", { className: "hd-prov-item" }, "dex: " + (g(m, "meta", "dex_label") || prov.dex || "not in snapshot")) : null,
-        m ? h("span", { className: "hd-prov-item" },
-          "trade coverage since " + (cov.segment_start ? hmsms(cov.segment_start) + " UTC" : "(none)") +
-          (isNum(cov.observed_s) ? " \u00b7 observed " + secs(cov.observed_s) : "") +
-          " \u00b7 gaps " + ((cov.gaps || []).length)) : null,
-        r.schema ? h("span", { className: "hd-prov-item", title: r.schema.path }, "schema " + r.schema.schema_id + " v" + r.schema.version) : null,
-        h("span", { className: "hd-prov-item" }, "plugin v" + r.plugin_version),
-        h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
-        h(Badge, { kind: "api", title: prov.source }, "PUBLIC API \u00b7 websocket + info"),
-        props.selected && shown && props.selected !== shown
-          ? h("span", { className: "hd-chip hd-tone-info" }, "loading " + props.selected + ELLIPSIS) : null,
-        unsupported.length ? h("span", { className: "hd-prov-item hd-dim" }, "unsupported: " + unsupported.map(function (u) {
-          return u.market + (u.reason ? " (" + u.reason + ")" : "");
-        }).join("; ")) : null) : null,
+      // Two rows of fixed height that never wrap (Kevin, Nov 10): a long item is cut with an ellipsis and carries its
+      // full text in a tooltip, so a width change (the observed seconds, a status note) never moves the badge to a
+      // third line and the card never grows. Row 1: identity and status. Row 2: coverage, versions and the badge.
+      r ? h(Fragment, null,
+        h("div", { className: "hd-prov hd-prov-1" },
+          h("span", { className: "hd-prov-item" }, "snapshot ", h("code", { className: "hd-code" }, r.snapshot_id), " ",
+            h(CopyButton, { text: r.snapshot_id, what: "snapshot ID" })),
+          h("span", { className: "hd-prov-item" }, "built " + dateTime(r.built_at)),
+          // When the snapshot on screen has aged past a limit, or the last poll failed, it is said here (it was the
+          // delay bar's note until Nov 9); the next snapshot replaces the one on screen in place, nothing blanks.
+          props.aged || props.pollNote ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
+            title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
+            (props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "") + (props.aged ? "Snapshot on screen: " + props.aged : "")) : null,
+          m ? h("span", { className: "hd-prov-item hd-prov-grow", title: prov.source }, "source: " + prov.source) : null),
+        h("div", { className: "hd-prov hd-prov-2" },
+          m ? h("span", { className: "hd-prov-item" }, "dex: " + (g(m, "meta", "dex_label") || prov.dex || "not in snapshot")) : null,
+          m ? h("span", { className: "hd-prov-item" },
+            "trade coverage since " + (cov.segment_start ? hmsms(cov.segment_start) + " UTC" : "(none)") +
+            (isNum(cov.observed_s) ? " \u00b7 observed " + secs(cov.observed_s) : "") +
+            " \u00b7 gaps " + ((cov.gaps || []).length)) : null,
+          r.schema ? h("span", { className: "hd-prov-item", title: r.schema.path }, "schema " + r.schema.schema_id + " v" + r.schema.version) : null,
+          h("span", { className: "hd-prov-item" }, "plugin v" + r.plugin_version),
+          unsupported.length ? h("span", { className: "hd-prov-item hd-dim", title: unsupported.map(function (u) {
+            return u.market + (u.reason ? " (" + u.reason + ")" : "");
+          }).join("; ") }, "unsupported: " + unsupported.map(function (u) { return u.market; }).join(", ")) : null,
+          h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
+          props.selected && shown && props.selected !== shown
+            ? h("span", { className: "hd-chip hd-tone-info" }, "loading " + props.selected + ELLIPSIS) : null,
+          h(Badge, { kind: "api", title: prov.source }, "PUBLIC API \u00b7 websocket + info"))) : null,
       m ? null : h("div", { className: "hd-pad hd-dim" }, "waiting for the first snapshot"));
   }
 

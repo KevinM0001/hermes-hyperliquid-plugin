@@ -364,7 +364,12 @@
 .hd-tile-value { flex-wrap: nowrap; height: 27px; min-height: 27px; font-variant-numeric: tabular-nums; }
 .hd-tile-sub { height: 47px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .hd-stat-value, .hd-num { font-variant-numeric: tabular-nums; }
-.hd-prov { min-height: 53px; }
+.hd-prov { flex-wrap: nowrap; min-height: 0; height: 30px; padding: 0 14px; overflow: hidden; }
+.hd-prov-1 { height: 32px; padding-top: 2px; }
+.hd-prov-2 { border-top: none; height: 30px; padding-bottom: 2px; }
+.hd-prov-item { flex: 0 1 auto; min-width: 0; }
+.hd-prov-grow { flex: 1 1 auto; }
+.hd-prov .hd-badge, .hd-prov .hd-chip { flex: none; }
 .hd-why-none { display: block; }
 .hd-why-static { display: inline-flex; align-items: center; font: 600 10.5px/1 var(--hd-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--hd-muted); padding: 3px 7px; border-radius: 999px; background: var(--hd-track); }
 .hd-tile-sub { font-size: 11.5px; color: var(--hd-muted); line-height: 1.35; }
