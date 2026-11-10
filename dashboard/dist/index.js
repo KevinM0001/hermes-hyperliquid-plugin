@@ -20602,14 +20602,16 @@
         "the push is losing force), taker notional per hour, and the top wallet's share of the hour's aggressive flow. The verdict is his own " +
         "rule: MIDDLE between 35 and 65 %, LOW or HIGH outside it, FADING or BUILDING by the wave. Descriptions, not signals. Every window says " +
         "how many minutes it covers; the ranges use closed venue candles only; a part the plugin withholds shows its reason. The selected " +
-        "market is shown in full; the others are one line each, and a click on one switches the tab to it."),
+        "market is shown; the others are rolled up behind the fold below it, one line each, and a click on one switches the tab to it."),
       badges: h(Prov, { mode: r.mode, source: g(r, "market", "provenance", "source"), what: "trades + candles" })
     },
-    h("div", { className: "hd-wrows" }, names.map(function (n) {
-      return n === chosen
-        ? h(WatchRow, { key: n, name: n, w: r.deck[n].watch, selected: true, onSelect: function () { props.onMarket(n); } })
-        : h(WatchMini, { key: n, name: n, w: r.deck[n].watch, onSelect: function () { props.onMarket(n); } });
-    })),
+    // The selected market alone; the others rolled up behind a fold, closed by default (Kevin, Nov 10).
+    h("div", { className: "hd-wrows" },
+      names.indexOf(chosen) >= 0 ? h(WatchRow, { key: chosen, name: chosen, w: r.deck[chosen].watch, selected: true, onSelect: function () { props.onMarket(chosen); } }) : null,
+      names.filter(function (n) { return n !== chosen; }).length ? h(Why, { className: "hd-wfold", label: "other markets: " + names.filter(function (n) { return n !== chosen; }).length },
+        h("div", { className: "hd-wrows" }, names.filter(function (n) { return n !== chosen; }).map(function (n) {
+          return h(WatchMini, { key: n, name: n, w: r.deck[n].watch, onSelect: function () { props.onMarket(n); } });
+        }))) : null),
     h("div", { className: "hd-note" }, "Not a forecast: descriptions by Kevin's own rule, from the plugin's counted trades and the venue's closed candles."));
   }
 

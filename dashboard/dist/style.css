@@ -94,6 +94,10 @@
 .hd-wrow-on { border-left-color: var(--hd-bid); }
 .hd-whead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
 .hd-wrow-mini { display: flex; align-items: baseline; gap: 12px; padding: 6px 12px; height: 32px; overflow: hidden; }
+.hd-wfold { margin-top: 2px; }
+.hd-why.hd-wfold > summary::before { content: "+"; }
+.hd-wfold[open] > summary::before { content: "\2212"; }
+.hd-wfold > .hd-why-body { max-width: none; margin-top: 6px; }
 .hd-wmini-why { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .hd-wsym { font-weight: 700; font-size: 13.5px; color: var(--hd-text); }
 .hd-wpx { color: var(--hd-text-2); }
