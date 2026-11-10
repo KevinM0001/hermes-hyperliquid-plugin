@@ -926,6 +926,14 @@
     const m = props.m;
     const node = props.node || null;
     const nodeOn = !!(node && node.available !== false);
+    // Why a layer can't be drawn right now: the node view withheld (a lapsed family) says so in the toggle's title.
+    const ovWhy = function (k) {
+      if (!nodeOn) return "needs node mode";
+      const part = k === "stops" ? (node.stops && node.stops.available === false ? node.stops : (node.stops && node.stops.map)) : (k === "depth" ? node.thinning : node.flow_map);
+      if (!part) return "not in this snapshot";
+      if (part.available === false) return "withheld: " + (part.reason || "no reason given");
+      return null;
+    };
     const chart = g(m, "chart") || {};
     const boxRef = useRef(null);
     const api = useRef(null);
@@ -1166,8 +1174,9 @@
         h("div", { className: "hd-toggle hd-ovbar", role: "group", "aria-label": "Liquidity overlay" },
           [["stops", "Stop clusters"], ["depth", "Resting depth"], ["flow", "Taker flow"]].map(function (x) {
             const flowOff = x[0] === "flow" && iv !== "15m";
-            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !flowOff && "hd-btn-on"), disabled: !nodeOn || flowOff,
-              title: !nodeOn ? "needs node mode" : (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node (lower bounds where sizes are unknown)"
+            const why = ovWhy(x[0]);
+            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !flowOff && !why && "hd-btn-on"), disabled: !!why || flowOff,
+              title: why ? why : (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node (lower bounds where sizes are unknown)"
                 : x[0] === "depth" ? "resting depth per 0.5% band, from the node's full book"
                 : (flowOff ? "net taker flow per 15-minute bucket from the node's fills: on the 15m interval only" : "net taker flow per 15-minute bucket from the node's fills (the order flow map), under the candles")),
               "aria-pressed": ov[x[0]] ? "true" : "false", onClick: function () { setOv(Object.assign({}, ov, { [x[0]]: !ov[x[0]] })); } }, x[1]);
@@ -1983,7 +1992,12 @@
         isNum(o.absorbed_sz) || isNum(o.pulled_sz) ? h(Fragment, null, " \u00b7 absorbed ", zsz(o.absorbed_sz), ", pulled ", zsz(o.pulled_sz)) : null) });
     });
     if (verdict) lines.push({ k: "watch", el: h(Fragment, null, h("span", { className: "hd-chip hd-tone-" + (WATCH_TONE[verdict.tone] || "dim") }, verdict.label), " " + verdict.text) });
-    if (!lines.length) return null;
+    // With the node families lapsed, the card says so in one line rather than disappearing (the screen keeps its shape).
+    if (!lines.length) {
+      const why = (fm && fm.available === false && fm.reason) || (st && st.available === false && st.reason) || (v.families && v.families.book && v.families.book.reason) || null;
+      if (!why) return null;
+      lines.push({ k: "node feed", el: h("span", { className: "hd-dim" }, "nothing to show right now: " + why) });
+    }
     return h(Panel, {
       id: "node-brief", className: "hd-p-brief", title: "What the node sees \u00b7 " + name, label: "What the node sees",
       why: h("p", null, "Sentences the plugin writes from the node's own order-level data: the order flow map's readings over the last two hours " +
