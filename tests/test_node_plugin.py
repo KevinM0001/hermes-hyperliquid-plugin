@@ -285,15 +285,18 @@ def test_the_tab_withholds_node_values_once_their_freshness_lapses(harness):
     assert fam["book"]["state"] == "LIVE" and fam["book"]["delay_ms"] < 1_000 and fam["book"]["delayed_after_ms"] == 2_000
     payload["served"] = dict(payload["served"], latest=True, age_s=0.0)   # as served the moment it was built
     assert _tab_validity(payload, 100)["ok"] is True
-    late = _tab_validity(payload, 2_100)
-    assert late["ok"] is False and "node book was LIVE when the snapshot was built" in late["reason"]
-    assert "delayed above 2 s" in late["reason"]
+    # Within the screen's allowance (30 s, Kevin, Nov 10) the snapshot stays current whatever the 2 s delay bound
+    # says: a verdict within seconds was the page's refresh cadence, not a lag. Past it, the tab's own gate re-judges.
+    assert _tab_validity(payload, 2_100)["ok"] is True
+    late = _tab_validity(payload, 32_100)
+    assert late["ok"] is False and "shown as current" in late["reason"]
     now = c.family_status(XY, "book", rx + 2_100, (rx + 2_100) * 10 ** 6)
     assert now["delay_ms"] <= fam["book"]["delay_ms"] + 2_100                # the tab's bound covers the client
     no_delay = json.loads(json.dumps(payload))                            # review 6, B1: LIVE without its delay
     no_delay["market"]["node"]["live"]["families"]["book"].pop("delay_ms")
-    gone = _tab_validity(no_delay, 100)
-    assert gone["ok"] is False and "delay or limit isn't in the snapshot" in gone["reason"]
+    assert _tab_validity(no_delay, 100)["ok"] is True                        # within the allowance: shown as served
+    gone = _tab_validity(no_delay, 32_100)
+    assert gone["ok"] is False and "shown as current" in gone["reason"]
     for state in ("REPLAY", "BEHIND"):
         other = json.loads(json.dumps(payload))
         for f in other["market"]["node"]["live"]["families"].values():
@@ -399,8 +402,9 @@ def test_latest_reads_age_on_the_monotonic_clock_not_the_wall_clock(surfaces, mo
     assert book["ladder"]["available"] is False
     tab = plugin.http.get("/api/plugins/hyperliquid-desk/snapshot", params={"market": XY}).json()
     assert tab["ok"] and abs(tab["served"]["age_s"] - 2.5) < 1e-6
-    gate = _tab_validity(tab, 0)
-    assert gate["ok"] is False and "node book was LIVE" in gate["reason"]
+    assert _tab_validity(tab, 0)["ok"] is True                   # 2.5 s: within the screen's allowance (Kevin, Nov 10)
+    gate = _tab_validity(tab, 30_000)                            # 32.5 s on the same monotonic basis: not current
+    assert gate["ok"] is False and "shown as current" in gate["reason"]
     # a monotonic stamp from another clock (ahead of now): the age can't be established, so no latest answer
     refused = _latest(plugin, monkeypatch, "node_book", XY, wall_at, now - 1)
     assert refused["ok"] is False and "can't be established" in refused["error"]

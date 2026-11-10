@@ -40,18 +40,26 @@ def _payload(age_s=0.3, fast_progress=0.4, trades_source=0.8, latest=True):
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the tab's pure function")
 def test_snapshot_delayed_in_delivery_is_withheld_on_arrival():
+    """Since Nov 10 (Kevin) the tab's gate has a 30 s screen allowance: a snapshot younger than that on arrival or
+    on screen is shown as current whatever its fields' short limits say (a verdict within seconds was the refresh
+    cadence, not a lag); past it the gate re-judges as before. Historical answers and unknown request times never
+    count as current."""
     out = _snapshot_validity({
         "prompt": [_payload(), 1000.0, 1050.0],
         "held_12_8s": [_payload(), 1000.0, 13842.0],                 # Codex's run: 12.842 s old when displayed
+        "held_32s": [_payload(), 1000.0, 33000.0],
         "fast_book_lapses_on_screen": [_payload(fast_progress=2.6), 1000.0, 1200.0],
+        "fast_book_lapses_past_allowance": [_payload(fast_progress=2.6), 1000.0, 32000.0],
         "source_lapses": [_payload(trades_source=34.0), 1000.0, 2500.0],
         "historical": [_payload(latest=False), 1000.0, 1050.0],
         "no_request_time": [_payload(), None, 1050.0],
     })
     assert out["prompt"]["ok"] is True
-    assert out["held_12_8s"]["ok"] is False and "limit 5 s" in out["held_12_8s"]["reason"]
-    assert out["fast_book_lapses_on_screen"]["ok"] is False and "BTC book_fast" in out["fast_book_lapses_on_screen"]["reason"]
-    assert out["source_lapses"]["ok"] is False and "source time" in out["source_lapses"]["reason"]
+    assert out["held_12_8s"]["ok"] is True                                       # within the allowance
+    assert out["held_32s"]["ok"] is False and "limit 5 s" in out["held_32s"]["reason"]
+    assert out["fast_book_lapses_on_screen"]["ok"] is True                       # within the allowance
+    assert out["fast_book_lapses_past_allowance"]["ok"] is False
+    assert out["source_lapses"]["ok"] is True                                    # within the allowance
     assert out["historical"]["ok"] is False and out["no_request_time"]["ok"] is False
 
 

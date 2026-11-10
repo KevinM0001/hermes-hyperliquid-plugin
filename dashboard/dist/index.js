@@ -17048,7 +17048,7 @@
   const PLUGIN = "hyperliquid-desk";
   const API = "/api/plugins/" + PLUGIN;
   const POLL_MS = 1000;
-  const LATEST_MAX_S = 5;  // a latest snapshot older than this is no longer current (the backend's LATEST_MAX_AGE_S)
+  const LATEST_MAX_S = 30;  // the screen's allowance (Kevin, Nov 10): a snapshot older than this on screen is no longer current
   const WALLET_WINDOWS = ["1m", "5m", "15m"];
   const MINUS = "\u2212";
   const ELLIPSIS = "\u2026";
@@ -17430,7 +17430,7 @@
     const out = [];
     const resp = props.resp;
     const noSnap = props.noSnap;
-    const col = noSnap ? g(noSnap, "runtime", "collector") : g(resp, "collector");
+    const col = noSnap ? g(noSnap, "runtime", "collector") : (g(props.gap, "runtime", "collector") || g(resp, "collector"));
     const state = col && col.state;
     if (noSnap) {
       out.push(h("div", { key: "nosnap", className: "hd-banner hd-banner-bad", role: "alert" },
@@ -17481,19 +17481,8 @@
 
   // A context value served marked unverified (activeAssetCtx carries no source timestamp): the mark and the
   // receipt age go under it; the reason is on hover. Never shown as fresh.
-  function unverifiedNote(fields) {
-    for (let i = 0; i < fields.length; i++) {
-      const f = fields[i];
-      if (f && typeof f === "object" && f.value !== null && f.value !== undefined && f.status === "unverified") {
-        // No badge and no word (Kevin, Nov 10): the sub line shows the receipt age; the status and its reason stay in
-        // the tooltip and in the label's dot colour.
-        return h("span", { className: "hd-unv", title: "unverified: " + (f.reason || "no source timestamp") },
-          isNum(f.received_age_s) ? "changed " + secs(f.received_age_s) + " ago" : "no source timestamp");
-      }
-    }
-    return null;
-  }
-
+  // The context values' sub line carries no receipt age (Kevin, Nov 10: noise to a user); an unverified status
+  // stays on the label's dot and in the card's reasons when a value is withheld.
   function HeaderStats(props) {
     const m = props.m;
     const ctx = g(m, "context") || {};
@@ -17508,22 +17497,22 @@
       h(Stat, {
         label: "Mark / oracle", f: fr.ctx,
         value: h(Fragment, null, h(V, { m: ctx.mark, fmt: px, compact: true }), " / ", h(V, { m: ctx.oracle, fmt: px, compact: true })),
-        sub: shared ? null : unverifiedNote([ctx.mark, ctx.oracle]) || firstReason([ctx.mark, ctx.oracle]) || (valueOf(ctx.prev_day_px) !== null ? "prev day px " + px(ctx.prev_day_px.value) : "prev day px: " + reasonOf(ctx.prev_day_px))
+        sub: shared ? null : firstReason([ctx.mark, ctx.oracle]) || (valueOf(ctx.prev_day_px) !== null ? "prev day px " + px(ctx.prev_day_px.value) : "prev day px: " + reasonOf(ctx.prev_day_px))
       }),
       h(Stat, {
         label: "Funding, 1h", f: fr.ctx,
         value: h(V, { m: ctx.funding_pct_per_hour, fmt: pctSigned6, compact: true, title: unitsNote }),
-        sub: shared ? null : unverifiedNote([ctx.funding_pct_per_hour]) || firstReason([ctx.funding_pct_per_hour]) || ("per 1 hour \u00b7 fraction " + (valueOf(ctx.funding) !== null ? String(ctx.funding.value) : "unavailable"))
+        sub: shared ? null : firstReason([ctx.funding_pct_per_hour]) || ("per 1 hour \u00b7 fraction " + (valueOf(ctx.funding) !== null ? String(ctx.funding.value) : "unavailable"))
       }),
       h(Stat, {
         label: "Open interest", f: fr.ctx,
         value: h(V, { m: ctx.open_interest_usd, fmt: usd, compact: true, title: unitsNote }),
-        sub: shared ? null : unverifiedNote([ctx.open_interest_usd]) || firstReason([ctx.open_interest_usd]) || (valueOf(ctx.open_interest) !== null ? sz(ctx.open_interest.value) + " " + (ctx.open_interest.unit || "") : "coin: " + reasonOf(ctx.open_interest))
+        sub: shared ? null : firstReason([ctx.open_interest_usd]) || (valueOf(ctx.open_interest) !== null ? sz(ctx.open_interest.value) + " " + (ctx.open_interest.unit || "") : "coin: " + reasonOf(ctx.open_interest))
       }),
       h(Stat, {
         label: "Day volume", f: fr.ctx,
         value: h(V, { m: ctx.day_notional_volume, fmt: usd, compact: true, title: unitsNote }),
-        sub: shared ? null : unverifiedNote([ctx.day_notional_volume]) || firstReason([ctx.day_notional_volume]) || "notional, Hyperliquid's day window"
+        sub: shared ? null : firstReason([ctx.day_notional_volume]) || "notional, Hyperliquid's day window"
       }),
       shared ? h("div", { className: "hd-stat-shared", title: shared }, "all four unavailable for one reason: " + shared) : null);
   }
@@ -17570,7 +17559,7 @@
     const markets = (r && r.markets) || [];
     const prov = g(m, "provenance") || {};
     const cov = g(prov, "coverage", "trades") || {};
-    const collector = props.noSnap ? g(props.noSnap, "runtime", "collector") : g(r, "collector");
+    const collector = props.noSnap ? g(props.noSnap, "runtime", "collector") : (g(props.gap, "runtime", "collector") || g(r, "collector"));
     const unsupported = (r && r.unsupported_markets) || [];
     const shown = m ? m.market : null;
     return h("header", { className: "hd-card hd-header" },
@@ -20719,6 +20708,11 @@
       return { ok: false, reason: "the snapshot's age when served or the time it was requested is unknown, so it isn't shown as current" };
     }
     const age = served.age_s + Math.max(0, nowPerf - requestedPerf) / 1000;
+    // The screen's allowance (Kevin, Nov 10; the same 30 s as ageShown's SCREEN_LAG_S): a snapshot that has been on
+    // screen for less than this is shown as current whatever its fields' short limits say, because the page refreshes
+    // about once a second and a verdict within seconds was the refresh cadence, not a lag.
+    const SCREEN_ALLOWANCE_S = 30;
+    if (age <= SCREEN_ALLOWANCE_S) return { ok: true, age: age };
     if (age > latestMaxS) {
       return { ok: false, age: age, reason: "the latest snapshot is now about " + age.toFixed(1) + " s old (limit " + latestMaxS +
         " s), counting the time since the tab asked for it, so its values aren't shown as current" };
@@ -21410,6 +21404,7 @@
     const [market, setMarket] = useState(null);
     const [resp, setResp] = useState(null);
     const [noSnap, setNoSnap] = useState(null);
+    const [gap, setGap] = useState(null);      // the route's "no current snapshot" answer while a snapshot stays on screen
     const [pollErr, setPollErr] = useState(null);
     const [lastOkAt, setLastOkAt] = useState(null);
     const [hidden, setHidden] = useState(typeof document !== "undefined" && document.hidden);
@@ -21450,14 +21445,22 @@
           shown.current = { data: data, requestedPerf: requestedPerf };
           setResp(view);
           setNoSnap(null);
+          setGap(null);
           setPollErr(null);
           setLastOkAt(Date.now());
           if (marketRef.current === null && name) {
             marketRef.current = name;
             setMarket(name);
           }
+        } else if (shown.current) {
+          // No current snapshot while one is on screen (Kevin, Nov 10): the screen freezes and keeps what it has;
+          // nothing is blanked, moved or re-labelled. The collector's live state still reaches the header through
+          // the answer's runtime, and the gap is said in the status row only once the snapshot on screen has passed
+          // the allowance (snapshotValidity), with its values re-judged then as for any lag.
+          setGap(data || { error: "empty answer from the snapshot route" });
+          setPollErr(null);
         } else {
-          // No current snapshot (collector stopped, not publishing, or not running): never keep old values on screen.
+          // Nothing shown yet (collector stopped, not publishing, or not running): the empty view with the reason.
           shown.current = null;
           setAged(null);
           setResp(null);
@@ -21589,11 +21592,11 @@
     const nodeReason = (nlive && !non && nlive.reason) || NO_NODE;
     const showReplay = !!(nstat && (nstat.replay || g(nstat, "configured", "node_replay_file") || g(m, "node", "replay")));
     return h("div", { className: "hd-root" },
-      h(Banners, { resp: resp, noSnap: noSnap, pollErr: pollErr, lastOkAt: lastOkAt, hidden: hidden }),
+      h(Banners, { resp: resp, noSnap: noSnap, gap: gap, pollErr: pollErr, lastOkAt: lastOkAt, hidden: hidden }),
       h(Header, {
-        resp: resp, noSnap: noSnap, selected: market, onMarket: chooseMarket,
+        resp: resp, noSnap: noSnap, gap: gap, selected: market, onMarket: chooseMarket,
         busy: busy, action: action, onControl: control, aged: aged,
-        pollNote: pollErr && resp ? "Last poll failed at " + localClock(pollErr.at) + " (local): " + pollErr.message +
+        pollNote: pollErr && resp && aged ? "Last poll failed at " + localClock(pollErr.at) + " (local): " + pollErr.message +
           "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null
       }),
       m ? h(Glance, { m: m, resp: resp, onOpen: openWallet }) : null,
