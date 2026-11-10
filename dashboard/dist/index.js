@@ -17655,12 +17655,11 @@
     const cardWhy = live ? null : reasonOf(card.regime);
     // The confirmed (latched) regime, and this tick's classification only when it differs from it.
     const sameNow = !!(conf && live && conf.state === live.state);
+    // One badge in the value row (the latched regime, or NOT CONFIRMED); this tick's own classification is in the
+    // sub line ("now ..."), so the row never wraps and the card keeps one height (Kevin, Nov 10: no jumping boxes).
     const regimeValue = live
-      ? h(Fragment, null,
-        conf ? h(RegimeBadge, { regime: conf.state, title: "confirmed: the latched regime (needs 2 consecutive ticks)" })
-          : h("span", { className: "hd-regime hd-regime-none", title: reasonOf(card.regime) }, "NOT CONFIRMED"),
-        sameNow ? null : h(Fragment, null, h("span", { className: "hd-tile-value-sm hd-dim" }, "now"),
-          h(RegimeBadge, { regime: live.state, unconfirmed: true, title: "now: this tick's window classifies as " + live.state + ", not confirmed" })))
+      ? (conf ? h(RegimeBadge, { regime: conf.state, title: "confirmed: the latched regime (needs 2 consecutive ticks)" + (sameNow ? "" : "; this tick classifies as " + live.state) })
+          : h("span", { className: "hd-regime hd-regime-none", title: reasonOf(card.regime) }, "NOT CONFIRMED"))
       : h(Unavailable, { reason: cardWhy });
     const regimeSub = live
       ? [conf ? "confirmed since " + (conf.since ? hms(conf.since) + "Z" : "?") + (isNum(conf.held_s) ? " (held " + heldS(conf.held_s) + ")" : "")
@@ -17730,7 +17729,9 @@
             (isNum(tw.net_aggressive_usd) ? usdSigned(tw.net_aggressive_usd) : "unavailable") : "the card's 90 s window"
         })),
       h("div", { className: "hd-ctx" }, h(HeaderStats, { m: m }),
-        whys.length ? h(Why, { label: "not fresh: " + whys.length }, whyList(true)) : null));
+        // The fold's row is always there, so the card's height doesn't change as fields go fresh and back.
+        whys.length ? h(Why, { label: "not fresh: " + whys.length }, whyList(true))
+          : h("div", { className: "hd-why hd-why-none", title: "every field on this card is fresh right now" }, h("span", { className: "hd-why-static" }, "all fresh"))));
   }
 
   // Public mode: one banner says what node mode adds and how to turn it on, in place of a note on every panel.
