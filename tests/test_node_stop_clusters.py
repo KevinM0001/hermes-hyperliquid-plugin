@@ -546,45 +546,47 @@ def test_the_replay_view_carries_the_same_map_and_the_tools_serve_it(surfaces):
     assert all(x["text"].startswith(("Sell-side triggers at", "Buy-side triggers at")) for x in ns["clusters"])
 
 
-def test_serving_time_aging_withholds_the_map_with_the_book_and_the_whole_panel_with_the_triggers():
-    # LIVE at build time on the recorded delay; the limits are passed so aging past them lapses the families
+def test_serving_time_aging_keeps_the_map_and_the_panel_labelled_when_the_families_lapse():
+    """Changed by Kevin, Nov 10: a late family labels, it doesn't withhold. LIVE at build time on the recorded delay;
+    the limits are passed so aging past them lapses the families to BEHIND. The stops panel (rows, map, clusters,
+    exclusions, census) and the thinning panel are then served as built, each carrying its family's state and an
+    "as of" note that states the block time and the delay, whichever family lapses: both, the book alone (the
+    trigger family judged by a wider limit) or the bands alone; within the limit nothing is labelled."""
+    from hl_desk.util import iso_ms
+    words = ("freshness", "as_of_note")
+    same = lambda a, b: {k: a[k] for k in a if k not in words} == {k: b[k] for k in b if k not in words}
+    note = lambda label, st: f"as of the node's {label} at {iso_ms(st['watermark_block_time_ms'])}, {st['delay_ms'] / 1000:.1f} s behind"
     c, v = _view(SP, cfg={"delayed_after_ms": 10 ** 9, "stale_after_ms": 2 * 10 ** 9})
     assert v["families"]["book"]["state"] == "LIVE" == v["families"]["triggers"]["state"]
     assert v["stops"]["map"]["available"] and v["stops"]["clusters"]
-    # within the limit: everything stays
+    assert v["stops"]["freshness"] == "LIVE" == v["thinning"]["freshness"]
+    assert v["stops"]["as_of_note"] is None and v["thinning"]["as_of_note"] is None
+    # within the limit: everything stays, unlabelled
     ok = serving.aged_view(v, 1_000)
-    assert ok["stops"]["clusters"] == v["stops"]["clusters"] and ok["stops"]["map"]["available"]
-    # both families lapse: the whole stops panel is withheld, the map, clusters and exclusions with it
+    assert ok["stops"] == v["stops"] and ok["thinning"] == v["thinning"]
+    # both families lapse: the whole panel is served as built, labelled BEHIND, the delay stated
     aged = serving.aged_view(v, 1.5 * 10 ** 9)
-    assert aged["families"]["triggers"]["state"] == "BEHIND" and aged["families"]["book"]["state"] == "BEHIND"
-    assert aged["stops"]["available"] is False and "triggers BEHIND" in aged["stops"]["reason"]
-    assert set(aged["stops"]) == {"available", "reason"}
-    assert aged["thinning"]["available"] is False
-    # the book alone lapses (the trigger family judged by a wider limit): the rows stay, the map and clusters go
+    bst, tst = aged["families"]["book"], aged["families"]["triggers"]
+    assert bst["state"] == "BEHIND" == tst["state"] and bst["delay_ms"] > 10 ** 9
+    st = aged["stops"]
+    assert same(st, v["stops"]) and st["freshness"] == "BEHIND" and st["as_of_note"] == note("waiting stops", tst)
+    assert st["map"]["available"] and st["clusters"] == v["stops"]["clusters"] and st["census"] == v["stops"]["census"]
+    assert same(aged["thinning"], v["thinning"]) and aged["thinning"]["freshness"] == "BEHIND"
+    assert aged["thinning"]["as_of_note"] == note("book", bst)
+    # the book alone lapses (the trigger family judged by a wider limit): the panel reads current and the map built
+    # on the late book stays; the thinning panel, built on the book, carries the label
     v2 = dict(v, families=dict(v["families"], triggers=dict(v["families"]["triggers"], delayed_after_ms=10 ** 12,
                                                              stale_after_ms=10 ** 13)))
     aged2 = serving.aged_view(v2, 1.5 * 10 ** 9)
     assert aged2["families"]["book"]["state"] == "BEHIND" and aged2["families"]["triggers"]["state"] == "LIVE"
-    st = aged2["stops"]
-    assert st["rows"] == v["stops"]["rows"] and st["outside"] == v["stops"]["outside"]
-    assert st["map"] == {"available": False, "reason": aged2["thinning"]["reason"]} and "book BEHIND" in st["map"]["reason"]
-    assert st["clusters"] is None and st["clusters_reason"] == st["map"]["reason"]
-    assert st["exclusions"] == v["stops"]["exclusions"]
-    cen, built = st["census"], v["stops"]["census"]
-    for k in ("excluded", "executable_orders_total", "executable_within_10pct", "executable_to_trigger_ratio"):
-        assert cen[k] is None and cen[f"{k}_reason"] == st["map"]["reason"], k          # built on the book
-    for k in ("within_10pct", "outside", "unsized_within_10pct", "bands_view"):
-        assert cen[k] is None and "bands BEHIND" in cen[f"{k}_reason"], k                # read from the bands view
-    assert cen["triggers_total"] == built["triggers_total"] and cen["snapshot_totals"] == built["snapshot_totals"]
-    # the bands family alone lapses: the map stays, only the census counts read from the bands view go
+    assert aged2["stops"] == v["stops"] and aged2["thinning"]["freshness"] == "BEHIND"
+    assert aged2["thinning"]["as_of_note"] == note("book", aged2["families"]["book"])
+    # the bands family alone lapses: the census counts read from the bands view stay, nothing is labelled
     v3 = dict(v, families=dict(v["families"], **{f: dict(v["families"][f], delayed_after_ms=10 ** 12, stale_after_ms=10 ** 13)
                                                  for f in ("book", "triggers")}))
     aged3 = serving.aged_view(v3, 1.5 * 10 ** 9)
     assert aged3["families"]["bands"]["state"] == "BEHIND" and aged3["families"]["book"]["state"] == "LIVE"
-    st3 = aged3["stops"]
-    assert st3["map"] == v["stops"]["map"] and st3["clusters"] == v["stops"]["clusters"]
-    assert st3["census"]["within_10pct"] is None and "bands BEHIND" in st3["census"]["within_10pct_reason"]
-    assert st3["census"]["executable_orders_total"] == built["executable_orders_total"]
+    assert aged3["stops"] == v["stops"] and aged3["thinning"] == v["thinning"]
 
 
 def test_recorded_window_census_reads_the_engines_bands_view_the_book_and_the_snapshot_totals():

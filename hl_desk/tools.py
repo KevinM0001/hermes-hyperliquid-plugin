@@ -643,11 +643,15 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
     return {"tool": "node_status", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
             **_served(snap), "source": source, "node": snap.get("node_status"), "markets": markets,
             "states": {"LIVE": "the node feed's delay (5 s average of the latest watermark's age) is within its limit",
-                       "BEHIND": "delayed: the node feed's 5 s average delay is above the delayed limit",
-                       "STALE": "the node feed's 5 s average delay is above the stale limit (heartbeats don't count)",
-                       "UNKNOWN": "clock skew: ages can't be bounded",
-                       "INVALID": "not recovered since a gap, new session or incomplete snapshot",
-                       "REPLAY": "a recording, never current"}}
+                       "BEHIND": "delayed: the node feed's 5 s average delay is above the delayed limit; the data is "
+                                 "served with this label and its delay, as of its block time, never as current",
+                       "STALE": "the node feed's 5 s average delay is above the stale limit (heartbeats don't count); "
+                                "the data is served with this label and its delay, as of its block time, never as current",
+                       "UNKNOWN": "clock skew: ages can't be bounded; the data is withheld",
+                       "INVALID": "not recovered since a gap, new session or incomplete snapshot; the data is withheld",
+                       "REPLAY": "a recording, never current"},
+            "rule": ("a late family labels, it doesn't withhold (Kevin, Nov 10): BEHIND and STALE data is served with "
+                     "its state, reason and delay_ms; INVALID, UNKNOWN and no data withhold")}
 
 
 def node_book(snap: dict, args: dict, rt=None) -> dict:

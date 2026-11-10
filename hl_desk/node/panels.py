@@ -19,8 +19,41 @@ from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
 from .flow_map import FlowMapState, build as build_flow_map
 from .triggers import CENSUS_EXCLUSIONS, category, census
-from ..util import median
 from .proto import dec, fmt, num
+from ..util import iso_ms, median
+
+# The family states that withhold what is built on the family (Kevin, Nov 10): INVALID and UNKNOWN, besides having
+# no data at all. BEHIND and STALE label: their panels are served with the state, the reason and the delay. Until
+# Nov 10 the hl-node ran 73 s behind the chain for an hour and every node panel went dark; the stop clusters, resting
+# depth and taker flow are worth reading late, said late.
+WITHHOLD = ("INVALID", "UNKNOWN")
+LATE = ("BEHIND", "STALE")
+
+
+def usable(st: dict | None) -> bool:
+    """Whether what is built on a family is served: any state but INVALID or UNKNOWN (a missing status never is)."""
+    return isinstance(st, dict) and st.get("state") not in WITHHOLD
+
+
+def as_of_note(label: str, st: dict | None) -> str | None:
+    """The caveat of a block built on a family that is BEHIND or STALE, so it never reads as the present:
+    "as of the node's book at 2026-11-10T15:35:12.345Z, 73.4 s behind"; None while the family is current (LIVE or
+    REPLAY). The time is the family's last watermark's block time, the delay the family's delay_ms (at serving time,
+    advanced by the served age); a family whose delay isn't known says its state and reason instead."""
+    if not isinstance(st, dict) or st.get("state") not in LATE:
+        return None
+    t, d = st.get("watermark_block_time_ms"), st.get("delay_ms")
+    when = f" at {iso_ms(t)}" if isinstance(t, int) and not isinstance(t, bool) else ""
+    behind = (f", {d / 1000:.1f} s behind" if isinstance(d, (int, float)) and not isinstance(d, bool)
+              else f", {st['state']}: {st.get('reason')}")
+    gone = "; the feed is disconnected" if str(st.get("reason") or "").startswith("disconnected:") else ""
+    return f"as of the node's {label}{when}{behind}{gone}"
+
+
+def late_fields(label: str, st: dict) -> dict:
+    """The freshness fields a served block carries beside its numbers: the family's state and the 'as of' note."""
+    return {"freshness": st.get("state"), "as_of_note": as_of_note(label, st)}
+
 
 ZERO = Decimal(0)
 LADDER_LEVELS = 20
@@ -294,7 +327,7 @@ def book_validity(mf, fam_status: dict) -> tuple[bool, str | None]:
         c = mf.crossed
         return False, (f"book crossed since seq {c['since_seq']} (best bid {fmt(c['best_bid'])} at or above best ask "
                        f"{fmt(c['best_ask'])}); invalid until a fresh snapshot clears it")
-    if st["state"] not in ("LIVE", "REPLAY"):
+    if not usable(st):                 # UNKNOWN (clock skew) withholds; BEHIND and STALE serve the book with their state
         return False, f"book {st['state']}: {st.get('reason')}"
     return True, None
 
@@ -304,7 +337,7 @@ def ladder(mf, client, trig_status: dict | None = None, levels: int = LADDER_LEV
     # The stops column comes from the trigger family: while it isn't usable (invalid, stale, behind or of unknown
     # age), every row says so with the reason, never 0 (which would read as no waiting interest).
     tst = trig_status or {"state": "INVALID", "reason": "trigger state not given"}
-    stops_ok = mf.triggers is not None and tst["state"] in ("LIVE", "REPLAY")
+    stops_ok = mf.triggers is not None and usable(tst)     # a late trigger family fills the column, labelled (Kevin, Nov 10)
     stops_na = None if stops_ok else {"available": False, "reason": f"triggers {tst['state']}: {tst.get('reason')}"}
     now = mf.block_time_ms
     since = (now or 0) - CHANGE_WINDOW_MS
@@ -886,15 +919,18 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
         "since_seq": mf.crossed["since_seq"], "best_bid": fmt(mf.crossed["best_bid"]),
         "best_ask": fmt(mf.crossed["best_ask"]), "since_block_time_ms": mf.crossed["since_block_time_ms"]},
         "book_time_ms": mf.block_time_ms}
-    base["ladder"] = ladder(mf, client, fam["triggers"]) if ok else {"available": False, "reason": why}
-    base["walls"] = walls(mf, ps) if ok else {"available": False, "reason": why}
+    # Each block built on a family carries the family's state and, when it is BEHIND or STALE, the "as of" note:
+    # served late with its delay stated, never as the present, and never withheld for lateness (Kevin, Nov 10).
+    late = late_fields("book", fam["book"])
+    base["ladder"] = (ladder(mf, client, fam["triggers"]) | late) if ok else {"available": False, "reason": why}
+    base["walls"] = (walls(mf, ps) | late) if ok else {"available": False, "reason": why}
     depth = depth_bands(mf.book, mf.book.mid()) if ok and mf.book.mid() is not None else None
-    base["thinning"] = (thinning(mf, depth) | {"book_time_ms": mf.block_time_ms, "freshness": fam["book"]["state"]}) if ok else {
+    base["thinning"] = (thinning(mf, depth) | {"book_time_ms": mf.block_time_ms, "freshness": fam["book"]["state"]} | late) if ok else {
         "available": False, "reason": why, "note": THIN_NOTE}
     base["history"] = history(ps, client, market) if mf.book is not None else {"available": False, "reason": why}
     tst = fam["triggers"]
-    if mf.triggers is not None and tst["state"] in ("LIVE", "REPLAY"):
-        base["stops"] = stop_bands(mf, client) | stop_map(mf, depth, None if depth is not None else (
+    if mf.triggers is not None and usable(tst):
+        base["stops"] = late_fields("waiting stops", tst) | stop_bands(mf, client) | stop_map(mf, depth, None if depth is not None else (
             why or "no mid: one side of the book is empty"))
     else:
         base["stops"] = {"available": False, "reason": f"triggers {tst['state']}: {tst.get('reason')}"}
@@ -902,9 +938,9 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
     base["bursts"] = ({"available": True, **_jsonable(rule.status())} if rule is not None else
                       {"available": False, "reason": "node-mode bursts aren't attached to this source"})
     fst = fam["flow"]
-    if fst["state"] in ("LIVE", "REPLAY"):
-        base["tape"] = {"rows": tape(mf), "coverage": mf.flow.coverage()}
-        base["flow_map"] = flow_map(mf, base["provenance"], fst)
+    if usable(fst):
+        base["tape"] = {"rows": tape(mf), "coverage": mf.flow.coverage()} | late_fields("fills", fst)
+        base["flow_map"] = flow_map(mf, base["provenance"], fst) | {"as_of_note": as_of_note("fills", fst)}
     else:
         base["tape"] = {"available": False, "reason": f"node fills {fst['state']}: {fst.get('reason')}",
                         "coverage": mf.flow.coverage()}
@@ -921,7 +957,7 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
 
 def _flow_ok(client, market, now_wall_ms=None, now_mono_ns=None):
     st = client.family_status(market, "flow", now_wall_ms, now_mono_ns)
-    return st["state"] in ("LIVE", "REPLAY"), st
+    return usable(st), st
 
 
 def flow_meta(client, market: str, now_wall_ms=None, now_mono_ns=None) -> dict:

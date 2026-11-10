@@ -88,6 +88,27 @@ def mutate(msg: dict, **changes) -> dict:
     return out
 
 
+# Changed by Kevin, Nov 10: a late family labels, it doesn't withhold. The invariants pin that a family BEHIND or
+# STALE still serves the ladder, walls, thinning, stops and tape, each carrying the family's state and an "as of"
+# note, and that only INVALID and UNKNOWN (and no data) withhold.
+WITHHOLD = ("INVALID", "UNKNOWN")
+
+
+def check_late(block: dict, st: dict, label: str) -> None:
+    """A served block names its family's state; a late family's block says "as of the node's <label> at <block
+    time>, <delay> behind" (Kevin, Nov 10), and a current one carries no such note."""
+    assert block.get("freshness") == st["state"], (label, block.get("freshness"), st)
+    note = block.get("as_of_note")
+    if st["state"] in ("BEHIND", "STALE"):
+        assert note and note.startswith(f"as of the node's {label}"), (label, note, st)
+        if isinstance(st.get("delay_ms"), (int, float)):
+            assert f"{st['delay_ms'] / 1000:.1f} s behind" in note and " at " in note, (note, st)
+        else:
+            assert st["state"] in note and (st.get("reason") or "") in note, (note, st)
+    else:
+        assert note is None, (label, note, st)
+
+
 def check_view(view: dict, client_obj, market: str) -> None:
     """Invariants every intermediate node view (and so every node tool result) must hold."""
     assert view["provenance"]["mode"] == client_obj.mode
@@ -101,10 +122,13 @@ def check_view(view: dict, client_obj, market: str) -> None:
             assert st.get("reason"), (f, st)
     if "book" not in view:                     # no data for this market from this source yet
         return
-    if fam["book"]["state"] == "INVALID":
+    if fam["book"]["state"] in WITHHOLD:       # INVALID or UNKNOWN withholds; BEHIND and STALE serve (Kevin, Nov 10)
         assert view["book"]["valid"] is False
         for p in ("ladder", "walls", "thinning"):
             assert view[p].get("available") is False and view[p].get("reason"), p
+    elif view["book"]["valid"]:
+        for p in ("ladder", "walls", "thinning"):
+            check_late(view[p], fam["book"], "book")
     if view["book"]["valid"]:
         lad = view["ladder"]
         if lad["bids"] and lad["asks"]:
@@ -112,10 +136,15 @@ def check_view(view: dict, client_obj, market: str) -> None:
         for r in lad["bids"] + lad["asks"]:
             assert r["orders"] > 0 and r["total_sz"] > 0
             assert r["largest_order_sz"] <= r["total_sz"]
-    if fam["triggers"]["state"] in ("INVALID", "STALE", "BEHIND", "UNKNOWN"):
+    if fam["triggers"]["state"] in WITHHOLD:
         assert view["stops"].get("available") is False
-    if fam["flow"]["state"] not in ("LIVE", "REPLAY"):
+    elif view["stops"].get("available") is not False:
+        check_late(view["stops"], fam["triggers"], "waiting stops")
+    if fam["flow"]["state"] in WITHHOLD:
         assert view["tape"].get("available") is False
+    else:
+        assert view["tape"].get("available") is not False
+        check_late(view["tape"], fam["flow"], "fills")
 
 
 # --- the plugin's own outputs: snapshot, tab routes and tools, read at every intermediate step ----------------
@@ -234,9 +263,13 @@ class Surfaces:
             for fam, s in view["families"].items():          # a family that isn't usable never serves its values
                 if s["state"] == "INVALID":
                     assert s["reason"]
-            if view["families"]["book"]["state"] not in ("LIVE", "REPLAY"):
+            if view["families"]["book"]["state"] in WITHHOLD:
                 for k in ("ladder", "walls", "thinning"):
                     assert nb[k].get("available") is False and nb[k].get("reason"), k
+            elif view["families"]["book"]["state"] in ("BEHIND", "STALE"):   # served late, labelled (Kevin, Nov 10)
+                for k in ("ladder", "walls", "thinning"):
+                    assert nb[k].get("available") is not False and nb[k]["freshness"] == view["families"]["book"]["state"], k
+                    assert nb[k]["as_of_note"].startswith("as of the node's book"), k
         if slot == "live":
             alerts = json.loads(tools.run_tool("hl_alerts", {"market": market, "snapshot_id": sid}, self.rt))
             assert alerts["ok"] and strip(alerts) == strip(self._get("tool/hl_alerts", market=market, snapshot_id=sid))

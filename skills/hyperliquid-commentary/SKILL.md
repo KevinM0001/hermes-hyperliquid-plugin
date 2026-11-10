@@ -146,6 +146,7 @@ These rules come from the original order-flow study (Sep 29, 2026), where flow o
 - An opened wallet's account state isn't part of the snapshot. Give positions only when its freshness is `fresh`; never say "no positions" when positions are null. Open orders can't be confirmed as current: don't list them as the wallet's orders.
 
 ### 6.3 Node data (node_status, node_book, node_stops)
+- Late node data (BEHIND or STALE) is served with its state and may be quoted, with its delay stated in the same sentence ("as of the node's book 73 s behind the chain", from the block's `as_of_note`), never as current; a disconnected feed is said as such. Only INVALID, UNKNOWN and no data withhold (Kevin, Nov 10).
 - Name node data as node data: its source, mode (LIVE or REPLAY) and the state of each family it uses. Give the node feed's delay from `node_status`. DELAYED appears as `BEHIND` in the data. Only LIVE is current.
 - A REPLAY is a recording. Say "in the recording, at <time> on <date>". Never describe it as the market now, and never mix it with live numbers.
 - When the node book reads INVALID, say so with the reason, and quote no ladder, wall, thinning or heatmap number from it.
