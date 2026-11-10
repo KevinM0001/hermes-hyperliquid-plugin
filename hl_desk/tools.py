@@ -532,7 +532,7 @@ def hl_structure(snap: dict, args: dict, rt=None) -> dict:
 
 
 def hl_watch(snap: dict, args: dict, rt=None) -> dict:
-    """Kevin's swing-context page per market (hl_desk.watch), read from the snapshot's deck.<market>.watch: the same block
+    """the swing-context block per market (hl_desk.watch), read from the snapshot's deck.<market>.watch: the same block
     the tab shows, with each market's provenance and the status of the fields it is built on (trades, the fast book)."""
     names = [args["market"]] if args.get("market") else sorted(snap["markets"])
     markets = {}
@@ -650,7 +650,7 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
                        "UNKNOWN": "clock skew: ages can't be bounded; the data is withheld",
                        "INVALID": "not recovered since a gap, new session or incomplete snapshot; the data is withheld",
                        "REPLAY": "a recording, never current"},
-            "rule": ("a late family labels, it doesn't withhold (Kevin, Nov 10): BEHIND and STALE data is served with "
+            "rule": ("a late family labels, it doesn't withhold: BEHIND and STALE data is served with "
                      "its state, reason and delay_ms; INVALID, UNKNOWN and no data withhold")}
 
 
