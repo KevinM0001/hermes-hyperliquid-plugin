@@ -65,7 +65,7 @@ Open the dashboard (`hermes dashboard`) and choose the **Hyperliquid Desk** tab.
 
 ## Node mode (optional)
 
-With a node feed, the tab's node panels and the `node_status`, `node_book` and `node_stops` tools show the engine's own book, waiting triggers and fills (the l4-runner live feed, protocol v2). Set `node_feed` to the engine's local Unix socket, or to a relay's `wss://` URL, and start the collector. Without it, everything above works as before and the node panels say "needs node mode".
+With a node feed, the tab's node panels and the `node_status`, `node_book` and `node_stops` tools show the engine's own book, the order flow map, waiting triggers and fills (the l4-runner live feed, protocol v2). Set `node_feed` to the engine's local Unix socket, or to a relay's `wss://` URL, and start the collector. Without it, everything above works as before and the node panels say "needs node mode".
 
 - **The protocol is followed as written.**
   - State is kept per source, mode, producer session, replay session and market, and each family (book, triggers, depth, bands, node fills) has its own validity.

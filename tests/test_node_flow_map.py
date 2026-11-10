@@ -662,6 +662,8 @@ def test_through_the_plugin_snapshot_tab_and_replay_slot(surfaces):
     tab = plugin.last["tab"]["node"]
     assert tab["live"]["flow_map"] == json.loads(json.dumps(fm, default=str))
     assert "order flow map" in " ".join(tab["panels"])
+    # the node_book tool carries the same map, so the agent can quote its readings (Nov 10)
+    assert plugin.last["node_book"]["flow_map"] == json.loads(json.dumps(fm, default=str))
     rep = plugin.read(SP, end + 3_000, slot="replay")["flow_map"]
     assert rep["provenance"]["mode"] == "REPLAY" and rep["freshness"]["state"] == "REPLAY"
     assert rep["totals"]["fills"] == fm["totals"]["fills"] + 1 and rep["totals"]["open_long_usd"] == fm["totals"]["open_long_usd"] + 100_000

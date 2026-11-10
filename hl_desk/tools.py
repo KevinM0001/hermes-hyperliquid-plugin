@@ -576,8 +576,9 @@ SCHEMAS.update({
         "description": ("Node-mode order book for one market from every resting order: ladder levels with total size, order "
                         "count, 'largest order size at this level' and 'oldest resting order at this level' (separate "
                         "statistics), changes in the last 10 s labelled only from lifecycle records (absorbed, pulled, unknown), "
-                        "walls, the liquidity-thinning bands out to 10% and whether the book is crossed (then invalid). "
-                        "With provenance and freshness."),
+                        "walls, the liquidity-thinning bands out to 10%, the order flow map (eight 15-minute buckets of node fills "
+                        "split by the taker's own position effect, with its written readings) and whether the book is crossed "
+                        "(then invalid). With provenance and freshness."),
         "parameters": {"type": "object", "properties": {"market": _MARKET_PROP, "source": _NODE_SOURCE_PROP,
                                                         "snapshot_id": _SNAP_PROP}, "required": ["market"]},
     },
@@ -652,7 +653,8 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
 def node_book(snap: dict, args: dict, rt=None) -> dict:
     market, view, source = _node_view(snap, args)
     body = {"book": view.get("book"), "ladder": view.get("ladder"), "walls": view.get("walls"),
-            "thinning": view.get("thinning"), "tape": view.get("tape")}
+            "thinning": view.get("thinning"), "tape": view.get("tape"),
+            "flow_map": view.get("flow_map")}        # the order flow map with its readings (Nov 10); withheld with the tape
     if view.get("available") is False:
         body = {"available": False, "reason": view.get("reason")}
     return _node_envelope("node_book", snap, market, view, source, body)

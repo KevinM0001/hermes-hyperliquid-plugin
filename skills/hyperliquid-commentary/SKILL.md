@@ -152,6 +152,7 @@ These rules come from the original order-flow study (Sep 29, 2026), where flow o
 - Waiting stops: give a band's order count with its size, and say when one order makes up most of the band. Mention that trailing stops are left out.
 - Activity buckets count node fills only, each as a percentage of its side's taker notional. Never present them as the change in open interest, call closing flow passive, or add them to public-trade totals. If a bucket is unavailable, say why.
 - Liquidity thinning: give the sharpest drop, where it is and how far from price, and add: "What's resting right now. Orders can be added or pulled at any moment; this isn't a forecast."
+- The order flow map (`node_book.flow_map`, eight 15-minute buckets of node fills split by the taker's own position effect): quote its `readings[].text` verbatim and in order, name the window's covered minutes, and say so when a bucket isn't fully covered. The map is withheld with the tape; then say that.
 - A liquidation burst counts each liquidation once, for the liquidated trader. Say long or short only as the result states.
 
 ## 7. Glossary
