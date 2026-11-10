@@ -1032,13 +1032,9 @@
       return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", iv === x[0] && "hd-btn-on"),
         "aria-pressed": iv === x[0] ? "true" : "false", onClick: function () { setIv(x[0]); } }, x[0]);
     }));
-    const routeChip = !fromRoute ? null
-      : (!cd || cd.state === "loading") ? h("span", { className: "hd-chip hd-tone-info" }, iv + " candles \u00b7 loading from the plugin")
-      : cd.state === "error" ? h("span", { className: "hd-chip hd-tone-bad", title: cd.error }, iv + " candles \u00b7 unavailable")
-      : h(Fragment, null,
-        h("span", { className: "hd-chip hd-tone-ok", title: rd && rd.source ? rd.source : "" }, iv + " candles \u00b7 " + intf(routeCandles.length) + " from the venue"),
-        inProg ? h("span", { className: "hd-chip hd-tone-" + toneOfStatus(inProg.status), title: inProg.reason || "" },
-          "in-progress candle \u00b7 " + String(inProg.status || "?") + (isNum(inProg.received_age_s) ? " \u00b7 received " + secs(inProg.received_age_s) + " ago" : "")) : null);
+    // Only the interval buttons above the chart (Kevin, Nov 10): the candle count, the in-progress candle's status
+    // and the feeds' freshness chips are gone from the card; a failed candle load still says so in one chip.
+    const routeChip = fromRoute && cd && cd.state === "error" ? h("span", { className: "hd-chip hd-tone-bad", title: cd.error }, iv + " candles \u00b7 unavailable") : null;
     return h(Panel, {
       id: "chart", className: "hd-p-chart", title: "Price chart",
       label: "Price chart",
@@ -1054,10 +1050,7 @@
           "their volume is in the coin's units, as the venue gives it."),
         chart.candles_note ? h("p", null, "The snapshot's note: " + chart.candles_note + ".") : null),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" }),
-      status: h(Fragment, null, ivBar, routeChip,
-        h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
-        h(Fresh, { f: g(m, "freshness", "book_fast"), label: "l2Book fast" }),
-        h(Fresh, { f: g(m, "freshness", "ctx"), label: "ctx" }))
+      status: h(Fragment, null, ivBar, routeChip)
     },
     h("div", { className: "hd-chart-wrap" },
       h("div", { className: "hd-chart", ref: boxRef, role: "img", "aria-label": "Candlestick chart of " + m.market }),
