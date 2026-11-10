@@ -744,7 +744,7 @@
         }))) : null;
     // The ten levels nearest the spread on each side (Kevin, Nov 10): the ladder fits its card without an inner
     // scroll; the grouping dropdown widens the view. The venue's 20 levels per side stay in the snapshot.
-    const LADDER_SIDE_ROWS = 10;
+    const LADDER_SIDE_ROWS = 13;
     const bids = (lad.bids || []).slice(0, LADDER_SIDE_ROWS);
     const asks = (lad.asks || []).slice(0, LADDER_SIDE_ROWS);
     const boxRef = useRef(null);
@@ -4714,15 +4714,16 @@
       m && view === "desk" ? h(Fragment, null,
         h(Glance, { m: m, resp: resp, onOpen: openWallet }),
         // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
+        // A two-column grid (Kevin, Nov 10): the chart and the ladder share the first row and one height; Ask Hermes
+        // and the Flow notes sit under the chart, the public Flow panel ("who is aggressive") under the ladder.
         h("div", { className: "hd-row hd-row-m" },
-          // Ask Hermes directly under the chart (Kevin, Nov 10), then the Flow notes, in the chart's column.
-          h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(HermesPanel, { resp: resp, m: m }), h(FlowNotes, { resp: resp, m: m })),
-          h(Ladder, { m: m, nodeOn: non })),
+          h(PriceChart, { m: m }), h(Ladder, { m: m, nodeOn: non }),
+          h(HermesPanel, { resp: resp, m: m }), h(FlowPanel, { m: m }),
+          h(FlowNotes, { resp: resp, m: m })),
         h(WatchStrip, { resp: resp, onMarket: chooseMarket }),
         h(DeckHero, { resp: resp }),
-        h(SectionHead, { title: "Flow", note: "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
+        h(SectionHead, { title: "Flow", note: "the Flow Deck's regimes and alerts, and the tape" }),
         h("div", { className: "hd-row hd-row-b" },
-          h(FlowPanel, { m: m }),
           h(DeckPanel, { resp: resp })),
         h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })),
         h(SectionHead, { title: "Wallets", note: "the public addresses behind the volume" }),
