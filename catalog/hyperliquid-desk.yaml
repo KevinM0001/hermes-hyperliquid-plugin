@@ -6,7 +6,7 @@ name: hyperliquid-desk
 repo: https://github.com/KevinM0001/hermes-hyperliquid-plugin
 sha: "FILL_IN_THE_ACCEPTED_40_CHARACTER_COMMIT_SHA"
 subdir: ""
-description: Live Hyperliquid dashboard tab, Flow Deck alerts, wallets and market tools with a commentary skill, all on Hyperliquid's public data, with optional node panels from an engine feed. Read-only; no orders, no trading keys.
+description: Live Hyperliquid dashboard tab, Flow Deck alerts, wallets and market tools with a commentary skill on Hyperliquid's public data, plus node panels from the plugin author's hosted relay (on by default, can be turned off) or your own engine feed. Read-only; no orders, no trading keys.
 maintainer: KevinM0001
 tier: community
 category: tools
@@ -16,7 +16,8 @@ readme: true
 platforms: [linux, macos]
 title: Hyperliquid Desk
 known_issues:
-  - Node panels need a node feed (the engine's local socket or a relay) set in node_feed; without one they show "needs node mode" and public mode works as before.
+  - Node panels use the plugin author's hosted relay by default (node_feed "hosted"), a third-party network call; its address is set in a release once the relay is live, and until then the node panels say the hosted relay isn't set and public mode works as before. Set node_feed to "off" to turn node data off, or to your own engine socket or relay.
+  - When the hosted relay is down, full or switched off, the node panels say which and public mode keeps working; a replay is never used in its place.
 capabilities:
   provides_tools: [hl_market, hl_flow, hl_context, hl_status, hl_alerts, hl_wallets, hl_candles, hl_structure, hl_watch, node_status, node_book, node_stops]
   provides_hooks: []

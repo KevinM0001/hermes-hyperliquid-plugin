@@ -233,10 +233,57 @@ class Runtime:
             return self._local_replay(req.get("cmd"), req.get("arg"))
         if op == "candles":
             return {"ok": True, "result": self._local_candles(req.get("market"), req.get("interval"), req.get("limit"))}
+        if op in ("node_panel", "node_lease", "node_release"):
+            # On the collector's loop: the manager is called directly (never through node.call, which waits on this loop).
+            node = self.collector.node if self.collector is not None else None
+            if node is None:
+                return {"ok": False, "error": "the collector isn't running"}
+            if op == "node_panel":
+                node.panel_seen(req.get("market") if isinstance(req.get("market"), str) else None)
+                return {"ok": True}
+            if op == "node_lease":
+                return {"ok": True, "lease": node.lease(req.get("market"))}
+            node.release(req.get("id"))
+            return {"ok": True}
         if op in ("stop", "restart"):
             _spawn(getattr(self, op), f"{THREAD_NAME}-{op}")
             return {"ok": True, "message": f"{op} requested from another process; the owner (pid {os.getpid()}) is doing it"}
         return {"ok": False, "error": f"unknown request {op!r}"}
+
+    # --- node data on demand from a relay (handoff 1d step 7) -------------------------
+    def node_panel(self, market: str | None) -> None:
+        """A node panel is on screen with this market open (the dashboard's visible poll). Never raises."""
+        try:
+            if self._own():
+                self.collector.node.panel_seen(market)
+            else:
+                self._ask({"op": "node_panel", "market": market})
+        except Exception:
+            pass
+
+    def node_lease(self, market: str | None) -> dict | None:
+        """A tool call needs this market's node data now: None when no relay is used (a local socket serves every
+        market) or the collector isn't running. Release it with node_release once the call has answered."""
+        try:
+            if self._own():
+                node = self.collector.node
+                return node.call(lambda: node.lease(market))
+            remote = self._ask({"op": "node_lease", "market": market})
+            return remote.get("lease") if remote and remote.get("ok") else None
+        except Exception:
+            return None
+
+    def node_release(self, lease: dict | None) -> None:
+        if not lease:
+            return
+        try:
+            if self._own():
+                node = self.collector.node
+                node.call(lambda: node.release(lease.get("id")))
+            else:
+                self._ask({"op": "node_release", "id": lease.get("id")})
+        except Exception:
+            pass
 
     # --- reads -----------------------------------------------------------------
     def _adopt(self) -> None:

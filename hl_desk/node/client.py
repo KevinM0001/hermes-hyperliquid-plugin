@@ -40,6 +40,9 @@ def delay_state(delay_ms, limits: dict) -> tuple[str, str | None]:
 SKEW_WINDOW_MS = 10_000
 
 NS = 1_000_000_000
+# Families delivered only with a market's full data. A relay's executions view (profile hl-relay-2) carries the flow
+# family alone (execs and watermark lines), with `filtered` ranges for everything else.
+FULL_ONLY = ("book", "triggers", "depth", "bands")
 BOOK_FIELDS = ["oid", "side", "px", "sz", "user", "time_ms"]
 TRIG_FIELDS = ["oid", "side", "kind", "trigger_px", "sz", "position_tpsl", "user", "time_ms"]
 
@@ -103,6 +106,10 @@ class MarketFeed:
         self.block: int | None = None
         self.block_time_ms: int | None = None
         self.crossed: dict | None = None        # set when the book is seen crossed, cleared by a snapshot
+        # After a relay switch to full data that kept the flow window: the copy from the relay's snapshot repeats
+        # executions and watermarks of blocks the flow already processed. Those are applied to sequence and state,
+        # never to the flow, its bursts or its panels again (a block time running backwards would be a rejection).
+        self.flow_seen_through_block: int | None = None
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_swapped": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0,
                          "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0}
@@ -136,6 +143,10 @@ class FeedClient:
         self.counters = {"lines": 0, "retired_ignored": 0, "retired_replay_ignored": 0, "unsupported": 0,
                          "malformed": 0, "sessions": 0, "replay_sessions": 0, "unknown_market": 0,
                          "dropped": 0, "replay_unavailable": 0, "errors": 0}
+        # Relay views (profile hl-relay-2): the view each market has on this connection ("full" / "execs"), as the
+        # relay announced it in its hello or a view line, and the relay's own heartbeat (never a freshness source).
+        self.views: dict[str, str] = {}
+        self.relay: dict | None = None
         self.listeners: list = []               # callables(event: dict) for panels (bursts, alerts)
         self.burst_rule_factory = None          # (market, client) -> bursts.NodeBurstRule, for node-mode bursts
 
@@ -170,6 +181,13 @@ class FeedClient:
         for mf in self.markets.values():
             if mf.flow.bursts is not None:
                 mf.flow.bursts.unreadable(why)
+
+    def reset(self, reason: str) -> None:
+        """Forget the source's state, so the next connection starts every market from a fresh snapshot with nothing
+        resumed (node data paused while nothing used it, then wanted again: handoff 1d step 7)."""
+        self.retired, self.epoch, self.session = set(), None, None
+        self.views = {}
+        self._new_partition(reason)
 
     # --- connection --------------------------------------------------------------
     def on_connect(self, wall_ms: int) -> None:
@@ -267,11 +285,28 @@ class FeedClient:
             self.hello = obj
             self.limits = obj.get("limits") or {}
             self.labels = obj.get("labels") or {}
-            for m, info in (obj.get("markets") or {}).items():
+            announced = obj.get("markets") or {}
+            relay_views = any(isinstance(i, dict) and "view" in i for i in announced.values())
+            if relay_views:
+                # A relay's hello names each market's view on this connection. A market it no longer announces is
+                # dropped; full-data state kept from an earlier connection is invalid at once where the new view
+                # doesn't deliver it, before any watermark could refresh it (Codex review 2 of the relay, B2).
+                for m in list(self.markets):
+                    if m not in announced:
+                        self.views.pop(m, None)
+                        self._invalidate_market(self.markets[m], "view: not subscribed on this connection")
+                        self.markets[m].last_seq = None
+                        self.markets[m].expected_start = None
+            for m, info in announced.items():
                 mf = self._market(m)
                 if not isinstance(info, dict):
                     continue
                 start = info.get("start_seq")
+                if relay_views:
+                    view = info.get("view") if info.get("view") in ("full", "execs") else "full"
+                    self.views[m] = view
+                    if view == "execs":
+                        self._full_data_lost(mf, "executions only: this market isn't the open one")
                 if info.get("snapshot") == "resumed" and mf.last_seq is not None and start == mf.last_seq + 1:
                     continue        # an honoured resume continues with nothing lost
                 if mf.last_seq is not None:
@@ -307,6 +342,115 @@ class FeedClient:
         elif c == "error":
             self.counters["errors"] += 1
             self.connection = {"state": "refused", "since_wall_ms": wall_ms, "reason": str(obj.get("reason"))}
+        elif c == "filtered":
+            self._filtered(obj)
+        elif c == "view":
+            self._view(obj)
+        elif c == "relay":
+            # The relay's heartbeat: proves only that the relay and the connection are alive. It carries no epoch,
+            # block or sequence and never advances a market's freshness.
+            self.relay = {k: obj.get(k) for k in ("relay", "state", "publisher", "message") if k in obj}
+            self.relay["recv_wall_ms"] = wall_ms
+            self.relay["recv_mono_ns"] = mono_ns
+
+    # --- relay views (profile hl-relay-2) ------------------------------------------
+    def _relay_market(self, obj: dict):
+        if not self._session_ok(obj.get("epoch"), obj.get("session")):
+            return None
+        m = obj.get("market")
+        if not isinstance(m, str):
+            self.unreadable_line("a relay control without a market")
+            return None
+        return self._market(m)
+
+    def _filtered(self, obj: dict) -> None:
+        """from..through were received by the relay and not sent to this view. A number the relay never received is
+        never inside a range, so a range starting after last + 1 is a gap (filtered and lost stay apart)."""
+        mf = self._relay_market(obj)
+        if mf is None:
+            return
+        a, b = obj.get("from"), obj.get("through")
+        if not isinstance(a, int) or not isinstance(b, int) or isinstance(a, bool) or isinstance(b, bool) or b < a:
+            self.unreadable_line("a malformed filtered range")
+            return
+        self.counters["filtered"] = self.counters.get("filtered", 0) + 1
+        if mf.last_seq is None:
+            mf.last_seq, mf.run_start = b, a
+            return
+        if a > mf.last_seq + 1:
+            mf.counters["gaps"] += 1
+            self._invalidate_market(mf, f"sequence gap before a filtered range: expected {mf.last_seq + 1}, got {a}")
+            mf.run_start = a
+            mf.last_seq = b
+            return
+        if b > mf.last_seq:
+            mf.last_seq = b
+            # The filtered lines belong to families this view doesn't carry: the families it does carry (flow) are
+            # still contiguous through them, so a following watermark applies to them.
+            for f in mf.fam.values():
+                if f.valid:
+                    f.applied_through = b
+
+    def _view(self, obj: dict) -> None:
+        mf = self._relay_market(obj)
+        if mf is None:
+            return
+        view = obj.get("view")
+        old = self.views.get(mf.market)
+        self.counters["view_changes"] = self.counters.get("view_changes", 0) + 1
+        mf.note("view", old=old, new=view, start_seq=obj.get("start_seq"))
+        if view == "full":
+            self.views[mf.market] = "full"
+            nxt = obj.get("next_seq")
+            if old == "execs" and mf.last_seq is not None and isinstance(nxt, int) and mf.last_seq != nxt - 1:
+                # The relay delivers the pending boundary first, so a sequence short of next_seq - 1 is a real loss:
+                # the flow window can't carry across the switch.
+                mf.counters["gaps"] += 1
+                self._invalidate_market(mf, f"sequence gap at a switch to full data: expected {nxt}, had {mf.last_seq}")
+            self._restart_full(mf, obj.get("start_seq"), "switched to full data: restarting from a snapshot")
+        elif view == "execs":
+            self.views[mf.market] = "execs"
+            self._full_data_lost(mf, "executions only: this market isn't the open one")
+        else:
+            self.views.pop(mf.market, None)
+            self._invalidate_market(mf, "view: not subscribed")
+            mf.last_seq = mf.expected_start = mf.run_start = None
+
+    def _full_data_lost(self, mf: MarketFeed, reason: str) -> None:
+        """The full-data families stop being delivered: each becomes invalid with the reason (flow stays)."""
+        self._discard_assembly(mf, reason)
+        for fam in FULL_ONLY:
+            if mf.fam[fam].valid or mf.fam[fam].reason != reason:
+                self._family_lost(mf, fam, reason)
+        mf.depth = mf.bands = None
+        mf.buffer.clear()
+        mf.crossed = None
+
+    @staticmethod
+    def _flow_repeat(mf: MarketFeed, block) -> bool:
+        """A copy line of a block the kept flow window already processed (see MarketFeed.flow_seen_through_block)."""
+        through = mf.flow_seen_through_block
+        if through is None or not isinstance(block, int):
+            return False
+        if block <= through:
+            return True
+        mf.flow_seen_through_block = None         # the copy has caught up: the flow continues from here
+        return False
+
+    def _restart_full(self, mf: MarketFeed, start_seq, reason: str) -> None:
+        """The market's full stream restarts at start_seq (the relay's latest snapshot, or live when pending). Its
+        full-data families restart from that snapshot; the flow window carries on only if it is still valid (the copy
+        may repeat executions, counted once by tid). The position becomes start_seq - 1, never unknown, so the next
+        line is checked: a number missing after the restart is a gap."""
+        self._full_data_lost(mf, reason)
+        mf.flow_seen_through_block = mf.block if mf.fam["flow"].valid else None
+        if isinstance(start_seq, int) and not isinstance(start_seq, bool) and start_seq >= 1:
+            mf.expected_start = start_seq
+            mf.last_seq = start_seq - 1
+            mf.run_start = start_seq
+        else:
+            self._invalidate_market(mf, reason + " (no start sequence)")
+            mf.last_seq = mf.expected_start = mf.run_start = None
 
     # --- market messages -------------------------------------------------------
     def _market_line(self, obj: dict, wall_ms: int, mono_ns: int) -> None:
@@ -354,6 +498,8 @@ class FeedClient:
             if not f.valid:
                 f.valid, f.reason, f.since_seq = True, None, seq
             f.last_change_seq = seq
+        elif kind == "execs" and self._flow_repeat(mf, block):
+            self.counters["copy_repeats"] = self.counters.get("copy_repeats", 0) + 1
         elif kind == "execs":
             new = mf.flow.on_execs(body, block, bt)
             for listener in self.listeners:
@@ -393,7 +539,8 @@ class FeedClient:
         keep_ns = (self.cfg["delay_window_ms"] + 60_000) * 1_000_000
         while len(mf.wm_hist) > 2 and mf.wm_hist[1][0] < mono_ns - keep_ns:
             mf.wm_hist.popleft()
-        if isinstance(block, int):
+        repeat = self._flow_repeat(mf, block)
+        if isinstance(block, int) and not repeat:
             mf.flow.on_watermark(block, bt)
             fl = mf.fam["flow"]
             if not mf.flow.restart_pending and not fl.valid:
@@ -402,6 +549,8 @@ class FeedClient:
             if f.valid and f.applied_through is not None and f.applied_through >= seq - 1:
                 f.wm_block, f.wm_block_time_ms = block, bt
                 f.wm_recv_wall_ms, f.wm_recv_mono_ns = wall_ms, mono_ns
+        if repeat:
+            return
         for listener in self.listeners:
             listener({"type": "watermark", "market": mf.market, "block": block, "block_time_ms": bt,
                       "client": self})
@@ -645,6 +794,7 @@ class FeedClient:
         mf.crossed = None
         mf.panels = None          # history, walls and burst state never bridge a gap
         mf.wm_hist.clear()        # nor does the node feed's averaged delay: it restarts at the next timed watermark
+        mf.flow_seen_through_block = None
         mf.flow.boundary(reason)
         mf.note("invalidated", reason=reason)
 

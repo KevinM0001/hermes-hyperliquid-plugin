@@ -16,8 +16,9 @@ from . import calibration as calibration_mod
 from . import panels
 from .bursts import NodeBurstRule
 from .client import FeedClient
+from .demand import Demand
 from .replay import Recording, ReplayPlayer
-from .transport import parse_source, run_feed
+from .transport import FixedDemand, parse_source, run_feed, run_relay
 
 DEADLINE_CHECK_S = 0.25
 REPLAY_TICK_S = 0.05
@@ -34,6 +35,16 @@ class NodeManager:
         if self.live is not None:
             self.live.listeners.append(lambda ev: panels.on_client_event(ev, self.opts))
             self.attach_bursts(self.live)
+        # A relay (a ws(s):// URL, the hosted default included) is subscribed to only while node data is used: the
+        # demand (panels on screen, the 60 s linger, background alerts) drives one subscription, and a tool call that
+        # needs another market in full gets its own short one (lease/release). A local socket serves every market.
+        self.relay_mode = src is not None and src[0] == "ws"
+        self.demand: Demand | None = (Demand(self.markets, alerts_in_background=getattr(cfg, "node_alerts", False))
+                                      if self.relay_mode else None)
+        self.tool_clients: dict[str, dict] = {}
+        self.leases: dict[int, str | None] = {}
+        self._lease_seq = 0
+        self._key: str | None = None
         self.replay_client: FeedClient | None = None
         self.player: ReplayPlayer | None = None
         self.replay_error: str | None = None
@@ -67,20 +78,76 @@ class NodeManager:
             key = None
             if parse_source(self.cfg.node_feed)[0] == "ws":
                 key = self._read_key()
-            out.append(asyncio.create_task(run_feed(self.live, self.cfg.node_feed, self.markets, stop, key)))
+            self._key = key
+            if self.relay_mode:
+                out.append(asyncio.create_task(run_relay(self.live, self.cfg.node_feed, self.demand, stop, key)))
+            else:
+                out.append(asyncio.create_task(run_feed(self.live, self.cfg.node_feed, self.markets, stop, key)))
         self._tasks = out
         return out
 
     async def _deadlines(self, stop: asyncio.Event) -> None:
-        while not stop.is_set():
-            now = time.monotonic_ns()
-            for c in (self.live, self.replay_client):
-                if c is not None:
-                    c.check_deadlines(now)
-            try:
-                await asyncio.wait_for(stop.wait(), timeout=DEADLINE_CHECK_S)
-            except asyncio.TimeoutError:
-                pass
+        try:
+            while not stop.is_set():
+                now = time.monotonic_ns()
+                for c in (self.live, self.replay_client, *(t["client"] for t in self.tool_clients.values())):
+                    if c is not None:
+                        c.check_deadlines(now)
+                try:
+                    await asyncio.wait_for(stop.wait(), timeout=DEADLINE_CHECK_S)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            for t in self.tool_clients.values():       # a tool's own subscription ends with the collector
+                t["stop"].set()
+
+    # --- demand (handoff 1d step 7) ------------------------------------------------
+    def panel_seen(self, market: str | None) -> None:
+        """A node panel is on screen with this market open (from the dashboard's poll; any thread)."""
+        if self.demand is not None:
+            self.demand.panel(market)
+
+    def lease(self, market: str | None) -> dict | None:
+        """A tool call needs this market's node data now (on the loop). Served by the panel subscription when that
+        carries the market in full; otherwise by a short subscription of its own, released by release()."""
+        if not self.relay_mode or self.live is None or market not in self.markets:
+            return None
+        self._lease_seq += 1
+        lid = self._lease_seq
+        if self.live.views.get(market) == "full" and self.demand.want(time.monotonic()) is not None:
+            self.leases[lid] = None
+            return {"id": lid, "via": "the panel's subscription"}
+        tc = self.tool_clients.get(market)
+        if tc is None:
+            client = FeedClient(self.cfg.node_feed, "LIVE")
+            client.listeners.append(lambda ev: panels.on_client_event(ev, self.opts))
+            self.attach_bursts(client)
+            stop = asyncio.Event()
+            task = asyncio.create_task(run_relay(client, self.cfg.node_feed, FixedDemand(market, []), stop, self._key))
+            tc = self.tool_clients[market] = {"client": client, "stop": stop, "task": task, "leases": 0}
+        tc["leases"] += 1
+        self.leases[lid] = market
+        return {"id": lid, "via": "a subscription of its own"}
+
+    def release(self, lid) -> None:
+        """The tool call has answered: its own subscription ends when no other call holds it (on the loop)."""
+        market = self.leases.pop(lid, None) if isinstance(lid, int) else None
+        tc = self.tool_clients.get(market) if market is not None else None
+        if tc is None:
+            return
+        tc["leases"] -= 1
+        if tc["leases"] <= 0:
+            tc["stop"].set()
+            del self.tool_clients[market]
+
+    def client_for(self, market: str):
+        """The live client whose state answers for this market: a tool's own subscription while the panel
+        subscription doesn't carry the market in full."""
+        if self.relay_mode and self.live is not None and self.live.views.get(market) != "full":
+            tc = self.tool_clients.get(market)
+            if tc is not None:
+                return tc["client"]
+        return self.live
 
     async def _replay_loop(self, stop: asyncio.Event) -> None:
         while not stop.is_set():
@@ -147,7 +214,7 @@ class NodeManager:
         out = {}
         feed_is_replay = self.live is not None and self.live.mode == "REPLAY"
         for m in self.markets:
-            live = (panels.market_view(self.live, m, self.opts, now_wall_ms, now_mono_ns)
+            live = (panels.market_view(self.client_for(m), m, self.opts, now_wall_ms, now_mono_ns)
                     if self.live is not None and not feed_is_replay else None)
             if feed_is_replay:
                 live = {"available": False, "reason": "the configured node_feed serves a REPLAY, shown in the replay area "
@@ -158,11 +225,24 @@ class NodeManager:
             out[m] = {"live": live, "replay": rep}
         return out
 
+    def relay_status(self) -> dict | None:
+        if not self.relay_mode or self.live is None:
+            return None
+        hb = self.live.relay or {}
+        return {"hosted_default": bool(getattr(self.cfg, "node_feed_is_hosted_default", False)),
+                "views": dict(self.live.views),
+                "relay_heartbeat": {k: hb.get(k) for k in ("state", "publisher", "message", "recv_wall_ms") if k in hb}
+                                   or None,
+                "demand": self.demand.status(time.monotonic()),
+                "tool_subscriptions": {m: {"connection": dict(t["client"].connection), "leases": t["leases"]}
+                                       for m, t in self.tool_clients.items()}}
+
     def status(self) -> dict:
         return {"live": None if self.live is None else {
                     "source": self.live.source, "connection": dict(self.live.connection),
                     "epoch": self.live.epoch, "session": self.live.session,
-                    "counters": dict(self.live.counters), "skew": dict(self.live.skew)},
+                    "counters": dict(self.live.counters), "skew": dict(self.live.skew),
+                    "relay": self.relay_status()},
                 "replay": None if self.player is None else self.player.status() | {"error": self.replay_error},
                 "configured": {"node_feed": self.cfg.node_feed or None,
                                "node_replay_file": self.cfg.node_replay_file or None,

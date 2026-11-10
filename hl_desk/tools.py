@@ -669,10 +669,46 @@ def node_stops(snap: dict, args: dict, rt=None) -> dict:
 HANDLERS.update({"node_status": node_status, "node_book": node_book, "node_stops": node_stops})
 
 
+# Node tools answered from a relay subscribe on demand (handoff 1d step 7): the families each one needs, the time it
+# waits for them (a market's full data starts from the relay's latest snapshot plus the lines since) and the poll.
+NODE_ON_DEMAND = {"node_book": ("book",), "node_stops": ("triggers",), "node_status": ("flow",)}
+NODE_WAIT_S = 20.0
+NODE_WAIT_POLL_S = 0.5
+
+
+def _node_ready(snap: dict | None, market: str, fams: tuple) -> bool:
+    try:
+        view = snap["markets"][market]["node"]["live"]
+        return all(view["families"][f]["state"] not in ("INVALID",) for f in fams)
+    except (KeyError, TypeError):
+        return False
+
+
+def _with_node_lease(name: str, args: dict, rt):
+    """For a node tool reading live relay data: subscribe to the market for this call, wait (bounded) until its
+    families are valid in a snapshot, and return (lease, snapshot or None). (None, None) when not applicable."""
+    market = args.get("market")
+    if (name not in NODE_ON_DEMAND or args.get("snapshot_id") or (args.get("source") or "live").lower() != "live"
+            or not isinstance(market, str) or not hasattr(rt, "node_lease")):
+        return None, None
+    lease = rt.node_lease(market)
+    if not lease:
+        return None, None
+    deadline = time.monotonic() + NODE_WAIT_S
+    snap = None
+    while True:
+        snap, _ = rt.snapshot(None)
+        if _node_ready(snap, market, NODE_ON_DEMAND[name]) or time.monotonic() >= deadline:
+            return lease, snap
+        time.sleep(NODE_WAIT_POLL_S)
+
+
 def run_tool(name: str, args: dict | None, rt) -> str:
     """Resolve the snapshot and run one tool. Always returns a JSON string; never raises."""
+    lease = None
     try:
         args = dict(args or {})
+        lease, _ = _with_node_lease(name, args, rt)
         snap, err = rt.snapshot(args.get("snapshot_id"))
         if snap is None:
             return _error(name, err or "no snapshot available", collector=rt.status().get("collector"))
@@ -687,3 +723,6 @@ def run_tool(name: str, args: dict | None, rt) -> str:
         return _error(name, str(exc).strip("'\""))
     except Exception as exc:  # never let a tool call fail with an exception
         return _error(name, f"internal error: {type(exc).__name__}: {exc}")
+    finally:
+        if lease:
+            rt.node_release(lease)        # released once the call has answered

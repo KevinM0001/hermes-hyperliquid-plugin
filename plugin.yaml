@@ -1,6 +1,6 @@
 name: hyperliquid-desk
 version: 1.0.0
-description: Live Hyperliquid dashboard tab, market tools and a commentary skill on Hyperliquid's public data, with optional node panels from an engine feed. Read-only; no orders, no trading keys.
+description: Live Hyperliquid dashboard tab, market tools and a commentary skill on Hyperliquid's public data, with node panels from a hosted relay (on by default, can be turned off) or your own engine feed. Read-only; no orders, no trading keys.
 author: KevinM0001
 manifest_version: 2
 api_version: 1
@@ -54,15 +54,20 @@ config_schema:
     description: The wallets panel lists the shortest ranked set reaching this share of its side, capped at 50 wallets.
   node_feed:
     type: str
-    default: ""
+    default: "hosted"
     label: Node feed
-    description: Optional. A node feed to connect to when the collector starts, for the node panels. A local Unix socket path (the l4-runner live feed) or a relay WebSocket URL (wss://...). Empty means public mode only.
+    description: Where the node panels get their data. "hosted" (the default) uses the plugin author's hosted relay, a third-party network call, free for now; data flows only while a node panel is on screen (and for 60 s after) or a node tool is answering. "off" means public mode only. Or a local Unix socket path (the l4-runner live feed) or a relay WebSocket URL (wss://...) of your own.
+  node_alerts:
+    type: bool
+    default: false
+    label: Node alerts in the background
+    description: With a relay, keep receiving the four markets' executions (about 9 KB/s) while no node panel is on screen, so node-mode burst and liquidation alerts keep running. Off, node data stops 60 s after the last node panel was seen.
   node_key:
     type: secret
     env: HL_DESK_NODE_KEY
     required: false
     label: Node feed access key
-    description: Optional. Sent only to a relay WebSocket URL, as an Authorization header. Not needed for a local socket or a relay without keys.
+    description: Optional and unused by the hosted relay at launch (it needs no key). Sent only to a relay WebSocket URL, as an Authorization header, never after a redirect. Not needed for a local socket or a relay without keys.
   node_replay_file:
     type: str
     default: ""

@@ -879,7 +879,10 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
             "connection": dict(client.connection),
             "replay": dict(client.replay) if (client.mode == "REPLAY" and client.replay) else None}
     if mf is None:
-        return base | {"available": False, "reason": "no data for this market from this source yet"}
+        conn = client.connection or {}
+        why = (conn.get("reason") if conn.get("reason") and conn.get("state") in
+               ("idle", "refused", "stopped", "full", "disconnected", "not configured", "dropped") else None)
+        return base | {"available": False, "reason": why or "no data for this market from this source yet"}
     ps = state_of(mf)
     ok, why = book_validity(mf, fam)
     base["book"] = {"valid": ok, "reason": why, "crossed": None if mf.crossed is None else {

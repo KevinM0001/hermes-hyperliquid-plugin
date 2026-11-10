@@ -110,8 +110,17 @@ def _deck_summary(snap: dict) -> dict:
 
 
 @router.get("/snapshot")
-async def get_snapshot(market: str | None = Query(default=None), snapshot_id: str | None = Query(default=None)):
+async def get_snapshot(market: str | None = Query(default=None), snapshot_id: str | None = Query(default=None),
+                       node: str | None = Query(default=None)):
     snap, err = await _snapshot(snapshot_id)
+    if node == "visible" and snap is not None:
+        # The tab polls only while it is visible: node data from a relay flows while a node panel is on screen and
+        # for 60 s after (handoff 1d step 7). Off the loop, like every runtime call.
+        names_ = snap.get("markets") or {}
+        open_market = market if market in names_ else (sorted(names_)[0] if names_ else None)
+        rt_mod = await _engine_async("runtime")
+        if rt_mod is not None:
+            await asyncio.to_thread(rt_mod.get_runtime().node_panel, open_market)
     if snap is None:
         rt_mod = await _engine_async("runtime")
         status = await asyncio.to_thread(rt_mod.get_runtime().status) if rt_mod else None

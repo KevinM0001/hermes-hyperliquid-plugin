@@ -16,6 +16,11 @@ from . import schema
 DEFAULT_MARKETS = ["BTC", "HYPE", "xyz:SP500", "xyz:XYZ100"]
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 INFO_URL = "https://api.hyperliquid.xyz/info"
+# The hosted node-data relay (handoff 1d): the node_feed setting's default ("hosted"). This is the only place its
+# address is written. The DNS name isn't chosen yet: until it is, the .invalid placeholder makes the node panels say
+# the hosted relay isn't set in this version (transport.check_relay_url) instead of trying to connect.
+HOSTED_RELAY_URL = "wss://relay.hyperliquid-desk.invalid/v1/feed"
+NODE_FEED_OFF = ("off", "none", "public")
 
 
 @dataclass
@@ -31,6 +36,10 @@ class DeskConfig:
     ws_url: str = WS_URL
     info_url: str = INFO_URL
     node_feed: str = ""                    # a Unix socket path or a ws(s):// relay URL; "" = public mode only
+    node_feed_is_hosted_default: bool = False   # node_feed came from the "hosted" default (HOSTED_RELAY_URL)
+    # Keep the four markets' executions from a relay while no node panel is on screen, so node-mode alerts keep
+    # running in the background (about 9 KB/s). Off: node data stops 60 s after the last panel was seen.
+    node_alerts: bool = False
     node_replay_file: str = ""             # a recording, played only when a replay is started explicitly
     # Node mode: a manual burst threshold per market (USD per 60 s); a market not listed (or listed as "auto") uses the
     # automatic threshold from the dated burst calibration (hl_desk/node/calibration).
@@ -88,10 +97,19 @@ def from_settings(get) -> DeskConfig:
     t = get("wallet_target_share_pct", None)
     if isinstance(t, (int, float)) and 0 < t <= 100:
         cfg.wallet_target_share_pct = float(t)
-    for key in ("node_feed", "node_replay_file"):
-        v = get(key, None)
-        if isinstance(v, str):
-            setattr(cfg, key, v.strip())
+    # node_feed: unset or "hosted" = the hosted relay (on by default, Kevin Nov 9); "off" (or empty) = public mode
+    # only; anything else is a Unix socket path or a relay URL of the user's own.
+    v = get("node_feed", None)
+    if v is None or (isinstance(v, str) and v.strip().lower() in ("hosted", "default")):
+        cfg.node_feed, cfg.node_feed_is_hosted_default = HOSTED_RELAY_URL, True
+    elif isinstance(v, str):
+        cfg.node_feed = "" if v.strip().lower() in NODE_FEED_OFF else v.strip()
+    v = get("node_replay_file", None)
+    if isinstance(v, str):
+        cfg.node_replay_file = v.strip()
+    a = get("node_alerts", None)
+    if isinstance(a, bool):
+        cfg.node_alerts = a
     nb = get("node_burst_min_usd", None)
     if isinstance(nb, dict):
         # A finite positive number (or numeric text) is a manual threshold; "auto", a missing market or anything

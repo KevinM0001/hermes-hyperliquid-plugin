@@ -1183,7 +1183,10 @@
     ["INVALID", "not usable (no snapshot yet, a gap, a new producer epoch, a crossed book) until a fresh snapshot"],
     ["REPLAY", "played back from a recording, never current"]
   ];
-  const CONN_TONE = { connected: "ok", connecting: "warn", disconnected: "bad", refused: "bad", dropped: "bad" };
+  // A hosted relay adds: idle (node data paused, nothing on screen used it), full (at capacity), stopped (switched
+  // off by its operator); each comes with the plugin's plain reason beside the chip.
+  const CONN_TONE = { connected: "ok", connecting: "warn", disconnected: "bad", refused: "bad", dropped: "bad",
+    idle: "dim", full: "warn", stopped: "bad" };
   const FLAG_TONE = { liquidation: "bad", twap: "info", incomplete: "warn", conflict: "bad" };
   const CHANGE_KEYS = ["added", "absorbed", "pulled", "unknown"];
   const REPLAY_SPEEDS = ["0.25", "0.5", "1", "2", "4", "8", "16"];
@@ -4439,7 +4442,9 @@
       if (inflight.current && !force) return;
       inflight.current = true;
       const asked = marketRef.current;
-      const url = API + "/snapshot" + (asked ? "?market=" + encodeURIComponent(asked) : "");
+      // node=visible: this poll comes from a visible tab, so node data from a relay keeps flowing for its open market
+      // (it stops 60 s after the last such poll: handoff 1d step 7). The tab never polls while hidden.
+      const url = API + "/snapshot?node=visible" + (asked ? "&market=" + encodeURIComponent(asked) : "");
       const requestedPerf = performance.now();
       SDK.fetchJSON(url).then(function (data) {
         if (!alive.current) return;
