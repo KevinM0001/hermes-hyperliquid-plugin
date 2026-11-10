@@ -17860,6 +17860,7 @@
       chg !== null ? h("span", { className: cls }, signOf(chg, true) + num(Math.abs(chg), 8) +
         (chgPct !== null ? " (" + signOf(chgPct, true) + num(Math.abs(chgPct), 2, 2) + "%)" : "")) : null,
       h("span", { className: "hd-ro-cell" }, "Vol ", h("b", { className: "hd-ro-v" }, vol)),
+      props.late ? h("span", { className: "hd-ro-cell hd-dim" }, props.late) : null,
       props.flow ? h("span", { className: "hd-ro-cell", title: props.flow.reason || "" }, "Taker flow ",
         h("b", { className: props.flow.net_usd >= 0 ? "hd-ro-v hd-ro-up" : "hd-ro-v hd-ro-down" }, usdSigned(props.flow.net_usd)),
         " (buy " + usd(props.flow.buy_usd) + " / sell " + usd(props.flow.sell_usd) + (props.flow.complete === false ? (props.flow.in_progress ? ", in progress" : ", partial") : "") + ")") : null);
@@ -18199,6 +18200,7 @@
       bandTip ? h("div", { className: "hd-band-tip", style: { left: Math.min(bandTip.x + 14, 420) + "px", top: Math.max(4, bandTip.y - 10) + "px" } },
         bandTip.texts.map(function (t, i) { return h("div", { key: i, className: i === bandTip.texts.length - 1 ? "hd-dim" : undefined }, t); })) : null,
       !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market),
+        late: (ov.stops || ov.depth || ov.flow) && node ? (lateNote(node, "book") || lateNote(node, "flow", "fills")) : null,
         flow: (function () { const a = api.current; const k = hover || latest; if (!a || !k || !ov.flow || iv !== "15m") return null; const t = isNum(k._t) ? k._t : k.time; return a.flowByTime[t] || null; })() }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" },
@@ -18247,6 +18249,20 @@
   // BEHIND is shown as DELAYED: since Nov 8 it means the node feed's averaged delay is above the delayed limit.
   // Late node data reads "delayed" quietly (Kevin, Nov 10): BEHIND and STALE are one word in a muted tone, and the
   // delay itself is shown beside it where the family carries one (famDelay), counting up as the snapshot ages.
+  // Where a node panel implies the present (the book's depth, the walls, the stop map, the fills), a late family says
+  // "as of the node's book at <block time>, <delay> behind" (Kevin, Nov 10; the Plugin session's wording).
+  function lateNote(v, fam, what) {
+    const f = g(v, "families", fam);
+    if (!f || (f.state !== "BEHIND" && f.state !== "STALE")) return null;
+    const conn = g(v, "connection", "state");
+    const at = isNum(f.watermark_block_time_ms) ? hms(f.watermark_block_time_ms) + "Z" : "its last block";
+    const behind = isNum(f.delay_ms) ? (f.delay_ms >= 60000 ? dur(f.delay_ms) : (f.delay_ms / 1000).toFixed(0) + " s") + " behind" : "behind";
+    return "as of the node's " + (what || "book") + " at " + at + ", " + behind + (conn && conn !== "connected" ? " (feed " + conn + ")" : "");
+  }
+  function LateLine(props) {
+    const t = lateNote(props.v, props.fam || "book", props.what);
+    return t ? h("span", { className: "hd-dim hd-late", title: "the node feed ran behind the chain; the numbers are the node's at that block, not now" }, t) : null;
+  }
   function famLabel(s) { return s === "BEHIND" || s === "STALE" ? "delayed" : (s || "?"); }
   function famDelay(f) { return f && (f.state === "BEHIND" || f.state === "STALE") && isNum(f.delay_ms) ? " \u00b7 " + (f.delay_ms >= 60000 ? dur(f.delay_ms) : (f.delay_ms / 1000).toFixed(0) + " s") : ""; }
   function famOk(f) { return !!f && (f.state === "LIVE" || f.state === "REPLAY"); }
@@ -18405,7 +18421,8 @@
   function DelayBar(props) {
     const d = props.delay;
     const live = props.nodeOn && d && d.available;
-    const label = live ? famLabel(d.state) : null;
+    const down = props.conn && props.conn !== "connected" && props.conn !== "state not in snapshot";
+    const label = live ? (down ? "disconnected \u00b7 last data " + (d.delay_ms >= 60000 ? dur(d.delay_ms) : (d.delay_ms / 1000).toFixed(0) + " s") + " ago" : famLabel(d.state)) : null;
     const value = live ? (d.delay_ms / 1000).toFixed(1) + " s" : "\u2013";
     const why = !props.nodeOn ? "no node feed configured" : !d ? "the node delay isn't in this snapshot" :
       d.available ? null : (d.reason || "not available");
@@ -18452,7 +18469,7 @@
         h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
         cfgLine),
       // The node feed's delay (the latest watermark's age, 5 s average): in this strip since Nov 9, no longer a bar of its own.
-      h(DelayBar, { delay: props.delay, nodeOn: true }),
+      h(DelayBar, { delay: props.delay, nodeOn: true, conn: cstate }),
       live && nodeOn(v) ? h("div", { className: "hd-nodestrip-line" },
         h("span", { className: "hd-dim" }, props.market + " families"),
         h(FamChips, { fams: v.families }),
@@ -18588,7 +18605,7 @@
           labels.change_10s ? " Changes: " + labels.change_10s + "." : "",
           labels.stops_to_next_level ? " Stops: " + labels.stops_to_next_level + "." : "")),
       badges: h(NodeProv, { v: v, what: "L4 book" }),
-      status: h(NodeStatus, { v: v, fams: ["book", "triggers"] }),
+      status: h(NodeStatus, { v: v, fams: ["book", "triggers"], extra: h(LateLine, { v: v, fam: "book" }) }),
       flush: true
     },
     // A withheld panel's box already names the family and its reason, so the family notes are shown only with values.
@@ -18769,7 +18786,7 @@
       id: "wall-watch", className: "hd-p-walls hd-p-walls-node", title: "Wall watch", nodeHook: "wall-watch",
       why: h("p", null, "The largest single resting orders near the price (node book, order level), and what happened to each one that left."),
       badges: h(NodeProv, { v: v, what: "L4 orders" }),
-      status: h(NodeStatus, { v: v, fams: ["book"] })
+      status: h(NodeStatus, { v: v, fams: ["book"], extra: h(LateLine, { v: v, fam: "book" }) })
     },
     gate ? null : h(FamNotes, { fams: v && v.families, names: ["book"] }),
     gate || h(WallsBody, { wl: v.walls, bookMs: g(v, "book", "book_time_ms") }));
@@ -18931,7 +18948,7 @@
         ok ? h("p", { className: "hd-dim" }, [rules.band, rules.notional, rules.walk, rules.clusters, rules.accounts].filter(Boolean).join(" ")) : null),
       sub: ok && mp.as_of ? h("span", { className: "hd-dim" }, (mp.as_of.note || "") + (isNum(mp.as_of.block) ? " Block " + mp.as_of.block + "." : "")) : null,
       badges: h(NodeProv, { v: v, what: "triggers + L4 book" }),
-      status: h(NodeStatus, { v: v, fams: ["triggers", "book", "bands"] })
+      status: h(NodeStatus, { v: v, fams: ["triggers", "book", "bands"], extra: h(LateLine, { v: v, fam: "book" }) })
     },
     gate ? null : h(FamNotes, { fams: v && v.families, names: ["triggers", "book"] }),
     gate ? gate : h(Fragment, null,
@@ -18999,6 +19016,8 @@
         isNum(o.absorbed_sz) || isNum(o.pulled_sz) ? h(Fragment, null, " \u00b7 absorbed ", zsz(o.absorbed_sz), ", pulled ", zsz(o.pulled_sz)) : null) });
     });
     if (verdict) lines.push({ k: "watch", el: h(Fragment, null, h("span", { className: "hd-chip hd-tone-" + (WATCH_TONE[verdict.tone] || "dim") }, verdict.label), " " + verdict.text) });
+    const late = lateNote(v, "book") || lateNote(v, "flow", "fills");
+    if (late && lines.length) lines.push({ k: "node feed", el: h("span", { className: "hd-dim" }, late + "; the node information can run behind, especially in busy sessions") });
     // With the node families lapsed, the card says so in one line rather than disappearing (the screen keeps its shape).
     if (!lines.length) {
       const why = (fm && fm.available === false && fm.reason) || (st && st.available === false && st.reason) || (v.families && v.families.book && v.families.book.reason) || null;
@@ -19113,8 +19132,8 @@
           "quoted as served. Buckets not fully covered by the node fills say so and are never scaled up; the last bucket is still in progress."),
         fm && fm.counting ? h("p", { className: "hd-dim" }, fm.counting) : null),
       badges: h(NodeProv, { v: v, what: "fills" }),
-      status: h(NodeStatus, { v: v, fams: ["flow"], extra: fm && fm.totals && isNum(fm.totals.fills)
-        ? h("span", { className: "hd-prov-item" }, listCount("window", fm.totals.fills, "fills", null)) : null })
+      status: h(NodeStatus, { v: v, fams: ["flow"], extra: h(Fragment, null, fm && fm.totals && isNum(fm.totals.fills)
+        ? h("span", { className: "hd-prov-item" }, listCount("window", fm.totals.fills, "fills", null)) : null, h(LateLine, { v: v, fam: "flow", what: "fills" })) })
     },
     gate ? null : h(FamNotes, { fams: v && v.families, names: ["flow"] }),
     gate ? h(Fragment, null, fm && fm.window ? h(OfmWindow, { w: fm.window }) : null, gate) : h(OfmBody, { fm: fm }));
@@ -21173,14 +21192,10 @@
       return out;
     }
     function fillResult(res) {
+      // The node fills' split keeps its numbers under lateness; only its freshness ages (Kevin, Nov 10).
       if (!res || !res.available || !res.freshness) return res;
       const st = nodeState(res.freshness);
-      if (st === res.freshness || USABLE[st.state]) return Object.assign({}, res, { freshness: st });
-      const why = "node fills " + st.state + ": " + st.reason;
-      const out = { available: false, reason: why, freshness: st };
-      ["stream", "window_label", "provenance", "coverage", "window"].forEach(function (k) { if (k in res) out[k] = res[k]; });
-      ["new_long", "cover", "new_short", "exit"].forEach(function (k) { if (k in res) out[k] = { value: null, reason: why, unit: "USD" }; });
-      return out;
+      return st === res.freshness ? res : Object.assign({}, res, { freshness: st });
     }
     function nodeView(view) {
       if (!view || !view.families) return view;
@@ -21193,57 +21208,11 @@
         const d = nodeState(Object.assign({}, view.delay, { state: "LIVE", delay_window_ms: view.delay.window_ms }));
         out.delay = Object.assign({}, view.delay, { delay_ms: d.delay_ms, state: d.state, reason: d.state === "LIVE" ? null : d.reason });
       }
-      const was = view.families;
-      const lapsed = function (k) { return fams[k] && !USABLE[fams[k].state] && was[k] && USABLE[was[k].state]; };
-      const why = function (k) { return k + " " + fams[k].state + ": " + fams[k].reason; };
-      const CENSUS_BOOK_KEYS = ["excluded", "executable_orders_total", "executable_within_10pct", "executable_to_trigger_ratio"];
-      const CENSUS_BANDS_KEYS = ["within_10pct", "outside", "unsized_within_10pct", "bands_view"];
-      const censusWithheld = function (cen, reason, keys) {
-        const o = Object.assign({}, cen);
-        keys.forEach(function (k) { o[k] = null; o[k + "_reason"] = reason; });
-        return o;
-      };
-      if (lapsed("book") && out.book) {
-        out.book = Object.assign({}, out.book, { valid: false, reason: why("book") });
-        out.ladder = { available: false, reason: why("book") };
-        out.walls = { available: false, reason: why("book") };
-        out.thinning = { available: false, reason: why("book"), note: (view.thinning || {}).note };
-        // The stop map's depth, clusters and book-built census counts go with the book (serving.py).
-        if (out.stops && typeof out.stops === "object" && "map" in out.stops) {
-          const cen = out.stops.census;
-          out.stops = Object.assign({}, out.stops, { map: { available: false, reason: why("book") }, clusters: null, clusters_reason: why("book"),
-            census: cen && typeof cen === "object" ? censusWithheld(cen, why("book"), CENSUS_BOOK_KEYS) : cen });
-        }
-      }
-      if (lapsed("bands") && out.stops && out.stops.census && typeof out.stops.census === "object") {
-        out.stops = Object.assign({}, out.stops, { census: censusWithheld(out.stops.census, why("bands"), CENSUS_BANDS_KEYS) });
-      }
-      if (lapsed("triggers") && out.stops) {
-        const wt = why("triggers");
-        out.stops = { available: false, reason: wt };
-        const lad = out.ladder;
-        if (lad && Array.isArray(lad.bids)) {              // the ladder's stops column follows the trigger family too
-          const ageRows = function (rows) {
-            return (rows || []).map(function (r) {
-              return Object.assign({}, r, { stops_to_next_level: r.stops_to_next_level === null || r.stops_to_next_level === undefined ? r.stops_to_next_level : { available: false, reason: wt } });
-            });
-          };
-          out.ladder = Object.assign({}, lad, { stops_available: false, stops_reason: wt, bids: ageRows(lad.bids), asks: ageRows(lad.asks) });
-        }
-      }
-      if (lapsed("flow") && out.tape) out.tape = { available: false, reason: "node fills " + fams.flow.state + ": " + fams.flow.reason,
-        coverage: (view.tape || {}).coverage };
-      // The Order Flow Map goes with the tape: buckets, totals, shares and readings withheld; the window, provenance
-      // and the lapsed status with its reason stay (hl_desk/node/serving.py). While usable, it carries the aged status.
+      // Late node data is shown, labelled (Kevin, Nov 10): the families and the delay keep aging on screen so the chips
+      // read "delayed" with a count that grows, but no block is withheld for lateness here; the plugin withholds only
+      // for no data, INVALID or UNKNOWN at build time, and the served blocks keep their own freshness.
       const fm = out.flow_map;
-      if (fm && typeof fm === "object" && fams.flow) {
-        if (fm.available && !USABLE[fams.flow.state]) {
-          out.flow_map = { available: false, reason: "node fills " + fams.flow.state + ": " + fams.flow.reason, stream: "node fills",
-            provenance: fm.provenance, freshness: fams.flow, window: fm.window };
-        } else if (fm.available) {
-          out.flow_map = Object.assign({}, fm, { freshness: fams.flow });
-        }
-      }
+      if (fm && typeof fm === "object" && fm.available && fams.flow) out.flow_map = Object.assign({}, fm, { freshness: fams.flow });
       return out;
     }
     function deckNode(deck) {

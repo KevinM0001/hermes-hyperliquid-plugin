@@ -462,6 +462,7 @@
 .hd-band-ranked { outline: 1px solid rgba(179, 157, 255, .9); outline-offset: -1px; }
 .hd-band-tip { position: absolute; z-index: 3; max-width: 380px; pointer-events: none; background: rgba(18, 18, 18, .96); border: 1px solid var(--hd-line); border-radius: 4px; padding: 6px 8px; font: 500 11px/1.4 var(--hd-mono); color: var(--hd-text); display: flex; flex-direction: column; gap: 4px; }
 .hd-ovbar { margin-left: 8px; }
+.hd-late { font-size: 11px; }
 /* what the node sees */
 .hd-brief { display: flex; flex-direction: column; gap: 5px; }
 .hd-brief-row { display: flex; gap: 12px; align-items: baseline; font-size: 12.5px; line-height: 1.45; color: var(--hd-text-2); }
