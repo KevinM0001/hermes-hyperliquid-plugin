@@ -145,7 +145,8 @@ def test_unix_socket_transport_reads_the_real_stream(tmp_path, monkeypatch):
         return c
 
     c = asyncio.run(main())
-    assert got["handshake"] == {"v": 2, "markets": [XY], "start": "snapshot"}
+    # the handshake names the market and its owner position stream (PROTOCOL.md 4.8, opt-in; Kevin, Nov 10)
+    assert got["handshake"] == {"v": 2, "markets": [XY, XY + ".owner_pos"], "start": "snapshot"}
     assert c.markets[XY].book is not None and c.epoch == lines[0]["epoch"]
 
 

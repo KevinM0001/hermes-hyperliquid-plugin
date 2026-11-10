@@ -18903,7 +18903,8 @@
             h("th", { scope: "col" }, "Band"), h("th", { scope: "col", className: "hd-r", title: "the edge the move reaches first" }, "From"),
             h("th", { scope: "col", className: "hd-r", title: "resting depth in the band, from the thinning panel" }, "Resting depth"),
             h("th", { scope: "col", className: "hd-r", title: "stated notional of the waiting triggers in the band; a lower bound where orders report no size" }, "Triggers"),
-            h("th", { scope: "col", className: "hd-r", title: "the band's trigger notional over the depth resting at and beyond it, out to 10%" }, "Walk"))),
+            props.est ? h("th", { scope: "col", className: "hd-r", title: "estimated: the band's whole-position orders at their owners' positions, if triggered now; each band counted as if it fires first; never in the stated figures" }, "Est.") : null,
+            h("th", { scope: "col", className: "hd-r", title: "the band's trigger notional over the depth resting at and beyond it, out to 10%" + (props.est ? "; below it, stated plus the estimate over the same depth" : "") }, "Walk"))),
           h("tbody", null, bands.map(function (b, i) {
             const th = thBands[i] && thBands[i].from_pct === b.band.from_pct ? thBands[i] : null;
             const dW = props.depthMax > 0 && th && isNum(th.depth_usd) ? Math.max(th.depth_usd > 0 ? 1 : 0, Math.round(th.depth_usd / props.depthMax * 100)) : 0;
@@ -18919,8 +18920,39 @@
                 h("span", { className: cx("hd-bar hd-bar-trig", b.lower_bound && "hd-bar-lb"), style: { width: tW + "%" }, "aria-hidden": "true" }),
                 h("span", { className: "hd-barval" }, isNum(b.notional_usd) ? h(Fragment, null, (b.lower_bound ? "\u2265 " : "") + usd(b.notional_usd), h0(b))
                   : h("span", { className: "hd-dim" }, b.orders ? intf(b.orders) + " unsized" : "none"))),
-              h("td", { className: "hd-r hd-num" }, isNum(w.ratio_pct) ? (w.lower_bound ? "\u2265 " : "") + walkPct(w.ratio_pct) : h("span", { className: "hd-dim" }, b.orders ? "?" : "")));
+              props.est ? h("td", { className: "hd-r hd-num" }, h(EstCell, { b: b })) : null,
+              h("td", { className: "hd-r hd-num" }, isNum(w.ratio_pct) ? (w.lower_bound ? "\u2265 " : "") + walkPct(w.ratio_pct) : h("span", { className: "hd-dim" }, b.orders ? "?" : ""),
+                props.est && isNum(w.ratio_pct_est) ? h("div", { className: "hd-dim hd-smap-est", title: w.ratio_est_label || "estimated" }, "\u2248 " + walkPct(w.ratio_pct_est)) : null));
           })))));
+  }
+  // A band's estimate cell: "~ $37K" with the unknown count, or why there is none; nothing when the band has no
+  // whole-position orders.
+  function EstCell(props) {
+    const e = props.b.estimate;
+    if (!e) return h("span", { className: "hd-dim" }, props.b.unknown_size_orders ? "?" : "");
+    const unk = isNum(e.unknown_orders) ? e.unknown_orders : 0;
+    const why = Object.keys(e.unknown_reasons || {}).map(function (k) { return e.unknown_reasons[k] + " " + k; }).join("; ");
+    return h("span", { title: (e.label || "estimated") + (why ? "\nunknown: " + why : "") + (e.outsized ? "\n" + e.outsized.note : "") },
+      isNum(e.notional_usd) ? "\u2248 " + usd(e.notional_usd) : (unk ? h("span", { className: "hd-dim" }, "?") : ""),
+      unk && isNum(e.notional_usd) ? h("span", { className: "hd-smap-unsized" }, " " + intf(unk) + " unknown") : null,
+      e.outsized ? h("span", { className: "hd-tone-text-warn", title: e.outsized.note }, " outsized") : null);
+  }
+  // The estimate's one line under the clusters (Kevin, Nov 10): what it is as of and how many orders it covers, or
+  // the reason there is none, in the quiet style of the rest of the panel.
+  function EstimateLine(props) {
+    const e = props.e;
+    if (!e) return null;
+    if (e.available !== true) {
+      return h("div", { className: "hd-small hd-dim", title: e.rule || "" }, "Whole-position orders: size unknown; no position estimate (" + (e.reason || "unavailable") + ").");
+    }
+    const unk = Object.keys(e.unknown || {}).reduce(function (n, k) { return n + e.unknown[k]; }, 0);
+    const why = Object.keys(e.unknown || {}).map(function (k) { return e.unknown[k] + " " + k; }).join("; ");
+    return h("div", { className: "hd-small hd-dim", title: (e.rule || "") + "\n" + (e.basis || "") },
+      h("b", null, "Estimate: "), intf(e.estimated) + " of " + intf(e.whole_position_orders) + " whole-position orders at their owners' positions, " +
+      (e.as_of_note || "if triggered now") + (unk ? "; " + intf(unk) + " unknown (" + why + ")" : "") +
+      (e.counted_at_nearer ? "; " + intf(e.counted_at_nearer) + " counted at a nearer trigger" : "") +
+      (e.upper_bound ? "; " + intf(e.upper_bound) + " upper bounds" : "") + (e.same_block === false ? "; the two families stand at different blocks" : "") +
+      (e.defects ? "; " + intf(e.defects) + " owner(s) missing from the stream (feed defect)" : "") + ".");
   }
   function h0(b) { return b.unknown_size_orders ? h("span", { className: "hd-smap-unsized" }, " " + intf(b.unknown_size_orders) + "/" + intf(b.orders) + " unsized") : null; }
   function Exclusions(props) {
@@ -19015,9 +19047,15 @@
       st.clusters && st.clusters.length ? h("ol", { className: "hd-smap-clusters" }, st.clusters.map(function (c) {
         return h("li", { key: c.fires_on + ":" + c.k, title: bandTip(c, null) }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text);
       })) : h("div", { className: "hd-small hd-dim" }, st.clusters_reason || (st.clusters ? "No band has a stated notional, so nothing ranks." : "clusters not in this snapshot")),
+      // The whole-position estimate (Kevin, Nov 10): facts rank; when the estimate's largest band differs, the plugin's
+      // one sentence per side is quoted; the basis line says what the estimate is as of, or why there is none.
+      (st.clusters_by_estimate || []).length ? h("ul", { className: "hd-smap-clusters hd-smap-byest" }, st.clusters_by_estimate.map(function (x) {
+        return h("li", { key: x.fires_on + ":" + x.k, className: "hd-dim" }, x.text);
+      })) : null,
+      h(EstimateLine, { e: st.estimate }),
       ok ? h("div", { className: "hd-thin-pair hd-smap-pair" },
-        h(StopMapSide, { side: mp.sides.fall, th: th && th.bids_below, depthMax: depthMax, trigMax: trigMax, ranked: ranked }),
-        h(StopMapSide, { side: mp.sides.rise, th: th && th.asks_above, depthMax: depthMax, trigMax: trigMax, ranked: ranked })) : null,
+        h(StopMapSide, { side: mp.sides.fall, th: th && th.bids_below, depthMax: depthMax, trigMax: trigMax, ranked: ranked, est: !!(st.estimate && st.estimate.available) }),
+        h(StopMapSide, { side: mp.sides.rise, th: th && th.asks_above, depthMax: depthMax, trigMax: trigMax, ranked: ranked, est: !!(st.estimate && st.estimate.available) })) : null,
       ok ? h("div", { className: "hd-small hd-dim" }, "Bars: resting depth to the largest band on either side; triggers to the largest stated trigger notional; a hatched trigger bar is a lower bound (some orders in it report no size). Hover a row for its categories, largest order and depths.") : null,
       // The accounted line stays visible; the exclusions' detail and the census sit behind one fold (Kevin, Nov 10).
       (function () {
@@ -19057,6 +19095,9 @@
     const lines = [];
     readings.forEach(function (x, i) { lines.push({ k: i === 0 ? "order flow, 2 h" : "", t: x.text }); });
     clusters.forEach(function (c, i) { lines.push({ k: i === 0 ? "stop clusters" : "", t: c.text }); });
+    (st && Array.isArray(st.clusters_by_estimate) ? st.clusters_by_estimate : []).forEach(function (x, i) {
+      lines.push({ k: clusters.length || i ? "" : "stop clusters", t: x.text });     // the plugin's own sentence, when the estimate's largest band differs
+    });
     walls.forEach(function (o, i) {
       lines.push({ k: i === 0 ? "large resting orders" : "", el: h(Fragment, null,
         h("span", { className: o.side === "B" ? "hd-bid" : "hd-ask" }, bookSide(o.side)), " " + (isNum(o.sz) ? sz(o.sz) : "?") + " (" + (isNum(o.notional_usd) ? usd(o.notional_usd) : "?") + ") at ",

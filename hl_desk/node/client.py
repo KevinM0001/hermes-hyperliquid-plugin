@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 
 from .book import BookError, NodeBook
 from .flow import NodeFlow
-from .proto import CLIENT_DEFAULTS, FAMILIES, KIND_FAMILY, SNAPSHOT_KINDS, STATE_FAMILIES, VERSION, VIEW_FAMILIES
+from .proto import (CLIENT_DEFAULTS, FAMILIES, KIND_FAMILY, OWNER_POS_SUFFIX, SNAPSHOT_KINDS, STATE_FAMILIES, VERSION,
+                    VIEW_FAMILIES, dec)
 from .triggers import NodeTriggers, TriggerError
 
 
@@ -108,9 +109,39 @@ class MarketFeed:
                          "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0,
                          "watermarks_inconsistent": 0}
         self.events: deque[dict] = deque(maxlen=50)   # invalidations, swaps, rejections (for status)
+        self.opos = PosStream()                       # the owner position stream (4.8), joined by name and block
 
     def note(self, what: str, **kw) -> None:
         self.events.appendleft({"what": what, "seq": self.last_seq, **kw})
+
+
+class PosStream:
+    """The market's owner position stream ("<market>.owner_pos", PROTOCOL.md 4.8, revision 2.3): its own sequence,
+    assembly and watermarks under the v2 rules, joined to the market by name and by block. It holds the signed
+    position of every owner of a waiting whole-position TP/SL in the market, as the node's state has it; nothing here
+    is an estimate, and nothing here ever leaves the plugin per account."""
+
+    def __init__(self) -> None:
+        self.fam = Family("owner_pos")
+        self.fam.reason = "no owner position stream yet"
+        self.offered = False                    # the hello listed the stream
+        self.unavailable: str | None = None     # the feed has no positions for this market (hello or the producer said)
+        self.last_seq: int | None = None
+        self.run_start: int | None = None
+        self.expected_start: int | None = None
+        self.assembly: Assembly | None = None
+        self.positions: dict | None = None      # address -> signed Decimal position
+        self.basis: str | None = None
+        self.block: int | None = None
+        self.block_time_ms: int | None = None
+        self.counters = {"duplicates": 0, "gaps": 0, "snapshots_applied": 0, "snapshots_rejected": 0,
+                         "snapshots_discarded": 0, "orphan_parts": 0, "deltas_unapplied": 0, "unknown_kinds": 0,
+                         "sets": 0, "drops": 0}
+
+    def invalidate(self, reason: str) -> None:
+        self.fam.invalidate(reason)
+        self.positions = None
+        self.assembly = None
 
 
 class FeedClient:
@@ -181,6 +212,7 @@ class FeedClient:
         self.connection = {"state": "disconnected", "since_wall_ms": wall_ms, "reason": reason}
         for mf in self.markets.values():
             self._discard_assembly(mf, f"connection closed ({reason})")
+            self._discard_stream_assembly(mf.opos, f"connection closed ({reason})")
 
     # --- lines ---------------------------------------------------------------------
     def on_line(self, obj: dict, wall_ms: int, mono_ns: int) -> None:
@@ -270,6 +302,9 @@ class FeedClient:
             self.limits = obj.get("limits") or {}
             self.labels = obj.get("labels") or {}
             for m, info in (obj.get("markets") or {}).items():
+                if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX):
+                    self._hello_stream(m[:-len(OWNER_POS_SUFFIX)], info)
+                    continue
                 mf = self._market(m)
                 if not isinstance(info, dict):
                     continue
@@ -281,13 +316,28 @@ class FeedClient:
                 mf.expected_start = start
                 mf.last_seq = (start - 1) if isinstance(start, int) else None
                 mf.run_start = start
+            for m in (obj.get("unknown_markets") or []):
+                # A producer without position streams lists the name as unknown: this feed carries no positions.
+                if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX) and m[:-len(OWNER_POS_SUFFIX)] in self.markets:
+                    ps = self.markets[m[:-len(OWNER_POS_SUFFIX)]].opos
+                    ps.unavailable = (f"this feed carries no owner positions (allowlist "
+                                      f"{obj.get('allowlist_version') or 'unknown'}; {m!r} is unknown to the producer)")
+                    ps.offered = False
+                    ps.invalidate(ps.unavailable)
         elif c == "replay_unavailable":
             m = obj.get("market")
-            mf = self.markets.get(m) if isinstance(m, str) else None
+            start = obj.get("start_seq")
             self.counters["replay_unavailable"] += 1
+            if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX):
+                mf = self.markets.get(m[:-len(OWNER_POS_SUFFIX)])
+                if mf is not None:
+                    mf.opos.invalidate("replay unavailable: the stream's resume could not be honoured")
+                    mf.opos.last_seq = (start - 1) if isinstance(start, int) else None
+                    mf.opos.run_start = start
+                return
+            mf = self.markets.get(m) if isinstance(m, str) else None
             if mf is not None:
                 self._invalidate_market(mf, "replay unavailable: the resume could not be honoured")
-                start = obj.get("start_seq")
                 mf.last_seq = (start - 1) if isinstance(start, int) else None
                 mf.run_start = start
         elif c == "heartbeat":
@@ -315,6 +365,9 @@ class FeedClient:
         if not self._session_ok(obj.get("epoch"), obj.get("session")):
             return
         m, seq, kind = obj.get("market"), obj.get("seq"), obj.get("kind")
+        if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX) and isinstance(seq, int):
+            self._stream_line(m[:-len(OWNER_POS_SUFFIX)], obj, seq, kind, wall_ms, mono_ns)
+            return
         if not isinstance(m, str) or not isinstance(seq, int) or kind not in KIND_FAMILY:
             self.unreadable_line("a feed line that can't be assigned to a market")
             return
@@ -370,6 +423,165 @@ class FeedClient:
         if kind == "watermark":
             self._watermark(mf, seq, body, block, bt, wall_ms, mono_ns)
         self._release_held(mf)
+
+    # --- the owner position stream (4.8) ---------------------------------------------
+    def _hello_stream(self, market: str, info) -> None:
+        ps = self._market(market).opos
+        ps.offered, ps.unavailable = True, None
+        if not isinstance(info, dict):
+            return
+        start = info.get("start_seq")
+        if info.get("snapshot") == "resumed" and ps.last_seq is not None and start == ps.last_seq + 1:
+            return
+        if ps.last_seq is not None:
+            ps.invalidate(f"reconnected without a resume ({info.get('snapshot')})")
+        ps.expected_start = start
+        ps.last_seq = (start - 1) if isinstance(start, int) else None
+        ps.run_start = start
+
+    def _stream_line(self, market: str, obj: dict, seq: int, kind, wall_ms: int, mono_ns: int) -> None:
+        """A line of "<market>.owner_pos": the market's sequencing rules on the stream's own sequence; a gap or a bad
+        start invalidates the owner_pos family alone, never the market's families."""
+        mf = self._market(market)
+        ps = mf.opos
+        if ps.last_seq is not None and seq <= ps.last_seq:
+            ps.counters["duplicates"] += 1
+            return
+        if ps.last_seq is not None and seq > ps.last_seq + 1:
+            ps.counters["gaps"] += 1
+            ps.invalidate(f"owner position stream gap: expected {ps.last_seq + 1}, got {seq}")
+            ps.run_start = seq
+        elif ps.last_seq is None:
+            if ps.expected_start is not None and seq != ps.expected_start:
+                ps.invalidate(f"owner position stream started at {seq}, not {ps.expected_start}")
+            ps.run_start = seq
+        ps.last_seq = seq
+        self._accepted = True
+        body = obj.get("body") if isinstance(obj.get("body"), dict) else {}
+        block, bt = obj.get("block"), obj.get("block_time_ms")
+        if isinstance(block, int):
+            ps.block, ps.block_time_ms = block, bt
+        if ps.assembly is not None and kind != "opos_snapshot":
+            self._discard_stream_assembly(ps, f"interrupted by {kind} at seq {seq}")
+        if kind == "opos_snapshot":
+            self._stream_snapshot_part(mf, ps, seq, body, block, bt, mono_ns)
+        elif kind == "opos_delta":
+            self._stream_delta(mf, ps, seq, body)
+        elif kind != "watermark":
+            ps.counters["unknown_kinds"] += 1      # a kind this client doesn't know: the sequence still advances
+        f = ps.fam
+        if f.valid:
+            f.applied_through = seq
+        if kind == "watermark" and f.valid and isinstance(bt, int) and not isinstance(bt, bool):
+            f.wm_block, f.wm_block_time_ms = block, bt
+            f.wm_recv_wall_ms, f.wm_recv_mono_ns = wall_ms, mono_ns
+
+    def _stream_snapshot_part(self, mf: MarketFeed, ps: PosStream, seq, body, block, bt, mono_ns) -> None:
+        if isinstance(body.get("unavailable"), str):
+            # The producer can't keep positions exact in this session (or couldn't from its start): unavailable with
+            # its reason, never approximate; said in every snapshot of the session, with or without parts.
+            self._discard_stream_assembly(ps, "the producer declared positions unavailable")
+            ps.unavailable = f"owner positions unavailable from the producer: {body['unavailable']}"
+            ps.invalidate(ps.unavailable)
+            return
+        part, parts, through = body.get("part"), body.get("parts"), body.get("through_seq")
+        sid = body.get("snapshot_id")
+        if not all(isinstance(x, int) for x in (part, parts, through)) or not isinstance(sid, str):
+            self._discard_stream_assembly(ps, "malformed snapshot part")
+            ps.invalidate("malformed owner position snapshot part")
+            return
+        rows = body.get("positions") or []
+        a = ps.assembly
+        if part == 1:
+            if a is not None:
+                self._discard_stream_assembly(ps, f"a new snapshot started at seq {seq}")
+            if seq != through + 1:
+                ps.invalidate("owner position snapshot part 1 out of place")
+                return
+            ps.assembly = a = Assembly("owner_pos", "opos_snapshot", sid, parts, through, 1, mono_ns, body.get("coverage"),
+                                       block=block, block_time_ms=bt)
+        else:
+            if a is None:
+                ps.counters["orphan_parts"] += 1
+                return
+            if a.snapshot_id != sid or a.parts != parts or part != a.next_part or seq != a.through_seq + part:
+                self._discard_stream_assembly(ps, "snapshot parts out of order")
+                return
+        if not isinstance(rows, list):
+            self._discard_stream_assembly(ps, "a snapshot part without a positions list")
+            return
+        a.rows.extend(rows)
+        a.bytes += len(str(rows))
+        a.next_part = part + 1
+        if isinstance(body.get("total_owners"), int):
+            a.total = body["total_owners"]
+        a.block, a.block_time_ms = block, bt
+        limit_chunks = self.limits.get("snapshot_max_chunks", 4096)
+        if a.bytes > self.cfg["max_snapshot_bytes"] or parts > limit_chunks:
+            self._discard_stream_assembly(ps, "snapshot exceeds the client's byte or chunk bound")
+            return
+        if part == parts:
+            ps.assembly = None
+            self._complete_stream_snapshot(mf, ps, a, seq)
+
+    def _complete_stream_snapshot(self, mf: MarketFeed, ps: PosStream, a: Assembly, seq: int) -> None:
+        names = (a.coverage or {}).get("fields")
+        iu, ip = (names.index("user"), names.index("pos")) if (isinstance(names, list) and "user" in names and "pos" in names) else (0, 1)
+        positions = {}
+        for r in a.rows:
+            u = r[iu] if isinstance(r, (list, tuple)) and len(r) > max(iu, ip) else None
+            p = dec(r[ip]) if u is not None else None
+            if not isinstance(u, str) or p is None:
+                ps.counters["snapshots_rejected"] += 1
+                ps.invalidate("owner position snapshot unusable (an unreadable row)")
+                return
+            positions[u] = p
+        if a.total is not None and len(positions) != a.total:
+            ps.counters["snapshots_rejected"] += 1
+            ps.invalidate(f"owner position snapshot holds {len(positions)} owners, total says {a.total}")
+            return
+        ps.positions = positions
+        ps.basis = (a.coverage or {}).get("basis")
+        ps.unavailable = None
+        ps.counters["snapshots_applied"] += 1
+        f = ps.fam
+        f.valid, f.reason, f.since_seq, f.applied_through, f.last_change_seq = True, None, seq, seq, seq
+        mf.note("owner positions snapshot applied", owners=len(positions), block=a.block)
+
+    def _stream_delta(self, mf: MarketFeed, ps: PosStream, seq: int, body: dict) -> None:
+        if isinstance(body.get("unavailable"), str):
+            ps.unavailable = f"owner positions unavailable from the producer: {body['unavailable']}"
+            ps.invalidate(ps.unavailable)
+            mf.note("owner positions unavailable", reason=body["unavailable"])
+            return
+        f = ps.fam
+        if not f.valid or f.applied_through != seq - 1 or ps.positions is None:
+            ps.counters["deltas_unapplied"] += 1
+            return
+        try:
+            for r in body.get("set") or []:
+                u, p = r[0], dec(r[1])
+                if not isinstance(u, str) or p is None:
+                    raise ValueError("unreadable set row")
+                ps.positions[u] = p
+                ps.counters["sets"] += 1
+            for u in body.get("drop") or []:
+                if not isinstance(u, str):
+                    raise ValueError("unreadable drop")
+                ps.positions.pop(u, None)
+                ps.counters["drops"] += 1
+        except (ValueError, TypeError, IndexError, KeyError) as exc:
+            ps.invalidate(f"an owner position delta didn't fit ({exc}); waiting for a snapshot")
+            mf.note("owner position delta error", error=str(exc))
+            return
+        f.last_change_seq = seq
+
+    def _discard_stream_assembly(self, ps: PosStream, reason: str) -> None:
+        if ps.assembly is None:
+            return
+        ps.assembly = None
+        ps.counters["snapshots_discarded"] += 1
+        ps.invalidate(f"incomplete owner position snapshot discarded: {reason}")
 
     def _buffer(self, mf: MarketFeed, seq, kind, body, block, bt) -> None:
         """Keep the book and trigger deltas since the gap boundary, for catching a later snapshot up (6.4).
@@ -526,6 +738,9 @@ class FeedClient:
             a = mf.assembly
             if a is not None and mono_ns - a.started_mono_ns > limit:
                 self._discard_assembly(mf, f"not complete within {self.cfg['snapshot_timeout_ms']} ms")
+            sa = mf.opos.assembly
+            if sa is not None and mono_ns - sa.started_mono_ns > limit:
+                self._discard_stream_assembly(mf.opos, f"not complete within {self.cfg['snapshot_timeout_ms']} ms")
 
     def _build(self, a_family: str, rows: list, coverage: dict | None, excluded: dict | None):
         names = (coverage or {}).get("fields")
@@ -663,7 +878,7 @@ class FeedClient:
         mf = self.markets.get(market)
         if mf is None:
             return {"state": "INVALID", "reason": "no data for this market from this source yet"}
-        f = mf.fam[fam]
+        f = mf.opos.fam if fam == "owner_pos" else mf.fam[fam]
         out = {"family": fam, "watermark_block": f.wm_block, "watermark_block_time_ms": f.wm_block_time_ms,
                "applied_through": f.applied_through,
                # the limits the state was judged by, so a reader holding this status can keep aging it

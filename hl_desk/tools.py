@@ -651,7 +651,11 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
                        "INVALID": "not recovered since a gap, new session or incomplete snapshot; the data is withheld",
                        "REPLAY": "a recording, never current"},
             "rule": ("a late family labels, it doesn't withhold: BEHIND and STALE data is served with "
-                     "its state, reason and delay_ms; INVALID, UNKNOWN and no data withhold")}
+                     "its state, reason and delay_ms; INVALID, UNKNOWN and no data withhold"),
+            "owner_pos": ("the market's owner position stream (PROTOCOL.md 4.8, opt-in): the signed position of every "
+                          "owner of a waiting whole-position TP/SL, feeding the stop map's size estimate beside the "
+                          "stated figures; listed only when the handshake named the stream; INVALID with the reason when "
+                          "the feed has none; no per-account position is ever served")}
 
 
 def node_book(snap: dict, args: dict, rt=None) -> dict:
@@ -684,7 +688,7 @@ def run_tool(name: str, args: dict | None, rt) -> str:
             return _error(name, err or "no snapshot available", collector=rt.status().get("collector"))
         # Results in the latest snapshot are re-judged at serving time: a node family past its delay limit by now
         # isn't served as LIVE, a public field past its freshness limit isn't served as fresh, and nothing built on
-        # either is served (Codex h1 review 1, B1). Historical reads (by ID) are as of build time.
+        # either is served. Historical reads (by ID) are as of build time.
         from .node.serving import age_snapshot_for_serving
         from .serving_public import age_snapshot
         snap = age_snapshot(age_snapshot_for_serving(snap))

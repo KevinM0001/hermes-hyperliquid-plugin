@@ -18,6 +18,8 @@ import os
 import random
 import time
 
+from .proto import OWNER_POS_SUFFIX
+
 LINE_LIMIT = 64 * 1024 * 1024
 
 
@@ -52,9 +54,17 @@ def source_label(spec) -> str:
 
 
 def handshake(client, markets: list[str]) -> dict:
-    hs = {"v": 2, "markets": list(markets), "start": "snapshot"}
+    names = list(markets)
+    if client.cfg.get("owner_positions", True):
+        # The owner position streams (PROTOCOL.md 4.8): named here, or the feed serves none; a producer without them
+        # lists the names back as unknown and the plugin says the feed carries no positions.
+        names += [m + OWNER_POS_SUFFIX for m in markets]
+    hs = {"v": 2, "markets": names, "start": "snapshot"}
     if client.epoch is not None:
         nxt = {m: mf.last_seq + 1 for m, mf in client.markets.items() if mf.last_seq is not None and m in markets}
+        for m, mf in client.markets.items():
+            if m in markets and mf.opos.offered and mf.opos.last_seq is not None and m + OWNER_POS_SUFFIX in names:
+                nxt[m + OWNER_POS_SUFFIX] = mf.opos.last_seq + 1
         if nxt:
             hs["resume"] = {"epoch": client.epoch, "next": nxt}
     return hs

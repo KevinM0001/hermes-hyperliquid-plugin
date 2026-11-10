@@ -175,7 +175,7 @@ def category(kind: str, side: str) -> str:
 
 
 def census(triggers: "NodeTriggers", ref_px: Decimal, step: Decimal, n_bands: int, plausible_ratio: Decimal,
-           walked_depth: dict) -> dict:
+           walked_depth: dict, est: dict | None = None) -> dict:
     """Every waiting trigger counted exactly once for the stop map: in a band of the move that fires it (bands of
     `step` out to n_bands x step from ref_px, the thinning panel's edges) or under the first exclusion that applies,
     in this order: implausible price (outside [ref/plausible_ratio, ref x plausible_ratio], or not positive),
@@ -190,21 +190,21 @@ def census(triggers: "NodeTriggers", ref_px: Decimal, step: Decimal, n_bands: in
     for g in triggers.orders.values():
         px = g.trigger_px
         if px <= 0 or px > ref_px * plausible_ratio or px < ref_px / plausible_ratio:
-            _cadd(excluded["implausible_price"], g)
+            _cadd(excluded["implausible_price"], g, est)
             continue
         d = fires_on(g.kind, g.side)
         if (d == "fall" and px >= ref_px) or (d == "rise" and px <= ref_px):
-            _cadd(excluded["already_true_at_price"], g)
+            _cadd(excluded["already_true_at_price"], g, est)
             continue
         dist = (ref_px - px) / ref_px if d == "fall" else (px - ref_px) / ref_px
         k = int(dist / step)
         if k >= n_bands:
-            _cadd(excluded["beyond_range"], g)
+            _cadd(excluded["beyond_range"], g, est)
             continue
-        if not g.position_tpsl and g.sz * px > walked_depth[d][k]:
-            _cadd(excluded["size_outlier"], g)
+        if not g.position_tpsl and g.sz * px > walked_depth[d][k]:      # stated sizes only: estimates never qualify
+            _cadd(excluded["size_outlier"], g, est)
             continue
-        _cadd(bands[d][k], g)
+        _cadd(bands[d][k], g, est)
     in_bands = sum(b["orders"] for d in bands for b in bands[d])
     return {"ref_px": ref_px, "step": step, "n_bands": n_bands, "bands": bands, "excluded": excluded,
             "waiting_total": len(triggers.orders), "in_bands": in_bands,
@@ -213,10 +213,68 @@ def census(triggers: "NodeTriggers", ref_px: Decimal, step: Decimal, n_bands: in
 
 def _cbucket() -> dict:
     return {"orders": 0, "sized_orders": 0, "unsized_orders": 0, "sz": ZERO, "notional": ZERO, "users": set(),
-            "by_category": {}, "_largest": None}
+            "by_category": {}, "_largest": None,
+            # the whole-position orders' estimates from their owners' positions (Kevin, Nov 10), kept apart from the
+            # stated figures above: never added into sz or notional
+            "est_sz": ZERO, "est_notional": ZERO, "est_orders": 0, "est_upper": 0, "est_nearer": 0, "est_unknown": {},
+            "est_users": set(), "_est_largest": None}
 
 
-def _cadd(b: dict, g: Trigger) -> None:
+# --- whole-position size estimates from owners' positions (Kevin, Nov 10; PROTOCOL.md 4.8) ---------------------
+
+EST_FLAT = "owner flat"
+EST_WRONG_SIDE = "wrong side: the order would add to the position, not close it"
+EST_MISSING = "owner missing from owner_pos (feed defect)"
+EST_NO_OWNER = "owner unknown"
+EST_COUNTED_NEARER = "same position, counted at its nearest trigger"
+EST_UPPER = "upper bound: stated orders on this position may fire first"
+
+
+def estimates(orders: dict, positions: dict) -> dict:
+    """oid -> {"sz": Decimal | None, "reason": str | None, "upper_bound": bool} for every whole-position order: the
+    size it would close if it fired now, from its owner's signed position (the Plugin session's rules, Nov 10).
+    |pos| when the order's side closes the position (a sell, side A, for a long; a buy, side B, for a short), less
+    the stated sizes of the owner's same-side orders that fire before it in the same move (they close first; the
+    estimate is then an upper bound and says so); within an owner's same-side orders of one kind only the one that
+    fires first carries the position, the others carry 0 (one position closes once); a flat owner, a wrong-side
+    order or an owner missing from the stream give None with the reason. Stated orders are never changed. The
+    fires-first order within a move needs no reference price: of fall triggers the higher price fires first, of rise
+    triggers the lower."""
+    groups: dict[tuple, list] = {}
+    out: dict = {}
+    for g in orders.values():
+        if g.user is None:
+            if g.position_tpsl:
+                out[g.oid] = {"sz": None, "reason": EST_NO_OWNER, "upper_bound": False}
+            continue
+        groups.setdefault((g.user, g.side, fires_on(g.kind, g.side)), []).append(g)
+    for (user, side, d), gs in groups.items():
+        if not any(g.position_tpsl for g in gs):
+            continue
+        pos = positions.get(user)
+        if pos is None or pos == 0 or not ((side == "A" and pos > 0) or (side == "B" and pos < 0)):
+            why = EST_MISSING if pos is None else (EST_FLAT if pos == 0 else EST_WRONG_SIDE)
+            for g in gs:
+                if g.position_tpsl:
+                    out[g.oid] = {"sz": None, "reason": why, "upper_bound": False}
+            continue
+        gs.sort(key=lambda g: ((-g.trigger_px) if d == "fall" else g.trigger_px, g.oid))     # fires first, first
+        stated_before, seen = ZERO, set()
+        for g in gs:
+            if not g.position_tpsl:
+                stated_before += g.sz
+                continue
+            if g.kind in seen:
+                out[g.oid] = {"sz": ZERO, "reason": EST_COUNTED_NEARER, "upper_bound": False}
+                continue
+            seen.add(g.kind)
+            left = abs(pos) - stated_before
+            out[g.oid] = {"sz": left if left > 0 else ZERO, "reason": EST_UPPER if stated_before > 0 else None,
+                          "upper_bound": stated_before > 0}
+    return out
+
+
+def _cadd(b: dict, g: Trigger, est: dict | None = None) -> None:
     cat = b["by_category"].get(category(g.kind, g.side))
     if cat is None:
         cat = b["by_category"][category(g.kind, g.side)] = {"orders": 0, "sized_orders": 0, "unsized_orders": 0,
@@ -236,3 +294,22 @@ def _cadd(b: dict, g: Trigger) -> None:
         n = g.sz * g.trigger_px
         if lg is None or n > lg.sz * lg.trigger_px or (n == lg.sz * lg.trigger_px and g.oid < lg.oid):
             b["_largest"] = g
+    elif est is not None:
+        e = est.get(g.oid)
+        if e is None or e["sz"] is None:
+            why = e["reason"] if e is not None else EST_NO_OWNER
+            b["est_unknown"][why] = b["est_unknown"].get(why, 0) + 1
+        elif e["reason"] == EST_COUNTED_NEARER:
+            b["est_nearer"] += 1
+        else:
+            n = e["sz"] * g.trigger_px
+            b["est_orders"] += 1
+            b["est_sz"] += e["sz"]
+            b["est_notional"] += n
+            if e["upper_bound"]:
+                b["est_upper"] += 1
+            if e["sz"] > 0:
+                b["est_users"].add(g.user)
+                lg = b["_est_largest"]
+                if lg is None or n > lg[0] or (n == lg[0] and g.oid < lg[1].oid):
+                    b["_est_largest"] = (n, g, e["sz"])

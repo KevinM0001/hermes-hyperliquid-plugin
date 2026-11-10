@@ -953,3 +953,6 @@
 
 /* a glance tile whose value is a list, not a number */
 .hd-tile-value.hd-tile-plain { font: inherit; white-space: normal; overflow: visible; min-height: 0; display: block; }
+/* the stop map's estimate (Kevin, Nov 10): a quiet second figure beside the stated one */
+.hd-smap-est { font-size: 10.5px; line-height: 1.2; }
+.hd-smap-byest { list-style: none; padding-left: 0; margin: 2px 0 4px; font-size: 11.5px; }
