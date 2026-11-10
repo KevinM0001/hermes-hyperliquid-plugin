@@ -467,7 +467,10 @@
 .hd-band-tip { position: absolute; z-index: 3; max-width: 380px; pointer-events: none; background: rgba(18, 18, 18, .96); border: 1px solid var(--hd-line); border-radius: 4px; padding: 6px 8px; font: 500 11px/1.4 var(--hd-mono); color: var(--hd-text); display: flex; flex-direction: column; gap: 4px; }
 .hd-ovbar { margin-left: 8px; }
 /* the context values in the chart card's head (Kevin, Nov 10) */
-.hd-p-chart .hd-badges { flex: 1 1 auto; justify-content: flex-end; align-items: center; min-width: 0; }
+.hd-p-chart .hd-card-head { flex-wrap: nowrap; align-items: center; }   /* title | centred values | badge on one line */
+.hd-p-chart .hd-card-titles { flex: 0 0 auto; }
+.hd-p-chart .hd-badges { flex: 1 1 auto; justify-content: flex-end; align-items: center; min-width: 0; flex-wrap: nowrap; }
+@media (max-width: 1150px) { .hd-p-chart .hd-card-head { flex-wrap: wrap; } .hd-p-chart .hd-badges { flex-wrap: wrap; } }
 .hd-ctx-inline { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
 /* Centred between the title and the badge, each value in a fixed-width slot so a digit more or less never moves
    the row (Kevin, Nov 10). */
