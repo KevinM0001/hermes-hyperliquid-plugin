@@ -139,7 +139,7 @@ def fixture_violations(line: dict) -> list[str]:
     if allowed is None:
         return out + [f"kind:{kind}"]
     out += [f"{kind}.{k}" for k in body if k not in allowed]
-    if kind in ("book_snapshot", "trig_snapshot") and isinstance(body.get("coverage"), dict):
+    if kind in ("book_snapshot", "trig_snapshot", "opos_snapshot") and isinstance(body.get("coverage"), dict):
         out += [f"{kind}.coverage.{k}" for k in body["coverage"] if k not in COVERAGE_FIELDS]
     for key in ("excluded",):
         if isinstance(body.get(key), dict):
@@ -147,6 +147,7 @@ def fixture_violations(line: dict) -> list[str]:
     # Snapshot, depth and bands rows are positional: their column names (the coverage's or body's `fields`) must be
     # listed, and every row must have exactly that many columns.
     tables = {"book_snapshot": (("orders",), ORDER_ROW_FIELDS), "trig_snapshot": (("triggers",), TRIGGER_ROW_FIELDS),
+              "opos_snapshot": (("positions",), POSITION_ROW_FIELDS),
               "depth": (("bids", "asks"), DEPTH_ROW_FIELDS), "bands": (("rows",), BAND_ROW_FIELDS)}
     if kind in tables:
         keys, allowed_cols = tables[kind]
@@ -173,6 +174,14 @@ def fixture_violations(line: dict) -> list[str]:
     if kind == "trig_delta":
         for c in body.get("changes") or []:
             out += [f"trig_delta.change.{k}" for k in c if k not in TRIG_CHANGE_FIELDS]
+    if kind == "opos_delta":
+        for key in ("set",):
+            for r in body.get(key) or []:
+                if not isinstance(r, list) or len(r) != len(POSITION_ROW_FIELDS):
+                    out.append(f"opos_delta.{key}: a row that isn't {len(POSITION_ROW_FIELDS)} columns")
+                    break
+        if any(not isinstance(u, str) for u in body.get("drop") or []):
+            out.append("opos_delta.drop: not a list of addresses")
     if kind == "execs":
         for e in body.get("execs") or []:
             out += [f"execs.exec.{k}" for k in e if k not in EXEC_FIELDS]

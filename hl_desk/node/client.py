@@ -136,8 +136,8 @@ class PosStream:
         self.block_time_ms: int | None = None
         self.wm_hist: deque = deque()             # the stream's own timed watermarks: (receipt mono ns, receipt wall - block time)
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_applied": 0, "snapshots_rejected": 0,
-                         "snapshots_discarded": 0, "orphan_parts": 0, "deltas_unapplied": 0, "unknown_kinds": 0,
-                         "sets": 0, "drops": 0}
+                         "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0, "deltas_unapplied": 0,
+                         "unknown_kinds": 0, "sets": 0, "drops": 0}
 
     def invalidate(self, reason: str) -> None:
         self.fam.invalidate(reason)
@@ -550,6 +550,10 @@ class FeedClient:
             ps.counters["snapshots_rejected"] += 1
             ps.invalidate(f"owner position snapshot holds {len(positions)} owners, total says {a.total}")
             return
+        if ps.positions is not None and ps.fam.valid and positions != ps.positions:
+            # A periodic snapshot replacing a tracked set that differs from it: counted, the snapshot taken (6.4).
+            ps.counters["snapshot_mismatches"] += 1
+            mf.note("owner positions snapshot differs from the tracked set", owners=len(positions))
         ps.positions = positions
         ps.basis = (a.coverage or {}).get("basis")
         ps.unavailable = None

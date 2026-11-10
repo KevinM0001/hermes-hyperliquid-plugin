@@ -852,8 +852,8 @@ def _recorder_line_violations(o: dict) -> list[str]:
                 out += [] if isinstance(v, list) and all(isinstance(x, str) for x in v) else [f"recording_end.{k}"]
             elif k == "gaps":
                 out += [] if v == [] else ["recording_end.gaps: gap markers aren't in these fixtures"]
-            elif k == "cut":
-                out += [] if isinstance(v, dict) and all(_uint_or_str(x) for x in v.values()) else ["recording_end.cut"]
+            elif k == "cut":           # a cut's reason map, or null when the span was recorded whole (revision 2.3 recordings)
+                out += [] if v is None or (isinstance(v, dict) and all(_uint_or_str(x) for x in v.values())) else ["recording_end.cut"]
             elif not _uint_or_str(v):
                 out.append(f"recording_end.{k}: wrong shape")
     else:
@@ -892,7 +892,9 @@ def test_every_fixture_line_is_on_the_v2_allowlist_and_matches_its_manifest():
                 bad = fixture_violations(msg)
                 checked["control" if "control" in msg else "data"] += 1
             assert not bad, f"{fx['file']} line {n}: {bad}"
-    assert checked == {"data": 3714, "control": 4, "recorder": 3}       # 2 hellos and 2 heartbeats; 2 headers, 1 trailer
+    # 2 hellos and 2 heartbeats; 5 headers and 4 trailers (the three owner-position recordings of Nov 10 each carry a
+    # header and a trailer and no control line); their 788 data lines include the position streams' own
+    assert checked == {"data": 4502, "control": 4, "recorder": 9}
     # The check isn't vacuous: an extra field, a forbidden node field, an unknown kind, a nested object under a
     # scalar control field, an unlisted key in a nested map, or an unlisted recorder field is reported.
     line = next(m for m in (json.loads(t).get("msg") for t in

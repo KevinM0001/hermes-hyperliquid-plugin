@@ -21,7 +21,7 @@ from decimal import Decimal
 
 from hl_desk.node import panels, serving
 from hl_desk.node.transport import handshake
-from hl_desk.node.triggers import (EST_COUNTED_NEARER, EST_FLAT, EST_MISSING, EST_NOT_YET, EST_NO_OWNER, EST_UPPER, EST_WRONG_SIDE,
+from hl_desk.node.triggers import (EST_COUNTED_NEARER, EST_FLAT, EST_MISSING, EST_NOT_YET, EST_NO_OWNER, EST_SET_ASIDE, EST_UPPER, EST_WRONG_SIDE,
                                    Trigger, _cadd, _cbucket, estimates, fires_on)
 
 from node_helpers import FIX, NO_AGE, OPTS, client, hello_from, jsonable, read_recording, surfaces
@@ -288,12 +288,13 @@ def test_the_producers_recording_gives_real_estimates_beside_the_stated_clusters
     assert {k: f["state"] for k, f in v["families"].items()} == {k: "LIVE" for k in ("book", "triggers", "depth", "bands", "flow", "owner_pos")}
     st, e = v["stops"], v["stops"]["estimate"]
     assert e["available"] and e["same_block"] and e["defects"] == 0
-    assert (e["owners"], e["whole_position_orders"], e["estimated"], e["counted_at_nearer"], e["upper_bound"]) == (1_751, 2_081, 2_073, 4, 47)
-    assert e["unknown"] == {EST_FLAT: 4} and e["as_of_note"].endswith("Z") and "snapshot 1212920000" in e["basis"]
+    # 28 whole-position orders are set aside (already true at the price, or implausible: the map excludes them), 3 owners flat
+    assert (e["owners"], e["whole_position_orders"], e["estimated"], e["counted_at_nearer"], e["upper_bound"]) == (1_751, 2_081, 2_046, 4, 46)
+    assert e["unknown"] == {EST_SET_ASIDE: 28, EST_FLAT: 3} and e["as_of_note"].endswith("Z") and "snapshot 1212920000" in e["basis"]
     # the clusters: stated first, the estimate second, both walk shares, the whole-position count and how many estimated
     top = st["clusters"][0]
     assert top["fires_on"] == "fall" and top["k"] == 8 and top["lower_bound"] is True
-    assert top["notional_usd"] == 4_197_893.01 and top["estimate"]["notional_usd"] == 796_120.01 and top["total_est_usd"] == 4_994_013.03
+    assert top["notional_usd"] == 4_197_893.01 and top["estimate"]["notional_usd"] == 796_120.01 and top["total_est_usd"] == 4_994_013.02
     assert top["walk"]["ratio_pct"] == 21.17 and top["walk"]["ratio_pct_est"] == 25.18
     assert top["text"] == ("Sell-side triggers at 73.7885 to 73.4042 (-4.0% to -4.5%): at least $4.20M stated, about $4.99M with "
                            "whole-position orders at their owners' positions as of 20:48:26Z, across 94 orders from 88 accounts; the "
@@ -391,3 +392,57 @@ def test_an_owner_missing_between_the_markets_line_and_the_streams_is_not_a_defe
     now = (msgs[-1][0] + 100, (len(msgs) + 2) * 10 ** 9)
     e = panels.market_view(c, M, OPTS, *now)["stops"]["estimate"]
     assert e["same_block"] is True and e["defects"] == 0 and EST_NOT_YET not in e["unknown"] and e["estimated"] == 3
+
+
+def test_an_order_the_map_excludes_at_the_price_never_takes_the_position():
+    """A stale bracket (a sell stop above the price, already true at it) of the same owner, side and kind is set
+    aside: the waiting in-band order carries the position; without the reference price both would be ordered by
+    trigger price alone and the stale one would fire first."""
+    from hl_desk.node.triggers import EST_SET_ASIDE
+    L = "0x" + "a" * 40
+    orders = {g.oid: g for g in [_t(1, "A", "stop", "76000", "0", L, True),       # above the mid: already true, set aside
+                                  _t(2, "A", "stop", "74000", "0", L, True)]}      # the waiting one, in a band below
+    pos = {L: Decimal("2")}
+    e = estimates(orders, pos, EST_MISSING, Decimal("75005"))
+    assert e[1] == {"sz": None, "reason": EST_SET_ASIDE, "upper_bound": False}
+    assert e[2] == {"sz": Decimal("2"), "reason": None, "upper_bound": False}
+    e2 = estimates(orders, pos)                                                   # no reference price: by price alone
+    assert e2[1]["sz"] == Decimal("2") and e2[2]["reason"] == EST_COUNTED_NEARER
+
+
+def test_a_periodic_snapshot_that_differs_from_the_tracked_set_is_counted():
+    c, h, msgs, now = _play(HAND)
+    ps = c.markets[M].opos
+    first = next(m for _, m in msgs if m.get("market") == S and m["kind"] == "opos_snapshot")
+    seq = ps.last_seq + 1
+    body = dict(first["body"], snapshot_id=S + ":9", through_seq=seq - 1, positions=[[u, str(v)] for u, v in sorted(ps.positions.items())], total_owners=len(ps.positions))
+    c.on_line(dict(first, seq=seq, body=body, block=ps.block, block_time_ms=ps.block_time_ms), now[0], now[1] + 10 ** 9)
+    assert ps.counters["snapshot_mismatches"] == 0 and ps.counters["snapshots_applied"] == 2
+    seq += 1
+    changed = [[u, str(v)] for u, v in sorted(ps.positions.items())]
+    changed[0][1] = "9"
+    body = dict(body, snapshot_id=S + ":10", through_seq=seq - 1, positions=changed)
+    c.on_line(dict(first, seq=seq, body=body, block=ps.block, block_time_ms=ps.block_time_ms), now[0] + 1, now[1] + 2 * 10 ** 9)
+    assert ps.counters["snapshot_mismatches"] == 1 and ps.positions[changed[0][0]] == Decimal("9") and ps.fam.valid
+
+
+def test_a_stops_block_without_a_book_still_has_every_estimate_field():
+    c, h, msgs, now = _play(HAND)
+    mf = c.markets[M]
+    st = panels.stop_map(mf, None, "no valid book", None, {"available": False, "reason": "x", "rule": panels.EST_RULE, "freshness": None})
+    assert st["clusters_by_estimate"] == [] and st["estimate"]["available"] is False and st["map"]["available"] is False
+
+
+def test_the_sentence_counts_the_orders_taken_at_a_nearer_trigger_and_the_total_matches_the_served_figures():
+    c, h, msgs, now = _play(HAND)
+    v = _view(c, now)
+    row = next(r for side in v["stops"]["map"]["sides"].values() for r in side["bands"] if (r["estimate"] or {}).get("orders"))
+    row = json.loads(json.dumps(jsonable(row)))
+    row["notional_usd"], row["lower_bound"], row["sized_orders"] = 1000.004, True, 1          # a stated part beside the estimate
+    row["estimate"]["counted_at_nearer"], row["estimate"]["unknown_orders"] = 2, 1
+    row["orders"], row["unknown_size_orders"] = 5, 4
+    row["total_est_usd"] = round(row["notional_usd"] + row["estimate"]["notional_usd"], 2)
+    text = panels._cluster_text(row)
+    assert "4 of 5 (80%) whole-position, 1 estimated, 2 counted at a nearer trigger, 1 unknown" in text
+    for r in (r for side in v["stops"]["map"]["sides"].values() for r in side["bands"] if r.get("total_est_usd") is not None):
+        assert r["total_est_usd"] == round((r["notional_usd"] or 0.0) + (r["estimate"]["notional_usd"] or 0.0), 2)

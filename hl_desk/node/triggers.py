@@ -222,16 +222,18 @@ def _cbucket() -> dict:
 
 # --- whole-position size estimates from owners' positions (Kevin, Nov 10; PROTOCOL.md 4.8) ---------------------
 
+MAP_PLAUSIBLE = Decimal(10)          # the stop map's plausibility ratio (panels.MAP_PLAUSIBLE_RATIO), mirrored here
 EST_FLAT = "owner flat"
 EST_WRONG_SIDE = "wrong side: the order would add to the position, not close it"
 EST_MISSING = "owner missing from owner_pos (feed defect)"
 EST_NOT_YET = "owner not in the position stream yet (the two families stand at different blocks)"
 EST_NO_OWNER = "owner unknown"
 EST_COUNTED_NEARER = "same position, counted at its nearest trigger"
+EST_SET_ASIDE = "set aside: already true at the price or implausible (the map excludes it)"
 EST_UPPER = "upper bound: stated orders on this position may fire first"
 
 
-def estimates(orders: dict, positions: dict, missing_reason: str = EST_MISSING) -> dict:
+def estimates(orders: dict, positions: dict, missing_reason: str = EST_MISSING, ref_px: Decimal | None = None) -> dict:
     """oid -> {"sz": Decimal | None, "reason": str | None, "upper_bound": bool} for every whole-position order: the
     size it would close if it fired now, from its owner's signed position (the Plugin session's rules, Nov 10).
     |pos| when the order's side closes the position (a sell, side A, for a long; a buy, side B, for a short), less
@@ -248,7 +250,18 @@ def estimates(orders: dict, positions: dict, missing_reason: str = EST_MISSING) 
             if g.position_tpsl:
                 out[g.oid] = {"sz": None, "reason": EST_NO_OWNER, "upper_bound": False}
             continue
-        groups.setdefault((g.user, g.side, fires_on(g.kind, g.side)), []).append(g)
+        d = fires_on(g.kind, g.side)
+        if ref_px is not None:
+            px = g.trigger_px
+            # An order the map excludes at the price (a stale bracket already true at it, or an implausible price)
+            # neither carries the position nor fires first: it is set aside, so it can't take the estimate from a
+            # waiting order of the same owner.
+            if (px <= 0 or px > ref_px * MAP_PLAUSIBLE or px < ref_px / MAP_PLAUSIBLE
+                    or (d == "fall" and px >= ref_px) or (d == "rise" and px <= ref_px)):
+                if g.position_tpsl:
+                    out[g.oid] = {"sz": None, "reason": EST_SET_ASIDE, "upper_bound": False}
+                continue
+        groups.setdefault((g.user, g.side, d), []).append(g)
     for (user, side, d), gs in groups.items():
         if not any(g.position_tpsl for g in gs):
             continue

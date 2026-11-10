@@ -364,10 +364,12 @@ def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
     # An owner missing from the stream is a feed defect only when both families stand at the same block; between a
     # market's line and its stream's line of the same block it is the expected moment before the set arrives.
     missing = EST_MISSING if same else EST_NOT_YET
-    key = (tf.last_change_seq, tf.since_seq, ps.fam.last_change_seq, ps.fam.since_seq, same)
+    ref = mf.book.mid() if (mf.book is not None and mf.crossed is None) else None
+    bf = mf.fam["book"]
+    key = (tf.last_change_seq, tf.since_seq, ps.fam.last_change_seq, ps.fam.since_seq, same, bf.last_change_seq, ref)
     cache = getattr(mf, "_est_cache", None)
     if cache is None or cache[0] != key:
-        cache = mf._est_cache = (key, estimates(mf.triggers.orders, ps.positions, missing))
+        cache = mf._est_cache = (key, estimates(mf.triggers.orders, ps.positions, missing, ref))
     est = cache[1]
     times = [x for x in (tbt, pbt) if isinstance(x, int) and not isinstance(x, bool)]
     older = min(times) if times else None
@@ -533,7 +535,7 @@ def stop_map(mf, depth: dict | None, unavailable: str | None, est: dict | None =
         why = f"needs a valid book for the reference price and the resting depth: {unavailable}"
         return {"map": {"available": False, "reason": why}, "clusters": None, "clusters_reason": why,
                 "exclusions": {"available": False, "reason": why}, "census": _census(mf, None, why),
-                "estimate": est_meta}
+                "clusters_by_estimate": [], "estimate": est_meta}
     mid = book.mid()
     walked = {d: _walked_depth(depth[meta["book"]]) for d, meta in MAP_SIDES.items()}
     c = census(tr, mid, THIN_STEP, THIN_BANDS, MAP_PLAUSIBLE_RATIO, {d: w["beyond"] for d, w in walked.items()}, est)
@@ -674,7 +676,9 @@ def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal,
                           "note": "one owner's estimated size is worth more than everything resting at and beyond this band; "
                                   "shown, and kept out of the stated-size outlier test"}
                          if lg_e is not None and beyond > 0 and lg_e[0] > beyond else None)}
-        row["total_est_usd"] = usd(total) if (e_n or notional is not None) else None
+        # the served total is the sum of the two served (rounded) figures, so it never differs from them by a cent
+        row["total_est_usd"] = (round((row["notional_usd"] or 0.0) + (row["estimate"]["notional_usd"] or 0.0), 2)
+                                if (e_n or notional is not None) else None)
         walk["ratio_pct_est"] = (_sig(float(total / beyond) * 100) if beyond > 0 and (e_n or notional is not None) else None)
         walk["ratio_est_label"] = "estimated: stated plus the whole-position estimate over the same depth"
     else:
@@ -751,9 +755,9 @@ def _cluster_text(row: dict) -> str:
         tail = walk["ratio_reason"]
     parts = [head, tail]
     if unsized and with_est:
-        unk = est["unknown_orders"]
+        unk, nearer = est["unknown_orders"], est.get("counted_at_nearer") or 0
         parts.append(f"{unsized} of {n} ({_pct2(100 * unsized / n)}) whole-position, {est['orders']} estimated"
-                     + (f", {unk} unknown" if unk else ""))
+                     + (f", {nearer} counted at a nearer trigger" if nearer else "") + (f", {unk} unknown" if unk else ""))
     elif unsized:
         # The unsized count as a number and a share (Kevin, Nov 10): "301 of 663 (45%) size unknown"; "at least" in
         # the head already says the notional is a floor.
