@@ -488,40 +488,69 @@ def test_the_tabs_visible_poll_is_what_keeps_relay_data_flowing(monkeypatch):
     assert "document.hidden) return;" in poll
 
 
-def test_the_copy_after_a_switch_to_full_never_replays_blocks_into_the_flow():
-    """A switch to full that keeps the flow window restarts the market from the relay's snapshot: the copy repeats
-    executions and watermarks the flow already has. They advance the sequence but never reach the flow, its bursts or
-    its panels again (a block time running backwards would reject the burst windows)."""
-    header, msgs = recorded()
-    btc = [(rx, m) for rx, m in msgs if m["market"] == "BTC"]
-    half = len(btc) // 2
-    ep, ss = header["producer"]["epoch"], header["producer"]["session"]
+def full_stream(lines):
+    """One market's executions recording as its full stream: the numbers between two recorded lines (the market's
+    book and trigger deltas, not in this recording) filled with empty book deltas carrying the next recorded line's
+    block, so a block's deltas come before its executions, as the engine sends them."""
+    out, prev = [], None
+    for rx, m in lines:
+        if prev is not None:
+            for q in range(prev + 1, m["seq"]):
+                out.append((rx, {"v": 2, "epoch": m["epoch"], "session": m["session"], "market": m["market"], "seq": q,
+                                 "kind": "book_delta", "block": m["block"], "block_time_ms": m["block_time_ms"],
+                                 "pub_ms": m["pub_ms"], "body": {"changes": []}}))
+        out.append((rx, m))
+        prev = m["seq"]
+    return out
 
-    def run(switch: bool):
+
+def test_switching_away_and_back_never_drops_or_replays_an_execution():
+    """BTC full, switched to executions only and back to full while the stream is paused between a book delta and
+    the same block's executions (Codex review 4 of 2104851, B1). The relay's copy repeats the lines already received,
+    with their original numbers: those never reach the flow or its bursts again, and the paused block's executions,
+    which hadn't arrived, are counted when they do. The flow equals an uninterrupted client's."""
+    header, msgs = recorded()
+    btc = full_stream([(rx, m) for rx, m in msgs if m["market"] == "BTC"])
+    ep, ss = header["producer"]["epoch"], header["producer"]["session"]
+    # The pause: a book delta immediately followed by its own block's executions, late enough that the flow is valid.
+    cut = next(i for i in range(len(btc) // 2, len(btc) - 1)
+               if btc[i][1]["kind"] == "book_delta" and btc[i + 1][1]["kind"] == "execs"
+               and btc[i + 1][1]["block"] == btc[i][1]["block"] and btc[i + 1][1]["body"].get("execs"))
+    hello = relay_hello(header, msgs, {"BTC": "full"})
+    hello["markets"]["BTC"]["start_seq"] = btc[0][1]["seq"]
+
+    def make():
         c = NodeManager(DeskConfig(markets=["BTC"])).attach_bursts(client("relay"))     # the plugin's burst rule
-        c.on_line(relay_hello(header, msgs, {"BTC": "execs"}), btc[0][0], btc[0][0] * 1_000_000)
-        feed(c, execs_view(btc[:half]))
-        if not switch:
-            feed(c, execs_view(btc)[len(execs_view(btc[:half])):])
-            return c
-        mf = c.markets["BTC"]
-        start = 5
-        c.on_line({"v": 2, "control": "view", "epoch": ep, "session": ss, "pub_ms": 1, "market": "BTC", "view": "full",
-                   "next_seq": mf.last_seq + 1, "oldest_seq": 1, "start_seq": start, "snapshot": "pending"},
-                  btc[half][0], btc[half][0] * 1_000_000)
-        # The copy: the market's lines from an earlier point (here the last third already seen), numbered on from
-        # start_seq as one contiguous full stream, then the rest live.
-        copy = btc[half // 3:]
-        for i, (rx, m) in enumerate(copy):
-            c.on_line(dict(m, seq=start + i), rx, rx * 1_000_000)
+        c.on_line(hello, btc[0][0], btc[0][0] * 1_000_000)
         return c
 
-    ref, sw = run(False), run(True)
-    rule = sw.markets["BTC"].flow.bursts
+    ref = make()
+    feed(ref, btc)
+    sw = make()
+    feed(sw, btc[:cut + 1])
+    mf = sw.markets["BTC"]
+    assert mf.fam["flow"].valid and mf.last_seq == btc[cut][1]["seq"]
+
+    def view(v, nxt, start=None):
+        sw.on_line({"v": 2, "control": "view", "epoch": ep, "session": ss, "pub_ms": 1, "market": "BTC", "view": v,
+                    "next_seq": nxt, "oldest_seq": 1, "start_seq": nxt if start is None else start,
+                    "snapshot": "in_stream" if v == "full" else "none"}, btc[cut][0], btc[cut][0] * 1_000_000)
+
+    view("execs", mf.last_seq + 1)                         # the user opens another market
+    s0 = btc[len(btc) // 4][1]["seq"]
+    view("full", mf.last_seq + 1, start=s0)                # and comes back: the relay restarts BTC from an earlier point
+    assert mf.last_seq == s0 - 1
+    copy = [(rx, m) for rx, m in btc if s0 <= m["seq"]]    # the copy up to the pause, then the rest live
+    feed(sw, copy)
     assert sw.counters["copy_repeats"] > 0
+    rule = mf.flow.bursts
     assert "a block time ran backwards" not in rule.counters["rejected"]
-    assert sw.markets["BTC"].counters["gaps"] == 0 and sw.markets["BTC"].fam["flow"].valid
-    assert set(sw.markets["BTC"].flow.execs) == set(ref.markets["BTC"].flow.execs)
+    assert mf.counters["gaps"] == 0 and mf.fam["flow"].valid
+    missing = set(ref.markets["BTC"].flow.execs) - set(mf.flow.execs)
+    assert not missing, f"executions dropped after the switch: {sorted(missing)[:5]}"
+    assert set(mf.flow.execs) == set(ref.markets["BTC"].flow.execs)
+    paused = {e["tid"] for e in btc[cut + 1][1]["body"]["execs"]}
+    assert paused <= set(mf.flow.execs)                    # the paused block's executions, counted when they arrived
 
 
 def test_public_bursts_keep_running_until_relay_data_flows():

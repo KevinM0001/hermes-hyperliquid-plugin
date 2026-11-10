@@ -108,9 +108,13 @@ class MarketFeed:
         self.block_time_ms: int | None = None
         self.crossed: dict | None = None        # set when the book is seen crossed, cleared by a snapshot
         # After a relay switch to full data that kept the flow window: the copy from the relay's snapshot repeats
-        # executions and watermarks of blocks the flow already processed. Those are applied to sequence and state,
-        # never to the flow, its bursts or its panels again (a block time running backwards would be a rejection).
-        self.flow_seen_through_block: int | None = None
+        # lines the client already received, with their original sequence numbers. The flow consumed every executions
+        # and watermark line up to the position it had at the switch (the switch was checked continuous, and a
+        # filtered range never covers one), so copy lines up to that sequence are applied to sequence and state, never
+        # to the flow, its bursts or its panels again (a block time running backwards would be a rejection). Anything
+        # after it, even in the same block, is new (Codex review 4 of 2104851, B1: a block-based horizon dropped an
+        # execution whose block had only been seen in a book delta).
+        self.flow_seen_through_seq: int | None = None
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_swapped": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0,
                          "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0}
@@ -436,14 +440,14 @@ class FeedClient:
         mf.crossed = None
 
     @staticmethod
-    def _flow_repeat(mf: MarketFeed, block) -> bool:
-        """A copy line of a block the kept flow window already processed (see MarketFeed.flow_seen_through_block)."""
-        through = mf.flow_seen_through_block
-        if through is None or not isinstance(block, int):
+    def _flow_repeat(mf: MarketFeed, seq) -> bool:
+        """A copy line the kept flow window already consumed (see MarketFeed.flow_seen_through_seq)."""
+        through = mf.flow_seen_through_seq
+        if through is None or not isinstance(seq, int):
             return False
-        if block <= through:
+        if seq <= through:
             return True
-        mf.flow_seen_through_block = None         # the copy has caught up: the flow continues from here
+        mf.flow_seen_through_seq = None           # the copy has caught up: the flow continues from here
         return False
 
     def _restart_full(self, mf: MarketFeed, start_seq, reason: str) -> None:
@@ -452,7 +456,7 @@ class FeedClient:
         may repeat executions, counted once by tid). The position becomes start_seq - 1, never unknown, so the next
         line is checked: a number missing after the restart is a gap."""
         self._full_data_lost(mf, reason)
-        mf.flow_seen_through_block = mf.block if mf.fam["flow"].valid else None
+        mf.flow_seen_through_seq = mf.last_seq if mf.fam["flow"].valid else None
         if isinstance(start_seq, int) and not isinstance(start_seq, bool) and start_seq >= 1:
             mf.expected_start = start_seq
             mf.last_seq = start_seq - 1
@@ -507,7 +511,7 @@ class FeedClient:
             if not f.valid:
                 f.valid, f.reason, f.since_seq = True, None, seq
             f.last_change_seq = seq
-        elif kind == "execs" and self._flow_repeat(mf, block):
+        elif kind == "execs" and self._flow_repeat(mf, seq):
             self.counters["copy_repeats"] = self.counters.get("copy_repeats", 0) + 1
         elif kind == "execs":
             new = mf.flow.on_execs(body, block, bt)
@@ -548,7 +552,7 @@ class FeedClient:
         keep_ns = (self.cfg["delay_window_ms"] + 60_000) * 1_000_000
         while len(mf.wm_hist) > 2 and mf.wm_hist[1][0] < mono_ns - keep_ns:
             mf.wm_hist.popleft()
-        repeat = self._flow_repeat(mf, block)
+        repeat = self._flow_repeat(mf, seq)
         if isinstance(block, int) and not repeat:
             mf.flow.on_watermark(block, bt)
             fl = mf.fam["flow"]
@@ -803,7 +807,7 @@ class FeedClient:
         mf.crossed = None
         mf.panels = None          # history, walls and burst state never bridge a gap
         mf.wm_hist.clear()        # nor does the node feed's averaged delay: it restarts at the next timed watermark
-        mf.flow_seen_through_block = None
+        mf.flow_seen_through_seq = None
         mf.flow.boundary(reason)
         mf.note("invalidated", reason=reason)
 
