@@ -660,7 +660,7 @@
     const regimeValue = live
       ? (conf ? h(RegimeBadge, { regime: conf.state, title: "confirmed: the latched regime (needs 2 consecutive ticks)" + (sameNow ? "" : "; this tick classifies as " + live.state) })
           : h("span", { className: "hd-regime hd-regime-none", title: reasonOf(card.regime) }, "NOT CONFIRMED"))
-      : h(Unavailable, { reason: cardWhy });
+      : h(Unavailable, { reason: cardWhy, compact: true });     // the reason in the tooltip: the row keeps its height
     const regimeSub = live
       ? [conf ? "confirmed since " + (conf.since ? hms(conf.since) + "Z" : "?") + (isNum(conf.held_s) ? " (held " + heldS(conf.held_s) + ")" : "")
           : reasonOf(card.regime),
@@ -700,7 +700,7 @@
           value: tw && tw.value ? h(Fragment, null,
             h("span", null, isNum(tw.share_pct) ? pct(tw.share_pct, 0) : "share unavailable"),
             h("span", { className: "hd-tile-value-sm" }, h(Addr, { address: tw.value, onOpen: props.onOpen })))
-            : h(Unavailable, { reason: reasonOf(tw) }),
+            : h(Unavailable, { reason: reasonOf(tw), compact: true }),
           sub: tw && tw.value ? (tw.share_label || "share label not in snapshot") + " \u00b7 net aggr " +
             (isNum(tw.net_aggressive_usd) ? usdSigned(tw.net_aggressive_usd) : "unavailable") : "the card's 90 s window"
         })),
