@@ -3425,9 +3425,26 @@
     const chatRef = useRef(null);
     const latest = useRef({});
     latest.current = { name: name, choice: choice };
+    // The question and the answer open in an overlay over the page, like the wallet view (Kevin, Nov 10); the card
+    // under the chart keeps only the button, the model choice and the copy link.
+    const [open, setOpen] = useState(false);
+    const [left, setLeft] = useState(0);
+    useEffect(function () {
+      if (!open) return undefined;
+      function onKey(e) { if (e.key === "Escape") setOpen(false); }
+      function measure() {
+        const root = document.querySelector(".hd-root");
+        setLeft(root ? Math.max(0, Math.round(root.getBoundingClientRect().left)) : 0);
+      }
+      measure();
+      document.addEventListener("keydown", onKey);
+      window.addEventListener("resize", measure);
+      return function () { document.removeEventListener("keydown", onKey); window.removeEventListener("resize", measure); };
+    }, [open]);
     function start(question) {
       const L = latest.current;
       if (chatRef.current) { chatRef.current.stop(); chatRef.current.close(); chatRef.current = null; }
+      setOpen(true);
       setQ(question); setAnswer(""); setErr(null); setSess(null); setBusy(true); setStartedAt(Date.now()); setStatus("connecting" + ELLIPSIS);
       const parts = L.choice ? L.choice.split("|") : null;
       chatRef.current = hermesChat({
@@ -3475,7 +3492,7 @@
     const defaultQ = askQuestion("market", name, r.snapshot_id);
     const elapsed = busy && startedAt ? Math.round((Date.now() - startedAt) / 1000) + tick * 0 : null;
     return h(Panel, {
-      id: "hermes", className: "hd-p-hermes", title: "Hermes says \u00b7 " + name, label: "Ask Hermes in the page",
+      id: "hermes", className: "hd-p-hermes", title: "Ask Hermes \u00b7 " + name, label: "Ask Hermes in the page",
       why: h("p", null, "Ask Hermes sends the question, with the snapshot ID on screen, to the agent through the dashboard's own chat " +
         "socket and streams the answer here; the agent uses the hyperliquid commentary skill and the plugin's tools, and the tab adds " +
         "nothing. The session is a normal Hermes chat: open it in the Chat page to continue. The model is the dashboard's configured " +
@@ -3487,20 +3504,29 @@
     h("div", { className: "hd-hs-row" },
       h("button", { type: "button", className: "hd-btn hd-btn-primary", disabled: !canChat || busy, onClick: function () { start(defaultQ); } },
         busy ? "Asking" + ELLIPSIS : "Ask Hermes"),
-      busy ? h("button", { type: "button", className: "hd-btn", onClick: function () { if (chatRef.current) chatRef.current.stop(); } }, "Stop") : null,
-      sess && sess.stored_session_id ? h("button", { type: "button", className: "hd-btn", onClick: function () { openChatResume(sess.stored_session_id); } }, "Open in chat") : null,
+      q && !open ? h("button", { type: "button", className: "hd-btn", onClick: function () { setOpen(true); } }, busy ? "Show the answer" : "Show the last answer") : null,
       choices.length ? h("label", { className: "hd-group hd-hs-model" }, "model",
         h("select", { value: choice, disabled: busy, "aria-label": "Model for this question", onChange: function (e) { setChoice(e.target.value); } },
           h("option", { value: "" }, "dashboard's" + (modelInfo && modelInfo.model ? " (" + modelInfo.model + ")" : "")),
           choices.map(function (c) { return h("option", { key: c.provider + "|" + c.model, value: c.provider + "|" + c.model }, c.label); }))) : null,
       h(AskButton, { small: true, label: "copy the question instead", question: defaultQ, inPage: false, open: false }),
       !canChat ? h("span", { className: "hd-dim" }, "this dashboard's SDK has no socket builder, so the question can only be copied") : null),
-    q ? h("div", { className: "hd-hs-q", title: q }, "Q: " + q)
-      : h("div", { className: "hd-dim hd-small" }, "Asks the agent about " + name + " with the snapshot ID on screen; the answer streams here and the session stays in your Chat list."),
-    status || busy ? h("div", { className: "hd-hs-status" }, (status || "") + (elapsed !== null ? " \u00b7 " + elapsed + " s" : "") +
-      (sess && sess.info && sess.info.model ? " \u00b7 " + sess.info.model : "")) : null,
-    err ? h("div", { className: "hd-hs-err" }, h(Unavailable, { reason: err, block: true })) : null,
-    answer ? h("div", { className: "hd-hs-text" }, answer) : null);
+    // The overlay: the question, the status and the streamed answer; Escape, the backdrop or Close puts it away and
+    // keeps the answer for "Show the last answer".
+    open ? h("div", { className: "hd-drill-backdrop", style: { left: left + "px" }, onClick: function (e) { if (e.target === e.currentTarget) setOpen(false); } },
+      h("div", { className: "hd-drill hd-hs-drill", role: "dialog", "aria-modal": "true", "aria-label": "Hermes on " + name },
+        h("div", { className: "hd-drill-head" },
+          h("div", { className: "hd-drill-title" }, "Hermes \u00b7 " + name,
+            h("span", { className: "hd-chip hd-tone-info" }, (sess && sess.info && sess.info.model) || (choice ? choice.split("|")[1] : (modelInfo && modelInfo.model ? modelInfo.model : "the dashboard's model")))),
+          h("div", { className: "hd-hs-row" },
+            busy ? h("button", { type: "button", className: "hd-btn", onClick: function () { if (chatRef.current) chatRef.current.stop(); } }, "Stop")
+              : h("button", { type: "button", className: "hd-btn", disabled: !canChat, onClick: function () { start(defaultQ); } }, "Ask again"),
+            sess && sess.stored_session_id ? h("button", { type: "button", className: "hd-btn", onClick: function () { openChatResume(sess.stored_session_id); } }, "Open in chat") : null,
+            h("button", { type: "button", className: "hd-btn", onClick: function () { setOpen(false); } }, "Close"))),
+        h("div", { className: "hd-hs-q", title: q || "" }, q || ""),
+        status || busy ? h("div", { className: "hd-hs-status" }, (status || "") + (elapsed !== null ? " \u00b7 " + elapsed + " s" : "")) : null,
+        err ? h("div", { className: "hd-hs-err" }, h(Unavailable, { reason: err, block: true })) : null,
+        h("div", { className: "hd-hs-text hd-hs-text-drill" }, answer || (busy ? "Waiting for the first words" + ELLIPSIS : "")))) : null);
   }
 
   // ---- Watch (Kevin's swing-context page, computed by the plugin as deck.<market>.watch; schema 1.3.0): one row per
