@@ -15,9 +15,11 @@
  *   node panels carry a data-node-hook attribute (Handoff 1c);
  * - no order code: the only actions are the collector's start, stop and restart (POST), and the
  *   tab never starts the collector by itself;
- * - only the documented plugin SDK: SDK.React, SDK.hooks, SDK.fetchJSON and
- *   window.__HERMES_PLUGINS__.register / registerSlot (the Chat page's chat:top strip). Nothing is
- *   loaded from the network except this plugin's own API routes.
+ * - only the documented plugin SDK: SDK.React, SDK.hooks, SDK.fetchJSON, SDK.buildWsUrl (the Ask Hermes
+ *   card's JSON-RPC socket, /api/ws: session.create and prompt.submit), SDK.api.getModelOptions and
+ *   SDK.api.getModelInfo (its model pick), and window.__HERMES_PLUGINS__.register / registerSlot (the Chat
+ *   page's chat:top strip). Nothing is loaded from the network except this plugin's own API routes and the
+ *   dashboard's own socket.
  */
 (function () {
   "use strict";
