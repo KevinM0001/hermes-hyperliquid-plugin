@@ -914,21 +914,35 @@
     const ranks = {};
     (stops && Array.isArray(stops.clusters) ? stops.clusters : []).forEach(function (c) { ranks[c.fires_on + ":" + c.k] = c; });
     if (ov.stops && mp && mp.available !== false && mp.sides) {
+      // Each band's bar is its stated notional (solid) plus, when the plugin serves one, the estimate for its
+      // whole-position orders at their owners' positions (hatched, Kevin, Nov 10); the scale is the largest total, so a
+      // band with no stated size but a large estimate is drawn too, hatched only.
+      const estOf = function (b) { return b.estimate && isNum(b.estimate.notional_usd) ? b.estimate.notional_usd : 0; };
+      const statedOf = function (b) { return isNum(b.notional_usd) ? b.notional_usd : 0; };
       let mx = 0;
-      ["fall", "rise"].forEach(function (k) { ((mp.sides[k] || {}).bands || []).forEach(function (b) { if (isNum(b.notional_usd) && b.notional_usd > mx) mx = b.notional_usd; }); });
+      ["fall", "rise"].forEach(function (k) { ((mp.sides[k] || {}).bands || []).forEach(function (b) { const t = statedOf(b) + estOf(b); if (t > mx) mx = t; }); });
       ["fall", "rise"].forEach(function (k) {
         ((mp.sides[k] || {}).bands || []).forEach(function (b) {
-          if (!b.band || !isNum(b.notional_usd) || b.notional_usd <= 0) return;
+          const stated = statedOf(b), est = estOf(b);
+          if (!b.band || (stated <= 0 && est <= 0)) return;
           const w = b.walk || {};
           const cl = ranks[k + ":" + b.k];
+          const where = (k === "fall" ? "Sell-side triggers " : "Buy-side triggers ") + dpx(b.band.near_px) + " to " + dpx(b.band.far_px) +
+            " (" + (k === "fall" ? "-" : "+") + qp(b.band.from_pct, 1) + " to " + (k === "fall" ? "-" : "+") + qp(b.band.to_pct, 1) + "%): ";
+          const sizeText = est > 0
+            ? (stated > 0 ? (b.lower_bound ? "at least " : "") + usd(stated) + " stated" : "no stated size") + ", about " + usd(stated + est) +
+              " with whole-position orders at their owners' positions"
+            : (b.lower_bound ? "at least " : "") + usd(stated);
+          const unsizedText = !b.unknown_size_orders ? "" : (est > 0
+            ? "; " + intf(b.unknown_size_orders) + " whole-position, " + intf(b.estimate.orders) + " estimated" + (b.estimate.unknown_orders ? ", " + intf(b.estimate.unknown_orders) + " unknown" : "")
+            : "; " + intf(b.unknown_size_orders) + " report no size, so this is understated");
           out.push({
-            key: "s:" + k + ":" + b.k, kind: "stops", ranked: !!cl, lo: Number(b.band.lo), hi: Number(b.band.hi), share: mx > 0 ? b.notional_usd / mx : 0,
+            key: "s:" + k + ":" + b.k, kind: "stops", ranked: !!cl, lo: Number(b.band.lo), hi: Number(b.band.hi),
+            share: mx > 0 ? stated / mx : 0, shareEst: mx > 0 ? est / mx : 0,
             foot: foot,
-            text: (cl ? "#" + cl.rank + " cluster. " + cl.text : (k === "fall" ? "Sell-side triggers " : "Buy-side triggers ") + dpx(b.band.near_px) + " to " + dpx(b.band.far_px) +
-              " (" + (k === "fall" ? "-" : "+") + qp(b.band.from_pct, 1) + " to " + (k === "fall" ? "-" : "+") + qp(b.band.to_pct, 1) + "%): " +
-              (b.lower_bound ? "at least " : "") + usd(b.notional_usd) + " across " + intf(b.orders) + " orders from " + intf(b.accounts) + " accounts" +
-              (b.unknown_size_orders ? "; " + intf(b.unknown_size_orders) + " report no size, so this is understated" : "") +
-              (isNum(w.ratio_pct) ? "; " + (w.lower_bound ? "at least " : "") + walkPct(w.ratio_pct) + " of the resting " + (k === "fall" ? "bids" : "asks") + " at and beyond it" : ""))
+            text: (cl ? "#" + cl.rank + " cluster. " + cl.text : where + sizeText + " across " + intf(b.orders) + " orders from " + intf(b.accounts) + " accounts" + unsizedText +
+              (isNum(w.ratio_pct) ? "; " + (w.lower_bound ? "at least " : "") + walkPct(w.ratio_pct) + " of the resting " + (k === "fall" ? "bids" : "asks") + " at and beyond it" +
+                (est > 0 && isNum(w.ratio_pct_est) ? ", about " + walkPct(w.ratio_pct_est) + " with the estimate" : "") : ""))
           });
         });
       });
@@ -987,7 +1001,7 @@
         const y1 = a.series.priceToCoordinate(b.hi);
         const y2 = a.series.priceToCoordinate(b.lo);
         if (y1 === null || y2 === null || !isNum(y1) || !isNum(y2)) return;
-        out.push({ key: b.key, kind: b.kind, ranked: !!b.ranked, share: b.share, top: Math.min(y1, y2), height: Math.max(1, Math.abs(y2 - y1)), right: axisW });
+        out.push({ key: b.key, kind: b.kind, ranked: !!b.ranked, share: b.share, shareEst: b.shareEst || 0, top: Math.min(y1, y2), height: Math.max(1, Math.abs(y2 - y1)), right: axisW });
       });
       const sig = out.map(function (r) { return r.key + ":" + Math.round(r.top) + ":" + Math.round(r.height) + ":" + r.right; }).join("|");
       if (sig !== rectSig.current) { rectSig.current = sig; setRects(out); }
@@ -1212,7 +1226,7 @@
             const flowOff = x[0] === "flow" && iv !== "15m";
             const why = ovWhy(x[0]);
             return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !flowOff && !why && "hd-btn-on"), disabled: !!why || flowOff,
-              title: why ? why : (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node (lower bounds where sizes are unknown)"
+              title: why ? why : (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node: solid for the stated sizes (lower bounds where orders report none), hatched for the estimate of whole-position orders at their owners\u0027 positions, when the feed carries positions"
                 : x[0] === "depth" ? "resting depth per 0.5% band, from the node's full book"
                 : (flowOff ? "net taker flow per 15-minute bucket from the node's fills: on the 15m interval only" : "net taker flow per 15-minute bucket from the node's fills (the order flow map), under the candles")),
               "aria-pressed": ov[x[0]] ? "true" : "false", onClick: function () { setOv(Object.assign({}, ov, { [x[0]]: !ov[x[0]] })); } }, x[1]);
@@ -1223,10 +1237,21 @@
       rects.length ? h("div", { className: "hd-chart-ov", "aria-hidden": "true" }, rects.map(function (r) {
         // A profile, not a fill: resting depth as bars from the right edge, stop clusters as bars from the left edge,
         // each bar's width by its notional against the largest of its kind; the candles stay clear between them.
-        const w = (5 + 25 * Math.min(1, Math.max(0, r.share))).toFixed(1) + "%";
+        const solid = 5 + 25 * Math.min(1, Math.max(0, r.share));
+        const w = solid.toFixed(1) + "%";
         const st = { top: r.top + "px", height: r.height + "px", width: w };
         if (r.kind === "stops") st.left = "0px"; else st.right = r.right + "px";
-        return h("div", { key: r.key, className: cx("hd-chart-band", "hd-band-" + r.kind, r.ranked && "hd-band-ranked"), style: st });
+        if (r.kind !== "stops" || !(r.shareEst > 0)) {
+          return h("div", { key: r.key, className: cx("hd-chart-band", "hd-band-" + r.kind, r.ranked && "hd-band-ranked"), style: st });
+        }
+        // The estimate extends the stated bar as a hatched segment of the same scale (a band with no stated size is
+        // hatched from the edge); the hover text carries both figures.
+        const ext = 25 * Math.min(1, Math.max(0, r.shareEst));
+        const stated = r.share > 0;
+        return h(Fragment, { key: r.key },
+          stated ? h("div", { className: cx("hd-chart-band", "hd-band-stops", r.ranked && "hd-band-ranked"), style: st }) : null,
+          h("div", { className: cx("hd-chart-band", "hd-band-stops-est", !stated && r.ranked && "hd-band-ranked"),
+            style: { top: r.top + "px", height: r.height + "px", left: (stated ? solid : 0).toFixed(1) + "%", width: (ext + (stated ? 0 : 5)).toFixed(1) + "%" } }));
       })) : null,
       bandTip ? h("div", { className: "hd-band-tip", style: { left: Math.min(bandTip.x + 14, 420) + "px", top: Math.max(4, bandTip.y - 10) + "px" } },
         bandTip.texts.map(function (t, i) { return h("div", { key: i, className: i === bandTip.texts.length - 1 ? "hd-dim" : undefined }, t); })) : null,
