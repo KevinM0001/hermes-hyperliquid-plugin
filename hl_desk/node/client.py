@@ -105,7 +105,8 @@ class MarketFeed:
         self.crossed: dict | None = None        # set when the book is seen crossed, cleared by a snapshot
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_swapped": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0,
-                         "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0}
+                         "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0,
+                         "watermarks_inconsistent": 0}
         self.events: deque[dict] = deque(maxlen=50)   # invalidations, swaps, rejections (for status)
 
     def note(self, what: str, **kw) -> None:
@@ -383,7 +384,12 @@ class FeedClient:
     def _watermark(self, mf: MarketFeed, seq, body, block, bt, wall_ms, mono_ns) -> None:
         through = body.get("through_seq")
         if through != seq - 1:
-            mf.note("watermark through_seq mismatch", through=through)
+            # An inconsistent watermark (through_seq ahead of, behind or absent from its own sequence) vouches for
+            # nothing this client applied: counted and ignored, it advances neither freshness nor the flow window; the
+            # next consistent one does (review of Nov 10, B1: the producer never sends one, so this is fault handling).
+            mf.counters["watermarks_inconsistent"] += 1
+            mf.note("watermark through_seq inconsistent: ignored", through=through, seq=seq)
+            return
         if not isinstance(bt, int) or isinstance(bt, bool):
             # A watermark without a source time (the node record had no parseable time, PROTOCOL.md 2.1) can't bound
             # the source's age: it advances neither freshness nor the flow window. The next timed one does.

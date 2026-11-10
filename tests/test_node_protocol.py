@@ -721,6 +721,37 @@ def test_a_duplicate_or_delayed_line_never_clears_clock_skew(surfaces):
     assert c.family_status(XY, "book", t2, t2 * 10 ** 6)["state"] != "UNKNOWN"
 
 
+def test_an_inconsistent_watermark_never_advances_freshness(surfaces):
+    """Review of Nov 10, B1. A watermark whose through_seq isn't its own seq - 1 (ahead, behind or absent) vouches for
+    state this client never applied: it is counted and ignored, so after the first snapshots the families stay
+    STALE through chat and the tab, the ladder served under that label; the next consistent watermark makes them
+    LIVE. Before, the first XYZ100 watermark with through_seq 107 (seq 7) made the book LIVE with 20 rows served
+    although sequence 107 was never received."""
+    h, ms = _xyz_market(XY)
+    first_wm = next(i for i, (_, m) in enumerate(ms) if m["kind"] == "watermark")
+    for bad in (ms[first_wm][1]["seq"] + 100, ms[first_wm][1]["seq"] - 5, None):
+        plugin = surfaces([XY])
+        c = plugin.attach(client(cfg={"delayed_after_ms": 10 ** 12, "stale_after_ms": 10 ** 12}))
+        _start(c, h)
+        for rx, m in ms[:first_wm + 1]:
+            m = dict(m, body={"through_seq": bad}) if m["kind"] == "watermark" else m
+            c.on_line(m, rx, rx * 10 ** 6)
+            v = plugin.read(XY, rx)
+            assert all(f["state"] != "LIVE" for f in v["families"].values()), (bad, v["families"])
+        st = plugin.last["node_status"]["markets"][XY]["families"]["book"]
+        assert st["state"] == "STALE" and "no freshness-advancing watermark" in st["reason"] and "delay_ms" not in st
+        lad = plugin.last["node_book"]["ladder"]
+        assert lad["freshness"] == "STALE" and lad["as_of_note"] == "as of the node's book, STALE: " + st["reason"]
+        assert c.markets[XY].counters["watermarks_inconsistent"] == 1 and c.markets[XY].flow.restart_pending
+        assert plugin.last["node_book"]["tape"].get("available") is False          # no flow window opened either
+        nxt = next(i for i, (_, m) in enumerate(ms) if i > first_wm and m["kind"] == "watermark")
+        for rx, m in ms[first_wm + 1:nxt + 1]:
+            c.on_line(m, rx, rx * 10 ** 6)
+        v = plugin.read(XY, ms[nxt][0])
+        assert v["families"]["book"]["state"] == "LIVE" and plugin.last["node_book"]["ladder"]["bids"]
+        assert c.markets[XY].counters["watermarks_inconsistent"] == 1
+
+
 def test_a_watermark_without_a_source_time_never_makes_a_family_live(surfaces):
     """Review 6, B1. PROTOCOL.md 2.1 lets block_time_ms be null when the node record had no parseable time. Such a
     watermark can't bound the source's age: (a) after the first snapshots it leaves the families STALE, never
