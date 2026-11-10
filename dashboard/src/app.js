@@ -847,7 +847,10 @@
       cell("O", k.open), cell("H", k.high), cell("L", k.low), cell("C", k.close),
       chg !== null ? h("span", { className: cls }, signOf(chg, true) + num(Math.abs(chg), 8) +
         (chgPct !== null ? " (" + signOf(chgPct, true) + num(Math.abs(chgPct), 2, 2) + "%)" : "")) : null,
-      h("span", { className: "hd-ro-cell" }, "Vol ", h("b", { className: "hd-ro-v" }, vol)));
+      h("span", { className: "hd-ro-cell" }, "Vol ", h("b", { className: "hd-ro-v" }, vol)),
+      props.flow ? h("span", { className: "hd-ro-cell", title: props.flow.reason || "" }, "Taker flow ",
+        h("b", { className: props.flow.net_usd >= 0 ? "hd-ro-v hd-ro-up" : "hd-ro-v hd-ro-down" }, usdSigned(props.flow.net_usd)),
+        " (buy " + usd(props.flow.buy_usd) + " / sell " + usd(props.flow.sell_usd) + (props.flow.complete === false ? (props.flow.in_progress ? ", in progress" : ", partial") : "") + ")") : null);
   }
 
   // Axis prices (Kevin, Nov 10): thousands separators, and the market's own decimals, at least two where it has them
@@ -920,8 +923,9 @@
     const api = useRef(null);
     const [failure, setFailure] = useState(LWC ? null : "Lightweight Charts isn't loaded (dist/index.js should carry it)");
     const [hover, setHover] = useState(null);
+    const [iv, setIv] = useState("15m");       // 15 minutes by default (Kevin, Nov 10): 15 s loads too little to read
     // The liquidity overlay: which layers are on, the bands' pixel rectangles, and the band under the pointer.
-    const [ov, setOv] = useState({ stops: false, depth: false });
+    const [ov, setOv] = useState({ stops: false, depth: false, flow: false });
     const [rects, setRects] = useState([]);
     const [bandTip, setBandTip] = useState(null);
     const bandsRef = useRef([]);
@@ -943,13 +947,27 @@
       if (sig !== rectSig.current) { rectSig.current = sig; setRects(out); }
     }, []);
     useEffect(function () {
+      const a = api.current;
+      if (a && a.nflow) {
+        const fm = node && node.flow_map;
+        const on = ov.flow && iv === "15m" && fm && fm.available !== false && Array.isArray(fm.buckets);
+        const byT = {};
+        const data = on ? fm.buckets.filter(function (b) { return isNum(b.start_ms) && isNum(b.net_usd) && (b.fills > 0 || b.coverage_s > 0); }).map(function (b) {
+          const t = Math.floor(b.start_ms / 1000);
+          byT[t] = b;
+          const up = b.net_usd >= 0;
+          const faded = b.complete === false && !b.in_progress;
+          return { time: t, value: b.net_usd, color: up ? (faded ? "rgba(24, 229, 137, 0.35)" : "rgba(24, 229, 137, 0.85)") : (faded ? "rgba(255, 69, 77, 0.35)" : "rgba(255, 69, 77, 0.85)") };
+        }) : [];
+        a.flowByTime = byT;
+        try { a.nflow.setData(data); } catch (e) { /* a bucket outside the candles' time range is dropped by the chart */ }
+      }
       bandsRef.current = (ov.stops || ov.depth) ? overlayBands(node, ov) : [];
       syncOverlay();
       if (!ov.stops && !ov.depth) { setBandTip(null); return undefined; }
       const id = setInterval(syncOverlay, 500);        // the price scale moves with new data and with a user's zoom
       return function () { clearInterval(id); };
-    }, [node, ov, syncOverlay]);
-    const [iv, setIv] = useState("15m");       // 15 minutes by default (Kevin, Nov 10): 15 s loads too little to read
+    }, [node, ov, iv, syncOverlay]);
     const [cd, setCd] = useState(null);   // the /candles route's latest answer for iv (null for 15s)
     const fromRoute = iv !== "15s";
     const routeCandles = fromRoute && cd && cd.state === "ok" && cd.data ? (cd.data.candles || []) : [];
@@ -1009,7 +1027,13 @@
           priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false
         });
         c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-        api.current = { chart: c, series: series, vol: vol, lines: {}, markers: markers, market: null, decimals: null, byTime: {}, hoverT: null };
+        // The node's taker flow per 15-minute bucket (the order flow map's net_usd), on its own hidden scale above the
+        // volume bars; drawn only on the 15 m interval, where a bucket is one candle wide (Kevin, Nov 10).
+        const nflow = c.addSeries(LWC.HistogramSeries, {
+          priceFormat: { type: "volume" }, priceScaleId: "nflow", priceLineVisible: false, lastValueVisible: false, base: 0
+        });
+        c.priceScale("nflow").applyOptions({ scaleMargins: { top: 0.6, bottom: 0.21 }, visible: false });
+        api.current = { chart: c, series: series, vol: vol, nflow: nflow, lines: {}, markers: markers, market: null, decimals: null, byTime: {}, flowByTime: {}, hoverT: null };
         // The readout follows the crosshair: the candle under it, or none (the latest is shown then).
         c.subscribeCrosshairMove(function (param) {
           const a2 = api.current;
@@ -1132,9 +1156,12 @@
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" }),
       status: h(Fragment, null, ivBar, routeChip,
         h("div", { className: "hd-toggle hd-ovbar", role: "group", "aria-label": "Liquidity overlay" },
-          [["stops", "Stop clusters"], ["depth", "Resting depth"]].map(function (x) {
-            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && "hd-btn-on"), disabled: !nodeOn,
-              title: nodeOn ? (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node (lower bounds where sizes are unknown)" : "resting depth per 0.5% band, from the node's full book") : "needs node mode",
+          [["stops", "Stop clusters"], ["depth", "Resting depth"], ["flow", "Taker flow"]].map(function (x) {
+            const flowOff = x[0] === "flow" && iv !== "15m";
+            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !flowOff && "hd-btn-on"), disabled: !nodeOn || flowOff,
+              title: !nodeOn ? "needs node mode" : (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node (lower bounds where sizes are unknown)"
+                : x[0] === "depth" ? "resting depth per 0.5% band, from the node's full book"
+                : (flowOff ? "net taker flow per 15-minute bucket from the node's fills: on the 15m interval only" : "net taker flow per 15-minute bucket from the node's fills (the order flow map), under the candles")),
               "aria-pressed": ov[x[0]] ? "true" : "false", onClick: function () { setOv(Object.assign({}, ov, { [x[0]]: !ov[x[0]] })); } }, x[1]);
           })))
     },
@@ -1150,7 +1177,8 @@
       })) : null,
       bandTip ? h("div", { className: "hd-band-tip", style: { left: Math.min(bandTip.x + 14, 420) + "px", top: Math.max(4, bandTip.y - 10) + "px" } },
         bandTip.texts.map(function (t, i) { return h("div", { key: i, className: i === bandTip.texts.length - 1 ? "hd-dim" : undefined }, t); })) : null,
-      !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market) }) : null,
+      !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market),
+        flow: (function () { const a = api.current; const k = hover || latest; if (!a || !k || !ov.flow || iv !== "15m") return null; const t = isNum(k._t) ? k._t : k.time; return a.flowByTime[t] || null; })() }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" },
         fromRoute
