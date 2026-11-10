@@ -17241,11 +17241,14 @@
     if (!f) {
       return h("span", { className: "hd-chip hd-tone-dim" }, (props.label || "field") + ": freshness not in snapshot");
     }
-    const parts = [String(f.status).replace("_", " ")];
+    // Within the screen's 30 s allowance a fresh status keeps its judgement from the build; once its advanced age has
+    // passed its own limit the chip says "as built" rather than fresh, so the screen never contradicts its limit.
+    const asBuilt = f.status === "fresh" && isNum(f.progress_age_s) && isNum(f.max_age_s) && f.progress_age_s > f.max_age_s;
+    const parts = [asBuilt ? "as built" : String(f.status).replace("_", " ")];
     if (isNum(f.progress_age_s)) {
       parts.push(secs(f.progress_age_s) + (isNum(f.max_age_s) ? " / max " + secs(f.max_age_s) : ""));
     }
-    return h("span", { className: "hd-chip hd-tone-" + toneOfStatus(f.status), title: freshTitle(f) },
+    return h("span", { className: "hd-chip hd-tone-" + toneOfStatus(f.status), title: (asBuilt ? "fresh when the snapshot was built; the screen re-judges a held snapshot only after 30 s on it. " : "") + freshTitle(f) },
       h("span", { className: "hd-dot", "aria-hidden": "true" }),
       (props.label || f.field) + " \u00b7 " + parts.join(" \u00b7 "));
   }

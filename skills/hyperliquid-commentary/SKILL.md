@@ -122,6 +122,7 @@ These rules come from the original order-flow study (Sep 29, 2026), where flow o
 - **Each result's `unavailable` list.** Mention what matters to the question. For a depth band the returned levels don't reach, say "not covered by the returned levels". Without a node feed, the activity buckets, waiting stops, wall tracking and tape flags "need node mode". PRESSURE is available on public data.
 - **Flow Deck windows.** When a card's window is incomplete after a gap or at startup, say so. When a card is `revised`, say it was re-evaluated after late trades. A `regime_change_withdrawn` event means the change was withdrawn, not that it happened.
 - **`bbo`** is always "freshness unverified". Never quote its prices; best bid and ask come from the book.
+- **Screen and answer.** The tab shows a held snapshot as built for up to 30 s before re-judging it; your answer is judged at serving time. If the user's screen and your answer differ on freshness, say so in one clause and keep the serving-time judgement.
 - **`served` and `historical`.** Every result carries `served`. When `historical` is present, the result is a past snapshot: say "as of <historical.as_of>", and never describe its statuses as current.
 
 ## 6. Tool notes

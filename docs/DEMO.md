@@ -12,7 +12,7 @@ Prerequisite for the chat step (0:58): the Hermes profile needs a configured inf
 | 0:32–0:47 | Flow Deck cards and events | "The Flow Deck, ported from my terminal deck: each market's confirmed regime, what the current window classifies as, and what that means in plain words, plus burst alerts naming the wallets behind them." |
 | 0:47–0:58 | Wallets panel; click the top buyer | "Who's driving the volume: buyers and sellers until they make up half their side, with that wallet's own trades and its current positions." |
 | 0:58–1:20 | Chat: copy the snapshot ID from the header, then type: *"Using snapshot <ID>, what is BTC doing? Use the hyperliquid commentary skill."* | Let the agent answer. It cites the same snapshot, its time and freshness, gives each number with its own window and resolution (the flow window, the wallets' window, each depth band's book), quotes the regime meaning and says what's unavailable (for example, mark and funding have no source timestamp, so it quotes them as unverified, received N s ago). |
-| 1:20–1:28 | Back to the tab; point at the same numbers | "Same snapshot, same numbers, each with its own window, in chat and on screen. Hyperliquid Desk for Hermes." |
+| 1:20–1:28 | Back to the tab; point at the same numbers | "Same snapshot, same numbers, each with its own window, in chat and on screen. Hyperliquid Desk for Hermes." (If a value has just lapsed, chat says stale first: the tab re-judges a held snapshot only after 30 s on screen.) |
 
 Notes:
 - If a market is quiet, its trades status reads "unverified" and its flow values are unavailable. That is expected behavior, so show it rather than cutting it.
