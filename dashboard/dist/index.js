@@ -17282,7 +17282,7 @@
   function Prov(props) {
     return h(Fragment, null,
       props.mode && props.mode !== "LIVE" ? h(ModeBadge, { mode: props.mode, title: props.source }) : null,
-      h(Badge, { kind: "api", title: props.source }, "PUBLIC API \u00b7 " + props.what));
+      h(Badge, { kind: "api", title: (props.what ? props.what + " \u00b7 " : "") + (props.source || "") }, "PUBLIC API"));
   }
 
   // The explanation behind a "why" toggle: the tab's own prose about a panel, closed by default. Values, reasons,
@@ -18194,7 +18194,7 @@
     const p = g(props.v, "provenance") || {};
     return h(Fragment, null,
       h(ModeBadge, { mode: p.mode || "UNKNOWN", title: p.stream }),
-      h(Badge, { kind: "node", title: p.stream || "node feed" }, "NODE \u00b7 " + props.what));
+      h(Badge, { kind: "node", title: (props.what ? props.what + " \u00b7 " : "") + (p.stream || "node feed") }, "NODE"));
   }
 
   // A node panel's status row: its families' states, then source, producer epoch and replay session.
@@ -18785,6 +18785,8 @@
       ok ? h("div", { className: "hd-small hd-dim" }, "Bars: resting depth to the largest band on either side; triggers to the largest stated trigger notional; a hatched trigger bar is a lower bound (some orders in it report no size). Hover a row for its categories, largest order and depths.") : null,
       h(Exclusions, { ex: st.exclusions }),
       h(Census, { c: st.census }),
+      // The waiting stops rows (the former panel), behind a fold (Kevin, Nov 10): the map supersedes them.
+      st.rows ? h(Why, { className: "hd-smap-rowsfold", label: "waiting stops by band" }, h(StopsBody, { st: st })) : null,
       mp && mp.venue_check ? h("div", { className: "hd-small hd-venue-check" }, mp.venue_check) : null));
   }
 
@@ -20164,16 +20166,12 @@
     names.forEach(function (n) { (deck[n].events || []).forEach(function (e) { events.push(e); }); });
     events.sort(function (a, b) { return (b.at_ms || 0) - (a.at_ms || 0); });
     return h(Panel, {
-      id: "deck", className: "hd-p-deck", title: "Flow Deck",
-      label: "Alerts position: Flow Deck",
+      id: "deck", className: "hd-p-deck", title: "Alerts",
+      label: "Alerts",
       why: h("p", null, "Each market's regime over a 90 s window, ported from hl_deck; regime changes and burst alerts below. In node mode, burst alerts come from node fills, ranked against Nov 3 to 7, and liquidation alerts are added. The agent can explain any card or event (hl_alerts): a card's ask button copies a ready question and opens the Chat page."),
       badges: h(Prov, { mode: r.mode, source: g(deck, names[0], "provenance", "source"), what: "trades" })
     },
-    chosen && deck[chosen] ? h("div", { className: "hd-dim hd-small hd-deck-note" },
-      chosen + "'s card is at the top of the tab, under the summary; the other markets' cards are here.") : null,
-    h("div", { className: "hd-deck-cards" }, others.length ? others.map(function (n) {
-      return h(DeckLine, { key: n, name: n, d: deck[n], nodeSrc: nodeSrc, flowFam: null, snapshotId: r.snapshot_id });
-    }) : h("div", { className: "hd-empty" }, names.length ? "No other market's card in this snapshot." : "No Flow Deck cards in this snapshot.")),
+    // The other markets' cards are gone (Kevin, Nov 10): the Watch fold covers the other markets; this panel is the events.
     h("div", { className: "hd-events" },
       h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
         (events.length > 40 ? listCount("newest", 40, "events", events.length, "in this snapshot") : intf(events.length) + " events, newest first") +
@@ -21726,32 +21724,28 @@
           h(FlowNotes, { resp: resp, m: m })),
         h(WatchStrip, { resp: resp, onMarket: chooseMarket }),
         h(DeckHero, { resp: resp }),
-        h(SectionHead, { title: "Flow", note: "the Flow Deck's regimes and alerts, and the tape" }),
+        h(SectionHead, { title: "Alerts", note: non ? "regime changes, bursts and liquidation alerts, newest first" : "regime changes and bursts, newest first; then the public tape" }),
         h("div", { className: "hd-row hd-row-b" },
           h(DeckPanel, { resp: resp })),
-        h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })),
+        // The public tape only without a node feed (Kevin, Nov 10): the node tape supersedes it on the Node page.
+        !non ? h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })) : null,
         h(SectionHead, { title: "Wallets", note: "the public addresses behind the volume" }),
         h("div", { className: "hd-row hd-row-d" },
-          h(WalletsPanel, { m: m, win: walletWin, onWin: setWalletWin, onOpen: openWallet })),
-        // The observed depth is out of the main view (Kevin, Nov 9): folded, with its data one click away.
-        h("details", { className: "hd-foldcard", "data-panel": "depth-fold" },
-          h("summary", null, "Observed depth",
-            h("span", { className: "hd-foldcard-note" }, "folded: open it for the bands and the observed depth per book kind, with their freshness and reasons")),
-          h(DepthPanel, { m: m }))) : null,
+          h(WalletsPanel, { m: m, win: walletWin, onWin: setWalletWin, onOpen: openWallet }))) : null,
       // ---- Node: the engine's order-level products
       m && view === "node" ? h(Fragment, null,
         non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market, delay: nlive && nlive.delay })
           : h(NodeOffBanner, { ns: nstat, reason: nodeReason }),
         h(SectionHead, { title: "Book", note: non ? "the node's order-level book" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n2" }, h(StopsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(ThinningPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(StopMapPanel, { v: nlive })) : null,
         h(SectionHead, { title: "Flow", note: non ? "the order flow map from the node's fills, and the node tape" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-c" }, h(OrderFlowMapPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-c" }, h(NodeTapePanel, { v: nlive })) : null,
+        // The heatmap last (Kevin, Nov 10).
+        non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
         showReplay ? h(Fragment, null,
           h(SectionHead, { title: "Replay", note: "a recording played on its own clock, never current" }),
           h(ReplayArea, {
