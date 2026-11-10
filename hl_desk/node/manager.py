@@ -21,6 +21,7 @@ from .replay import Recording, ReplayPlayer
 from .transport import FixedDemand, parse_source, run_feed, run_relay
 
 DEADLINE_CHECK_S = 0.25
+LEASE_MAX_S = 60.0          # a tool call waits at most 20 s for data: no lease outlives this
 REPLAY_TICK_S = 0.05
 
 
@@ -43,6 +44,7 @@ class NodeManager:
                                       if self.relay_mode else None)
         self.tool_clients: dict[str, dict] = {}
         self.leases: dict[int, str | None] = {}
+        self.lease_expiry: dict[int, float] = {}     # a backstop: a lease never released ends on its own
         self._lease_seq = 0
         self._key: str | None = None
         self.replay_client: FeedClient | None = None
@@ -93,6 +95,8 @@ class NodeManager:
                 for c in (self.live, self.replay_client, *(t["client"] for t in self.tool_clients.values())):
                     if c is not None:
                         c.check_deadlines(now)
+                for lid in [k for k, t in self.lease_expiry.items() if t < time.monotonic()]:
+                    self.release(lid)                  # a call that never released (an error, a timeout) lets go here
                 try:
                     await asyncio.wait_for(stop.wait(), timeout=DEADLINE_CHECK_S)
                 except asyncio.TimeoutError:
@@ -114,6 +118,7 @@ class NodeManager:
             return None
         self._lease_seq += 1
         lid = self._lease_seq
+        self.lease_expiry[lid] = time.monotonic() + LEASE_MAX_S
         if self.live.views.get(market) == "full" and self.demand.want(time.monotonic()) is not None:
             self.leases[lid] = None
             return {"id": lid, "via": "the panel's subscription"}
@@ -131,6 +136,7 @@ class NodeManager:
 
     def release(self, lid) -> None:
         """The tool call has answered: its own subscription ends when no other call holds it (on the loop)."""
+        self.lease_expiry.pop(lid, None)
         market = self.leases.pop(lid, None) if isinstance(lid, int) else None
         tc = self.tool_clients.get(market) if market is not None else None
         if tc is None:
@@ -139,6 +145,17 @@ class NodeManager:
         if tc["leases"] <= 0:
             tc["stop"].set()
             del self.tool_clients[market]
+
+    def node_bursts_for(self, market: str) -> bool:
+        """Whether node-mode bursts replace public-trades bursts for this market now. A local socket (Part B): whenever
+        it is configured. A relay: only while it is connected and the market's node fills are valid, so a paused,
+        unreachable, full or stopped relay leaves the public-trades bursts running."""
+        if self.live is None:
+            return False
+        if not self.relay_mode:
+            return True
+        mf = self.live.markets.get(market)
+        return (self.live.connection.get("state") == "connected" and mf is not None and mf.fam["flow"].valid)
 
     def client_for(self, market: str):
         """The live client whose state answers for this market: a tool's own subscription while the panel

@@ -639,8 +639,12 @@ class DeskState:
         for m, s in self.markets.items():
             s.node_view = node_views.get(m)
             s.node_client = self.node.live_client() if self.node is not None else None
-            # Node mode (a node feed is configured): bursts come from node fills, never public trades.
-            s.node_bursts = self.node is not None and getattr(self.node, "live", None) is not None
+            # Node mode: bursts come from node fills, never public trades: with a local socket whenever it is configured;
+            # with a relay only while node fills for the market are flowing (otherwise, paused, down, full or stopped,
+            # public-trades bursts keep running: handoff 1d step 7, public mode keeps working).
+            s.node_bursts = self.node is not None and (
+                self.node.node_bursts_for(m) if hasattr(self.node, "node_bursts_for")
+                else getattr(self.node, "live", None) is not None)
             s.candle_intervals = self.candles.summary(m) if self.candles is not None else {}
             s.watch_views = watch.candle_views(self.candles, m) if self.candles is not None else None
         return {

@@ -180,12 +180,14 @@ def test_demand_timeline():
     assert d.want(0.0) is None
     d.panel("HYPE", now=100.0)
     assert d.want(101.0) == ("HYPE", MARKETS)
-    assert d.want(164.0) == ("HYPE", MARKETS)          # within 60 s after the panel was last on screen
-    assert d.want(166.0) is None                       # then nothing: the connection closes
+    assert d.status(103.0)["panel_on_screen"] and not d.status(106.0)["panel_on_screen"]
+    assert d.want(159.5) == ("HYPE", MARKETS)          # within 60 s of the last poll from a visible tab
+    assert d.status(159.5)["unsubscribes_in_s"] == 0.5
+    assert d.want(160.5) is None                       # then nothing: the connection closes
     alerts = Demand(MARKETS, alerts_in_background=True, linger_s=60, grace_s=5)
     assert alerts.want(0.0) == (None, MARKETS)         # background alerts: the four markets' executions only
     alerts.panel("BTC", now=10.0)
-    assert alerts.want(11.0) == ("BTC", MARKETS) and alerts.want(80.0) == (None, MARKETS)
+    assert alerts.want(11.0) == ("BTC", MARKETS) and alerts.want(71.0) == (None, MARKETS)
 
 
 # --- the transport against a relay stand-in ---------------------------------------------------------------------------
@@ -286,7 +288,7 @@ def test_node_data_flows_only_while_a_panel_is_on_screen_and_switches_with_the_m
             assert relay.switches == [{"markets": ["HYPE"], "execs": MARKETS}]
             assert c.views["HYPE"] == "full" and c.views["BTC"] == "execs"
 
-            # The tab is hidden: 0.3 s + 1 s later the subscription ends and the client forgets the old state.
+            # The tab is hidden: 1 s after its last poll the subscription ends and the client forgets the old state.
             assert await _until(lambda: relay.closed == 1, timeout=4)
             assert c.connection["state"] == "idle" and c.connection["reason"] == IDLE_REASON
             assert c.epoch is None and c.views == {}
@@ -520,3 +522,48 @@ def test_the_copy_after_a_switch_to_full_never_replays_blocks_into_the_flow():
     assert "a block time ran backwards" not in rule.counters["rejected"]
     assert sw.markets["BTC"].counters["gaps"] == 0 and sw.markets["BTC"].fam["flow"].valid
     assert set(sw.markets["BTC"].flow.execs) == set(ref.markets["BTC"].flow.execs)
+
+
+def test_public_bursts_keep_running_until_relay_data_flows():
+    """With a relay, node-mode bursts replace public-trades bursts for a market only while its node fills flow: a
+    paused, unreachable, full or stopped relay leaves the public bursts running. A local socket keeps Part B's rule."""
+    header, msgs = recorded()
+    relay = NodeManager(DeskConfig(markets=MARKETS, node_feed="wss://relay.example.org/v1/feed"))
+    assert relay.relay_mode and not relay.node_bursts_for("BTC")          # idle: public bursts
+    feed(relay.live, [(msgs[0][0], relay_hello(header, msgs, {m: "execs" for m in MARKETS}))] + execs_view(msgs))
+    relay.live.connection = {"state": "connected", "since_wall_ms": 0, "reason": None}
+    assert relay.node_bursts_for("BTC")                                   # node fills flowing: node bursts
+    relay.live.connection = {"state": "stopped", "since_wall_ms": 0, "reason": transport.REFUSALS["stopped"]}
+    assert not relay.node_bursts_for("BTC")                               # stopped: public bursts again
+    assert NodeManager(DeskConfig(markets=MARKETS, node_feed="/run/feed.sock")).node_bursts_for("BTC")
+    assert not NodeManager(DeskConfig(markets=MARKETS)).node_bursts_for("BTC")
+
+
+def test_a_lease_that_is_never_released_ends_on_its_own(monkeypatch):
+    from hl_desk.node import manager as mgr_mod
+    monkeypatch.setattr(mgr_mod, "LEASE_MAX_S", 0.5)
+
+    async def run():
+        async with RelayStandIn() as relay:
+            m = NodeManager(DeskConfig(markets=MARKETS, node_feed=relay.url))
+            stop = asyncio.Event()
+            tasks = m.tasks(stop)
+            m.lease("HYPE")                                  # never released (a caller that errored or timed out)
+            assert await _until(lambda: relay.handshakes)
+            assert await _until(lambda: m.tool_clients == {} and relay.closed == 1, timeout=4)
+            stop.set()
+            await asyncio.gather(*tasks)
+    asyncio.run(run())
+
+
+def test_a_relay_without_its_publisher_is_said_beside_the_connection():
+    from hl_desk.node.client import WAITING_REASON
+    c = client("relay")
+    c.on_connect(1)
+    c.on_line({"v": 2, "control": "relay", "relay": "hl-relay-2", "relay_ms": 1, "publisher": "absent",
+               "state": "waiting_for_publisher"}, 1, 1)
+    assert c.connection == {"state": "connected", "since_wall_ms": 1, "reason": WAITING_REASON}
+    c.on_line({"v": 2, "control": "relay", "relay": "hl-relay-2", "relay_ms": 2, "publisher": "connected",
+               "state": "serving"}, 2, 2)
+    assert c.connection["reason"] is None
+    assert c.relay["state"] == "serving" and not c.markets      # a heartbeat is never a market's freshness

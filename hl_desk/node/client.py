@@ -43,6 +43,7 @@ NS = 1_000_000_000
 # Families delivered only with a market's full data. A relay's executions view (profile hl-relay-2) carries the flow
 # family alone (execs and watermark lines), with `filtered` ranges for everything else.
 FULL_ONLY = ("book", "triggers", "depth", "bands")
+WAITING_REASON = "connected, but the relay has no feed from the node right now (it is waiting for its publisher)"
 BOOK_FIELDS = ["oid", "side", "px", "sz", "user", "time_ms"]
 TRIG_FIELDS = ["oid", "side", "kind", "trigger_px", "sz", "position_tpsl", "user", "time_ms"]
 
@@ -352,6 +353,14 @@ class FeedClient:
             self.relay = {k: obj.get(k) for k in ("relay", "state", "publisher", "message") if k in obj}
             self.relay["recv_wall_ms"] = wall_ms
             self.relay["recv_mono_ns"] = mono_ns
+            if self.connection.get("state") == "connected":
+                # Connected, but the relay has no feed from the node: said beside the connection, so the node panels
+                # don't read as a live source while every family ages to STALE.
+                waiting = obj.get("state") == "waiting_for_publisher" or obj.get("publisher") == "absent"
+                if waiting:
+                    self.connection["reason"] = WAITING_REASON
+                elif self.connection.get("reason") == WAITING_REASON:
+                    self.connection["reason"] = None
 
     # --- relay views (profile hl-relay-2) ------------------------------------------
     def _relay_market(self, obj: dict):

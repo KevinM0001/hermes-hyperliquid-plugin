@@ -5,14 +5,14 @@ Node data flows only while it is being used:
 - while a node panel is on screen (the dashboard tab is visible: it polls the snapshot once a second with
   `node=visible` and the market it has open), the relay subscription is the open market in full plus the
   executions of every market, so the alerts cover all of them;
-- 60 seconds after the last panel was seen (the tab hidden or closed), the subscription ends; the connection
+- 60 seconds after the last poll from a visible tab (the tab hidden or closed), the subscription ends; the connection
   closes unless the background alerts setting keeps the executions of every market (no full market);
 - coming back starts again from a fresh snapshot (the relay client forgets the old state when it goes idle);
 - a tool call that needs a market the panel subscription doesn't carry in full opens its own short subscription
   for that market and releases it once it has answered (manager.lease / release).
 
-The tab polls only while it is visible, so a poll is the signal; a panel counts as on screen for VISIBLE_GRACE_S
-after the last one.
+The tab polls once a second, only while it is visible, so a poll is the signal: the 60 s count from the last one
+(so 59 to 60 s after the tab is hidden). For the status, a panel counts as on screen for VISIBLE_GRACE_S after it.
 """
 
 from __future__ import annotations
@@ -46,7 +46,7 @@ class Demand:
     def want(self, now: float):
         """(full market or None, [markets whose executions are wanted]) or None when nothing wants node data."""
         with self._lock:
-            seen = self.last_panel is not None and now - self.last_panel <= self.grace_s + self.linger_s
+            seen = self.last_panel is not None and now - self.last_panel <= self.linger_s
             full = self.open_market if seen else None
             execs = list(self.markets) if (seen or self.alerts) else []
         if full is None and not execs:
@@ -57,10 +57,10 @@ class Demand:
         with self._lock:
             last, open_market = self.last_panel, self.open_market
         on_screen = last is not None and now - last <= self.grace_s
-        lingering = last is not None and not on_screen and now - last <= self.grace_s + self.linger_s
+        lingering = last is not None and not on_screen and now - last <= self.linger_s
         want = self.want(now)
         return {"panel_on_screen": on_screen, "open_market": open_market,
                 "seconds_since_panel": None if last is None else round(now - last, 1),
-                "unsubscribes_in_s": (round(self.grace_s + self.linger_s - (now - last), 1) if lingering else None),
+                "unsubscribes_in_s": (round(self.linger_s - (now - last), 1) if lingering else None),
                 "linger_s": self.linger_s, "alerts_in_background": self.alerts,
                 "subscription": None if want is None else {"full": want[0], "execs": want[1]}}

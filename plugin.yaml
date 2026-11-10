@@ -56,7 +56,7 @@ config_schema:
     type: str
     default: "hosted"
     label: Node feed
-    description: Where the node panels get their data. "hosted" (the default) uses the plugin author's hosted relay, a third-party network call, free for now; data flows only while a node panel is on screen (and for 60 s after) or a node tool is answering. "off" means public mode only. Or a local Unix socket path (the l4-runner live feed) or a relay WebSocket URL (wss://...) of your own.
+    description: Where the node panels get their data. "hosted" (the default) uses the plugin author's hosted relay, a third-party network call, free for now; data flows only while a node panel is on screen (and for 60 s after the tab was last visible) or a node tool is answering. "off" means public mode only. Or a local Unix socket path (the l4-runner live feed) or a relay WebSocket URL (wss://...) of your own.
   node_alerts:
     type: bool
     default: false

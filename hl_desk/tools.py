@@ -696,11 +696,14 @@ def _with_node_lease(name: str, args: dict, rt):
         return None, None
     deadline = time.monotonic() + NODE_WAIT_S
     snap = None
-    while True:
-        snap, _ = rt.snapshot(None)
-        if _node_ready(snap, market, NODE_ON_DEMAND[name]) or time.monotonic() >= deadline:
-            return lease, snap
-        time.sleep(NODE_WAIT_POLL_S)
+    try:
+        while True:
+            snap, _ = rt.snapshot(None)
+            if _node_ready(snap, market, NODE_ON_DEMAND[name]) or time.monotonic() >= deadline:
+                return lease, snap
+            time.sleep(NODE_WAIT_POLL_S)
+    except Exception:
+        return lease, None              # the caller still releases it; the snapshot is read again there
 
 
 def run_tool(name: str, args: dict | None, rt) -> str:
