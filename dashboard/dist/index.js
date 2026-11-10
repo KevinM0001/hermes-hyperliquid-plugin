@@ -17684,7 +17684,7 @@
           sub: tw && tw.value ? (tw.share_label || "share label not in snapshot") + " \u00b7 net aggr " +
             (isNum(tw.net_aggressive_usd) ? usdSigned(tw.net_aggressive_usd) : "unavailable") : "the card's 90 s window"
         })),
-      h("div", { className: "hd-ctx" }, h(HeaderStats, { m: m })));
+      null);   // the context values (mark/oracle, funding, open interest, day volume) sit in the chart card's head since Nov 10
   }
 
   // Public mode: one banner says what node mode adds and how to turn it on, in place of a note on every panel.
@@ -18174,7 +18174,9 @@
       id: "chart", className: "hd-p-chart", title: "Price chart",
       label: "Price chart",
       // No WHY fold on the chart (Kevin, Nov 10).
-      badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" }),
+      badges: h(Fragment, null,
+        h("div", { className: "hd-ctx-inline" }, h(HeaderStats, { m: m })),
+        h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" })),
       status: h(Fragment, null, ivBar, routeChip,
         h("div", { className: "hd-toggle hd-ovbar", role: "group", "aria-label": "Liquidity overlay" },
           [["stops", "Stop clusters"], ["depth", "Resting depth"], ["flow", "Taker flow"]].map(function (x) {

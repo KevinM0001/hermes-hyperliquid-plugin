@@ -462,6 +462,15 @@
 .hd-band-ranked { outline: 1px solid rgba(179, 157, 255, .9); outline-offset: -1px; }
 .hd-band-tip { position: absolute; z-index: 3; max-width: 380px; pointer-events: none; background: rgba(18, 18, 18, .96); border: 1px solid var(--hd-line); border-radius: 4px; padding: 6px 8px; font: 500 11px/1.4 var(--hd-mono); color: var(--hd-text); display: flex; flex-direction: column; gap: 4px; }
 .hd-ovbar { margin-left: 8px; }
+/* the context values in the chart card's head (Kevin, Nov 10) */
+.hd-p-chart .hd-badges { flex: 1 1 auto; justify-content: flex-end; align-items: center; min-width: 0; }
+.hd-ctx-inline { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
+.hd-ctx-inline .hd-stats { gap: 4px 16px; justify-content: flex-end; }
+.hd-ctx-inline .hd-stat { max-width: 170px; }
+.hd-ctx-inline .hd-stat-label { font-size: 9.5px; }
+.hd-ctx-inline .hd-stat-value { font-size: 12px; }
+.hd-ctx-inline .hd-stat-sub { font-size: 10px; max-width: 170px; }
+@media (max-width: 1100px) { .hd-ctx-inline .hd-stat-sub { display: none; } }
 .hd-late { font-size: 11px; }
 /* what the node sees */
 .hd-brief { display: flex; flex-direction: column; gap: 5px; }
