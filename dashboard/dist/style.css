@@ -393,7 +393,7 @@
 .hd-stat-value .hd-na { font-size: 11.5px; }
 .hd-stat-sub { font-size: 11px; color: var(--hd-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 .hd-stat-shared { flex: 1 1 100%; font-size: 11px; color: var(--hd-muted); line-height: 1.35; }
-.hd-unv { font-size: 11px; color: var(--hd-warn); white-space: nowrap; }
+.hd-unv { font-size: 11px; color: var(--hd-muted); white-space: nowrap; }
 .hd-unv-badge { font: 600 9.5px/1 var(--hd-mono); letter-spacing: .06em; padding: 2px 5px; border-radius: 3px; background: rgba(242, 193, 78, 0.16); color: var(--hd-warn); }
 
 /* ---------------------------------------------------------------- tables */

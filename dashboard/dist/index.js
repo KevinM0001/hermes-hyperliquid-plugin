@@ -17485,9 +17485,10 @@
     for (let i = 0; i < fields.length; i++) {
       const f = fields[i];
       if (f && typeof f === "object" && f.value !== null && f.value !== undefined && f.status === "unverified") {
+        // No badge box (Kevin, Nov 10): the status stays as a muted word with the reason in the tooltip; the label's
+        // dot carries the status colour and the card's "not fresh" fold names the fields shown unverified.
         return h("span", { className: "hd-unv", title: f.reason || "unverified" },
-          h("span", { className: "hd-unv-badge" }, "UNVERIFIED"),
-          isNum(f.received_age_s) ? " changed " + secs(f.received_age_s) + " ago" : "");
+          "unverified" + (isNum(f.received_age_s) ? " \u00b7 changed " + secs(f.received_age_s) + " ago" : ""));
       }
     }
     return null;
