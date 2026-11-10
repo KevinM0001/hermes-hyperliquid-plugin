@@ -17085,8 +17085,8 @@
     ["stale", "a field that should keep advancing hasn't, within its max age"],
     ["unverified", "no verified progress signal (bbo always), so silence can't be told from a stall"],
     ["warming_up", "nothing received yet on this connection, or a window lacks coverage"],
-    ["disconnected", "the collector has no connection"],
-    ["stopped", "the collector isn't running"],
+    ["disconnected", "the data feed has no connection"],
+    ["stopped", "the data feed isn't running"],
     ["missing", "nothing has ever been received for this field"]
   ];
 
@@ -17432,6 +17432,13 @@
     return h("span", { className: "hd-addr", title: a }, label);
   }
 
+  // The public data feed's state, in the words of a connection (Kevin, Nov 10): the plugin's collector states
+  // connected, connecting, starting, disconnected, stopped and replay shown as CONNECTED, CONNECTING,
+  // DISCONNECTED, STOPPED and REPLAY; no state at all (the engine unreachable) reads DISCONNECTED.
+  const FEED_WORDS = { connected: "CONNECTED", connecting: "CONNECTING", starting: "CONNECTING",
+    disconnected: "DISCONNECTED", stopped: "STOPPED", replay: "REPLAY" };
+  function feedWord(state) { return FEED_WORDS[state] || "DISCONNECTED"; }
+
   // ------------------------------------------------------------------ banners
 
   function Banners(props) {
@@ -17454,7 +17461,7 @@
       if (col.last_error) bits.push("last error: " + col.last_error);
       if (isNum(col.next_retry_s) && state === "disconnected") bits.push("next retry " + col.next_retry_s + " s after that");
       out.push(h("div", { key: "col", className: cx("hd-banner", bad ? "hd-banner-bad" : "hd-banner-warn"), role: "status" },
-        h("b", null, "Collector " + String(state).toUpperCase() + ". "),
+        h("b", null, "Data feed " + feedWord(state) + ". "),
         state === "stopped"
           ? "Nothing is being collected. Use Start (or /hl start in chat); the tab never starts it by itself. "
           : (state === "disconnected" ? "No connection to Hyperliquid; values turn unavailable as their freshness runs out. " : "Not connected yet. "),
@@ -17544,7 +17551,7 @@
 
   function CollectorBox(props) {
     const c = props.collector || {};
-    const state = c.state || "unknown";
+    const state = c.state || "disconnected";          // no state known: nothing is flowing to the tab
     const tone = state === "connected" ? "ok" : (state === "stopped" || state === "disconnected" ? "bad" : "warn");
     // One control for the state (Kevin, Nov 10): Start while stopped; small Stop and Restart links once it runs.
     const running = state === "connected" || state === "connecting" || state === "warming_up";
@@ -17561,11 +17568,11 @@
         title: a.action + ": " + text + (act && act.at ? " (" + hms(act.at) + " UTC)" : "") },
         " \u00b7 " + a.action + ": " + text);
     }
-    return h("div", { className: "hd-collector", "aria-label": "Collector" },
+    return h("div", { className: "hd-collector", "aria-label": "Data feed" },
       h("div", { className: "hd-collector-line" },
         props.mode ? h(ModeBadge, { mode: props.mode, title: props.modeTitle }) : null,
         h("span", { className: "hd-sdot hd-tone-" + tone, "aria-hidden": "true" }),
-        "Collector ", h("b", null, String(state).toUpperCase()),
+        "Data feed ", h("b", null, feedWord(state)),
         isNum(c.conn) ? " \u00b7 conn #" + c.conn : null,
         isNum(c.reconnects) ? " \u00b7 reconnects " + intf(c.reconnects) : null,
         c.note ? " \u00b7 " + c.note : null,
@@ -17573,7 +17580,7 @@
       c.last_error ? h("div", { className: "hd-collector-err", title: c.last_error }, "last error: " + c.last_error) : null,
       state === "disconnected" && isNum(c.next_retry_s)
         ? h("div", { className: "hd-dim" }, "next retry " + c.next_retry_s + " s after " + hms(c.since) + " UTC") : null,
-      h("div", { className: "hd-btn-row", role: "group", "aria-label": "Collector control" },
+      h("div", { className: "hd-btn-row", role: "group", "aria-label": "Data feed control" },
         actions.map(function (x) {
           return h("button", {
             key: x[0], type: "button", className: cx("hd-btn", running ? "hd-btn-xs hd-btn-quiet" : "hd-btn-primary"), disabled: !!props.busy,
@@ -17721,7 +17728,7 @@
     return h("section", { className: "hd-card hd-nodeoff", role: "status", "aria-label": "Node mode is off", "data-panel": "node-status", "data-node-hook": "node-mode" },
       h("span", { className: "hd-nodeoff-title" }, h(Badge, { kind: "node", title: props.reason }, "NODE"), "Node mode is off"),
       h("span", { className: "hd-nodeoff-text" }, "Public data only. The node panels need the engine's node feed: set ",
-        h("code", null, "node_feed"), " to its local socket or a relay wss:// URL, then restart the collector."),
+        h("code", null, "node_feed"), " to its local socket or a relay wss:// URL, then restart the data feed."),
       h(Why, { label: "what it adds" },
         h("p", null, h("b", null, "Why: "), props.reason),
         h("ul", { className: "hd-nodeoff-list" }, NODE_ADDS.map(function (x) { return h("li", { key: x[0] }, h("b", null, x[0] + ": "), x[1]); })),
@@ -21995,7 +22002,7 @@
       m ? null
         : h("div", { className: "hd-card hd-empty-state" },
           resp ? "The snapshot has no market to show." :
-            (noSnap ? h(Fragment, null, h("b", null, "No snapshot yet. "), "Start the collector with the Start button above, or /hl start in chat; the banner above says why there is none.")
+            (noSnap ? h(Fragment, null, h("b", null, "No snapshot yet. "), "Start the data feed with the Start button above, or /hl start in chat.")
               : (pollErr ? "Couldn't reach the plugin's snapshot route: " + pollErr.message : "Loading the first snapshot" + ELLIPSIS))),
       resp && resp.ok === true ? h(ProvRows, { resp: resp, aged: aged, pollNote: pollNote }) : null,
       h(Footer, { nodeOn: non }),
@@ -22036,7 +22043,7 @@
     return h("div", { className: "hd-strip", role: "status", "aria-label": "Hyperliquid Desk live strip" },
       h("span", { className: "hd-strip-brand" }, "Hyperliquid Desk", ok ? h(ModeBadge, { mode: resp.mode }) : null),
       !resp ? h("span", { className: "hd-strip-dim" }, err ? "snapshot route: " + err : "loading" + ELLIPSIS)
-        : !ok ? h("span", { className: "hd-strip-na" }, "no snapshot: " + (resp.error || "the collector isn't running"))
+        : !ok ? h("span", { className: "hd-strip-na" }, "no snapshot: " + (resp.error || "the data feed isn't running"))
         : names.map(function (n) {
           const d = deck[n] || {};
           const card = d.card || {};
