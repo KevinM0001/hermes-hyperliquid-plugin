@@ -786,20 +786,9 @@
         h("td", { className: "hd-r hd-dim", title: noteText }, isNum(l.api_count) ? intf(l.api_count) : missing()));
     });
 
-    const why = h(Fragment, null,
-      h("p", null, "The ten aggregated price levels nearest the spread on each side, from Hyperliquid's public 20-level l2Book, highest ask at the top; the grouping dropdown widens the view. ",
-        h("b", null, "Levels are aggregated by price: "), "a level is never an individual order. ", noteText,
-        lad.aggregated === true ? " (aggregated: true)" : ""),
-      kinds.length ? h("p", null, h("b", null, "Grouping: "), "the venue's own coarser books (l2Book at nSigFigs 4, 3 and 2, one request each, " +
-        "about every 5 s) beside the full-precision one, which updates on each push. Each option's label is the price step between its " +
-        "levels; the rows are the venue's aggregation, never re-bucketed here. A grouped book whose freshness lapses is withheld whole.") : null,
-      h("p", null, props.nodeOn
-        ? "The order-level columns (waiting stops, largest order, oldest order, 10 s change) are in the Node ladder (L4) panel below; node levels are never mixed into these aggregated public levels."
-        : "The order-level columns (waiting stops, largest order, oldest order, 10 s change) need the node's order-level book; see the node mode banner below."));
-
+    // No WHY fold on the ladder (Kevin, Nov 10).
     return h(Panel, {
       id: "ladder", className: "hd-p-ladder", title: "Price ladder (aggregated levels)", label: "Aggregated price ladder",
-      why: why,
       badges: h(Fragment, null, groupSelect,
         h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: sel ? "l2Book 20 \u00b7 " + group : "l2Book 20" })),
       status: h(Fragment, null, h(Fresh, { f: f, label: sel ? "l2Book " + group : "l2Book full" }),
@@ -1038,17 +1027,7 @@
     return h(Panel, {
       id: "chart", className: "hd-p-chart", title: "Price chart",
       label: "Price chart",
-      why: h(Fragment, null,
-        h("p", null, (isNum(chart.candle_s) ? chart.candle_s + " s candles" : "Candles") + " from public trades, times in UTC. " +
-          "The dashed line is the last price, in the colour of the last candle; a gap marker sits on the first candle after a coverage gap, and no candle spans a gap. " +
-          "The bars under the candles are each candle's traded notional in USD (the snapshot's volume_usd), in the buy colour when the candle closed at or above its open. " +
-          "The readout at the top left follows the crosshair; with the pointer away it shows the latest candle. " +
-          "The price lines carry no label on the chart: each shows its price on the axis and is named in the legend below."),
-        h("p", null, h("b", null, "Intervals: "), "15s is the snapshot's own candles (every public trade the collector saw, last 15 minutes, volume in USD). " +
-          "1m to 1d come from the plugin's candles route: the venue's candleSnapshot history (the most recent 5000 candles per interval) " +
-          "with the in-progress candle from the venue's websocket, which carries no source timestamp and is drawn hollow and marked unverified; " +
-          "their volume is in the coin's units, as the venue gives it."),
-        chart.candles_note ? h("p", null, "The snapshot's note: " + chart.candles_note + ".") : null),
+      // No WHY fold on the chart (Kevin, Nov 10).
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" }),
       status: h(Fragment, null, ivBar, routeChip)
     },
