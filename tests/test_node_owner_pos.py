@@ -456,3 +456,40 @@ def test_the_plausibility_ratio_is_defined_once_and_no_price_means_no_estimate()
     mf.crossed = {"since_seq": 1, "since_block_time_ms": 0, "best_bid": Decimal(1), "best_ask": Decimal(1)}   # no usable mid
     est, meta = panels.owner_estimates(mf, panels.families(c, M, *now))
     assert est is None and meta["available"] is False and "can't be set aside" in meta["reason"]
+
+
+LIVE = FIX / "owner-pos-HYPE-live-120s.jsonl.gz"
+
+
+def test_the_shadow_runners_live_recording_gives_estimates_on_live_data():
+    """The engine's live recording from the shadow runner (the fixed build beside the contest runner, Nov 10 23:05Z),
+    cut to HYPE and its stream: 1,475 covered owners, 12 position deltas, verified by the engine against an
+    independent probe (2,883,774 position checks, 0 mismatches). The plugin's reading, pinned."""
+    from node_helpers import feed
+    h, msgs = read_recording(LIVE)
+    assert h["allowlist_version"] == "livefeed-v2.1" and "HYPE.owner_pos" in h["markets"]
+    c = client(cfg=NO_AGE)
+    c.on_line(hello_from(h), msgs[0][0] - 1, 0)
+    feed(c, msgs)
+    mf, ps = c.markets["HYPE"], c.markets["HYPE"].opos
+    assert len(ps.positions) == 1_475 and ps.counters["sets"] == 12 and ps.counters["drops"] == 0 and ps.counters["gaps"] == 0
+    assert mf.fam["book"].valid and ps.block == mf.block
+    rx = msgs[-1][0] + 100
+    v = panels.market_view(c, "HYPE", OPTS, rx, (rx - msgs[0][0]) * 10 ** 6)
+    assert all(f["state"] == "LIVE" for f in v["families"].values()) and "owner_pos" in v["families"]
+    st, e = v["stops"], v["stops"]["estimate"]
+    assert e["available"] and e["same_block"] and e["defects"] == 0
+    assert (e["owners"], e["whole_position_orders"], e["estimated"], e["counted_at_nearer"], e["upper_bound"]) == (1_475, 1_710, 1_685, 1, 45)
+    assert e["unknown"] == {EST_SET_ASIDE: 23, EST_FLAT: 1}
+    top = st["clusters"][0]
+    assert (top["fires_on"], top["k"], top["notional_usd"], top["estimate"]["notional_usd"], top["total_est_usd"]) == ("fall", 4, 2_871_857.01, 117_523.74, 2_989_380.75)
+    assert top["text"] == ("Sell-side triggers at 70.7516 to 70.3906 (-2.0% to -2.5%): at least $2.87M stated, about $2.99M with whole-position "
+                           "orders at their owners' positions as of 23:04:38Z, across 30 orders from 27 accounts; the bids at and below it "
+                           "total $37.86M, so this cluster is at least 7.6% of the liquidity it would walk, about 7.9% with the estimate; "
+                           "7 of 30 (23%) whole-position, 7 estimated")
+    assert [(x["fires_on"], x["k"]) for x in st["clusters"]] == [("fall", 4), ("fall", 7), ("rise", 2), ("rise", 4)]
+    assert [(x["fires_on"], x["k"]) for x in st["clusters_by_estimate"]] == [("fall", 10), ("rise", 4)]
+    rows = [r for side in st["map"]["sides"].values() for r in side["bands"]]
+    assert round(sum(r["notional_usd"] or 0 for r in rows)) == 11_830_242 and round(sum((r["estimate"] or {}).get("notional_usd") or 0 for r in rows)) == 10_947_770
+    assert st["exclusions"]["size_outlier"]["orders"] == 0 and st["census"]["unsized_total"] == 1_710
+    assert '"positions"' not in json.dumps(jsonable(v))

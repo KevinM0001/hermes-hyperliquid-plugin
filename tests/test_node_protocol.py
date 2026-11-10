@@ -893,8 +893,9 @@ def test_every_fixture_line_is_on_the_v2_allowlist_and_matches_its_manifest():
                 checked["control" if "control" in msg else "data"] += 1
             assert not bad, f"{fx['file']} line {n}: {bad}"
     # 2 hellos and 2 heartbeats; 5 headers and 4 trailers (the three owner-position recordings of Nov 10 each carry a
-    # header and a trailer and no control line); their 788 data lines include the position streams' own
-    assert checked == {"data": 4502, "control": 4, "recorder": 9}
+    # header and a trailer and no control line, as does the live one of Nov 10 23:05Z); their 3,392 data lines include
+    # the position streams' own
+    assert checked == {"data": 7106, "control": 4, "recorder": 11}
     # The check isn't vacuous: an extra field, a forbidden node field, an unknown kind, a nested object under a
     # scalar control field, an unlisted key in a nested map, or an unlisted recorder field is reported.
     line = next(m for m in (json.loads(t).get("msg") for t in
