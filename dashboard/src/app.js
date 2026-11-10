@@ -868,6 +868,10 @@
     if (!node || node.available === false) return out;
     const stops = node.stops;
     const mp = stops && stops.map;
+    const foot = (mp && mp.as_of && isNum(mp.as_of.book_time_ms) ? "node book " + hms(mp.as_of.book_time_ms) + " UTC" + (isNum(mp.as_of.block) ? ", block " + mp.as_of.block : "") + "; " : "") +
+      "triggers and resting orders, not positions: no liquidation level";
+    const ranks = {};
+    (stops && Array.isArray(stops.clusters) ? stops.clusters : []).forEach(function (c) { ranks[c.fires_on + ":" + c.k] = c; });
     if (ov.stops && mp && mp.available !== false && mp.sides) {
       let mx = 0;
       ["fall", "rise"].forEach(function (k) { ((mp.sides[k] || {}).bands || []).forEach(function (b) { if (isNum(b.notional_usd) && b.notional_usd > mx) mx = b.notional_usd; }); });
@@ -875,13 +879,15 @@
         ((mp.sides[k] || {}).bands || []).forEach(function (b) {
           if (!b.band || !isNum(b.notional_usd) || b.notional_usd <= 0) return;
           const w = b.walk || {};
+          const cl = ranks[k + ":" + b.k];
           out.push({
-            key: "s:" + k + ":" + b.k, kind: "stops", lo: Number(b.band.lo), hi: Number(b.band.hi), share: mx > 0 ? b.notional_usd / mx : 0,
-            text: (k === "fall" ? "Sell-side triggers " : "Buy-side triggers ") + dpx(b.band.near_px) + " to " + dpx(b.band.far_px) +
+            key: "s:" + k + ":" + b.k, kind: "stops", ranked: !!cl, lo: Number(b.band.lo), hi: Number(b.band.hi), share: mx > 0 ? b.notional_usd / mx : 0,
+            foot: foot,
+            text: (cl ? "#" + cl.rank + " cluster. " + cl.text : (k === "fall" ? "Sell-side triggers " : "Buy-side triggers ") + dpx(b.band.near_px) + " to " + dpx(b.band.far_px) +
               " (" + (k === "fall" ? "-" : "+") + qp(b.band.from_pct, 1) + " to " + (k === "fall" ? "-" : "+") + qp(b.band.to_pct, 1) + "%): " +
               (b.lower_bound ? "at least " : "") + usd(b.notional_usd) + " across " + intf(b.orders) + " orders from " + intf(b.accounts) + " accounts" +
               (b.unknown_size_orders ? "; " + intf(b.unknown_size_orders) + " report no size, so this is understated" : "") +
-              (isNum(w.ratio_pct) ? "; " + (w.lower_bound ? "at least " : "") + walkPct(w.ratio_pct) + " of the resting " + (k === "fall" ? "bids" : "asks") + " at and beyond it" : "")
+              (isNum(w.ratio_pct) ? "; " + (w.lower_bound ? "at least " : "") + walkPct(w.ratio_pct) + " of the resting " + (k === "fall" ? "bids" : "asks") + " at and beyond it" : ""))
           });
         });
       });
@@ -894,7 +900,7 @@
         (((pair[1]) && pair[1].bands) || []).forEach(function (b, i) {
           if (!isNum(b.depth_usd) || b.depth_usd <= 0) return;
           out.push({
-            key: "d:" + pair[0] + ":" + i, kind: pair[0] === "bid" ? "depthbid" : "depthask", lo: Number(b.lo), hi: Number(b.hi), share: mx > 0 ? b.depth_usd / mx : 0,
+            key: "d:" + pair[0] + ":" + i, kind: pair[0] === "bid" ? "depthbid" : "depthask", lo: Number(b.lo), hi: Number(b.hi), share: mx > 0 ? b.depth_usd / mx : 0, foot: foot,
             text: (pair[0] === "bid" ? "Resting bids " : "Resting asks ") + dpx(b.lo) + " to " + dpx(b.hi) + " (" + qp(b.from_pct, 1) + " to " + qp(b.to_pct, 1) + "% " +
               (pair[0] === "bid" ? "below" : "above") + "): " + usd(b.depth_usd) + (isNum(b.orders) ? " across " + intf(b.orders) + " orders" : "") +
               (isNum(b.cumulative_from_price_usd) ? "; " + usd(b.cumulative_from_price_usd) + " from the price out to here" : "")
@@ -931,7 +937,7 @@
         const y1 = a.series.priceToCoordinate(b.hi);
         const y2 = a.series.priceToCoordinate(b.lo);
         if (y1 === null || y2 === null || !isNum(y1) || !isNum(y2)) return;
-        out.push({ key: b.key, kind: b.kind, share: b.share, top: Math.min(y1, y2), height: Math.max(1, Math.abs(y2 - y1)), right: axisW });
+        out.push({ key: b.key, kind: b.kind, ranked: !!b.ranked, share: b.share, top: Math.min(y1, y2), height: Math.max(1, Math.abs(y2 - y1)), right: axisW });
       });
       const sig = out.map(function (r) { return r.key + ":" + Math.round(r.top) + ":" + Math.round(r.height) + ":" + r.right; }).join("|");
       if (sig !== rectSig.current) { rectSig.current = sig; setRects(out); }
@@ -1018,7 +1024,7 @@
           if (param && param.point && bands.length) {
             const pr = a2.series.coordinateToPrice(param.point.y);
             const hit = isNum(pr) ? bands.filter(function (b) { return pr >= b.lo && pr <= b.hi; }) : [];
-            setBandTip(hit.length ? { x: param.point.x, y: param.point.y, texts: hit.map(function (b) { return b.text; }) } : null);
+            setBandTip(hit.length ? { x: param.point.x, y: param.point.y, texts: hit.map(function (b) { return b.text; }).concat([hit[0].foot]) } : null);
           } else {
             setBandTip(null);
           }
@@ -1140,10 +1146,10 @@
         const w = (5 + 25 * Math.min(1, Math.max(0, r.share))).toFixed(1) + "%";
         const st = { top: r.top + "px", height: r.height + "px", width: w };
         if (r.kind === "stops") st.left = "0px"; else st.right = r.right + "px";
-        return h("div", { key: r.key, className: "hd-chart-band hd-band-" + r.kind, style: st });
+        return h("div", { key: r.key, className: cx("hd-chart-band", "hd-band-" + r.kind, r.ranked && "hd-band-ranked"), style: st });
       })) : null,
       bandTip ? h("div", { className: "hd-band-tip", style: { left: Math.min(bandTip.x + 14, 420) + "px", top: Math.max(4, bandTip.y - 10) + "px" } },
-        bandTip.texts.map(function (t, i) { return h("div", { key: i }, t); })) : null,
+        bandTip.texts.map(function (t, i) { return h("div", { key: i, className: i === bandTip.texts.length - 1 ? "hd-dim" : undefined }, t); })) : null,
       !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market) }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" },

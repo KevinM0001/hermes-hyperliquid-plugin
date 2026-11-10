@@ -459,6 +459,7 @@
 .hd-band-stops { background: rgba(179, 157, 255, .30); border-right: 2px solid rgba(179, 157, 255, .9); }
 .hd-band-depthbid { background: rgba(24, 229, 137, .22); border-left: 2px solid rgba(24, 229, 137, .85); }
 .hd-band-depthask { background: rgba(255, 69, 77, .22); border-left: 2px solid rgba(255, 69, 77, .85); }
+.hd-band-ranked { outline: 1px solid rgba(179, 157, 255, .9); outline-offset: -1px; }
 .hd-band-tip { position: absolute; z-index: 3; max-width: 380px; pointer-events: none; background: rgba(18, 18, 18, .96); border: 1px solid var(--hd-line); border-radius: 4px; padding: 6px 8px; font: 500 11px/1.4 var(--hd-mono); color: var(--hd-text); display: flex; flex-direction: column; gap: 4px; }
 .hd-ovbar { margin-left: 8px; }
 /* what the node sees */
