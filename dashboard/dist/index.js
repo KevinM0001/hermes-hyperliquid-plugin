@@ -17301,9 +17301,14 @@
     componentDidCatch(err) { try { (window.__hdErrs = window.__hdErrs || []).push(String((err && err.message) || err)); } catch (e) { /* nothing to do */ } }
     render() {
       if (this.state.err) {
+        const msg = String((this.state.err && this.state.err.message) || this.state.err);
+        if (this.props.root) {
+          // The whole tab (Nov 10): a render error outside any panel shows this card instead of a blank page.
+          return h("div", { className: "hd-root" }, h("div", { className: "hd-card hd-pad hd-panel-error", role: "alert" },
+            "The tab hit an error in its code (" + msg + "). Reload the page; the plugin keeps collecting and its data is unaffected."));
+        }
         return h("div", { className: "hd-pad hd-panel-error", role: "alert" },
-          "This panel hit an error in the tab's code (" + String((this.state.err && this.state.err.message) || this.state.err) + "). " +
-          "It stays hidden until the page is reloaded; the other panels and the plugin's data are unaffected.");
+          "This panel hit an error in the tab's code (" + msg + "). It stays hidden until the page is reloaded; the other panels and the plugin's data are unaffected.");
       }
       return this.props.children || null;
     }
@@ -21687,7 +21692,7 @@
 
   // ------------------------------------------------------------------ app
 
-  function App() {
+  function AppInner() {
     const [market, setMarket] = useState(null);
     // Two pages since Nov 10 (Kevin: one long page floods the reader): Desk, the public reading of the market, and
     // Node, the engine's order-level products. The choice lives in the URL hash (#node) so a link keeps it.
@@ -22001,6 +22006,8 @@
       err && resp ? h("span", { className: "hd-strip-na" }, "last poll failed: " + err) : null);
   }
 
+  // The tab mounts behind a root error boundary: a render error shows a card with the message, never a blank page.
+  function App(props) { return h(PanelBoundary, { id: "root", root: true }, h(AppInner, props)); }
   REGISTRY.register(PLUGIN, App);
   if (typeof REGISTRY.registerSlot === "function") REGISTRY.registerSlot(PLUGIN, "chat:top", ChatStrip);
 })();
