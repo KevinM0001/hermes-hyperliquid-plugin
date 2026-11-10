@@ -17481,6 +17481,13 @@
   }
 
   function Stat(props) {
+    // One line (Kevin, Nov 10, the chart card's head): label and value side by side, the sub text in the tooltip.
+    if (props.inline) {
+      const subText = typeof props.sub === "string" ? props.sub : "";
+      return h("div", { className: "hd-stat hd-stat-inline", title: subText || undefined },
+        h("span", { className: "hd-stat-label" }, props.label, " ", props.f ? h(StatusDot, { f: props.f }) : null),
+        h("span", { className: "hd-stat-value" }, props.value));
+    }
     return h("div", { className: "hd-stat" },
       h("div", { className: "hd-stat-label" }, props.label, " ", props.f ? h(StatusDot, { f: props.f }) : null),
       h("div", { className: "hd-stat-value" }, props.value),
@@ -17501,24 +17508,25 @@
     const fields = [ctx.mark, ctx.oracle, ctx.funding_pct_per_hour, ctx.open_interest_usd, ctx.day_notional_volume];
     const reasons = fields.map(function (f) { return valueOf(f) === null ? reasonOf(f) : null; });
     const shared = reasons[0] && reasons.every(function (x) { return x === reasons[0]; }) ? reasons[0] : null;
-    return h("div", { className: "hd-stats" },
+    const inline = !!props.inline;
+    return h("div", { className: cx("hd-stats", inline && "hd-stats-inline") },
       h(Stat, {
-        label: "Mark / oracle", f: fr.ctx,
+        inline: inline, label: "Mark / oracle", f: fr.ctx,
         value: h(Fragment, null, h(V, { m: ctx.mark, fmt: px, compact: true }), " / ", h(V, { m: ctx.oracle, fmt: px, compact: true })),
         sub: shared ? null : firstReason([ctx.mark, ctx.oracle]) || (valueOf(ctx.prev_day_px) !== null ? "prev day px " + px(ctx.prev_day_px.value) : "prev day px: " + reasonOf(ctx.prev_day_px))
       }),
       h(Stat, {
-        label: "Funding, 1h", f: fr.ctx,
+        inline: inline, label: "Funding, 1h", f: fr.ctx,
         value: h(V, { m: ctx.funding_pct_per_hour, fmt: pctSigned6, compact: true, title: unitsNote }),
         sub: shared ? null : firstReason([ctx.funding_pct_per_hour]) || ("per 1 hour \u00b7 fraction " + (valueOf(ctx.funding) !== null ? String(ctx.funding.value) : "unavailable"))
       }),
       h(Stat, {
-        label: "Open interest", f: fr.ctx,
+        inline: inline, label: "Open interest", f: fr.ctx,
         value: h(V, { m: ctx.open_interest_usd, fmt: usd, compact: true, title: unitsNote }),
         sub: shared ? null : firstReason([ctx.open_interest_usd]) || (valueOf(ctx.open_interest) !== null ? sz(ctx.open_interest.value) + " " + (ctx.open_interest.unit || "") : "coin: " + reasonOf(ctx.open_interest))
       }),
       h(Stat, {
-        label: "Day volume", f: fr.ctx,
+        inline: inline, label: "Day volume", f: fr.ctx,
         value: h(V, { m: ctx.day_notional_volume, fmt: usd, compact: true, title: unitsNote }),
         sub: shared ? null : firstReason([ctx.day_notional_volume]) || "notional, Hyperliquid's day window"
       }),
@@ -18175,7 +18183,7 @@
       label: "Price chart",
       // No WHY fold on the chart (Kevin, Nov 10).
       badges: h(Fragment, null,
-        h("div", { className: "hd-ctx-inline" }, h(HeaderStats, { m: m })),
+        h("div", { className: "hd-ctx-inline" }, h(HeaderStats, { m: m, inline: true })),
         h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" })),
       status: h(Fragment, null, ivBar, routeChip,
         h("div", { className: "hd-toggle hd-ovbar", role: "group", "aria-label": "Liquidity overlay" },
