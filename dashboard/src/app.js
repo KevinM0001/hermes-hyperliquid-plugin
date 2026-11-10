@@ -494,6 +494,15 @@
   // receipt age go under it; the reason is on hover. Never shown as fresh.
   // The context values' sub line carries no receipt age (Kevin, Nov 10: noise to a user); an unverified status
   // stays on the label's dot and in the card's reasons when a value is withheld.
+  // A price at a fixed number of decimals, so a value a tick more or less never changes the text's width (Kevin,
+  // Nov 10): none at 1,000 and above, two from 100, three from 1, five below.
+  function pxFixed(v) {
+    if (!isNum(v)) return "?";
+    const a = Math.abs(v);
+    const d = a >= 1000 ? 0 : (a >= 100 ? 2 : (a >= 1 ? 3 : 5));
+    return v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d });
+  }
+
   function HeaderStats(props) {
     const m = props.m;
     const ctx = g(m, "context") || {};
@@ -508,7 +517,7 @@
     return h("div", { className: cx("hd-stats", inline && "hd-stats-inline") },
       h(Stat, {
         inline: inline, slot: "mark", label: "Mark / oracle", f: fr.ctx,
-        value: h(Fragment, null, h(V, { m: ctx.mark, fmt: px, compact: true }), " / ", h(V, { m: ctx.oracle, fmt: px, compact: true })),
+        value: h(Fragment, null, h(V, { m: ctx.mark, fmt: inline ? pxFixed : px, compact: true }), " / ", h(V, { m: ctx.oracle, fmt: inline ? pxFixed : px, compact: true })),
         sub: shared ? null : firstReason([ctx.mark, ctx.oracle]) || (valueOf(ctx.prev_day_px) !== null ? "prev day px " + px(ctx.prev_day_px.value) : "prev day px: " + reasonOf(ctx.prev_day_px))
       }),
       h(Stat, {
