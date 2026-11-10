@@ -17816,7 +17816,6 @@
 
   // ------------------------------------------------------------------ price chart (Lightweight Charts)
 
-  const LINE_STYLE = { best_bid: "bid", best_ask: "ask", mark: "mark", oracle: "oracle", largest_bid_level: "bidlvl", largest_ask_level: "asklvl" };
   // Volume bars: the buy and sell colours at 50 % (the palette's rule), by the candle's close against its open.
   const VOL_UP = "rgba(24, 229, 137, 0.5)";
   const VOL_DOWN = "rgba(255, 69, 77, 0.5)";
@@ -17853,20 +17852,13 @@
       h("span", { className: "hd-ro-cell" }, "Vol ", h("b", { className: "hd-ro-v" }, vol)));
   }
 
-  function lineOptions(pl, key) {
-    const style = LINE_STYLE[pl.kind];
-    const LS = LWC.LineStyle;
-    // No title box on the line (Kevin, Nov 9: the boxes moved around and hid the candles); the price sits on the axis
-    // and the legend under the chart names each line.
-    const o = { price: pl.price, title: "", lineWidth: 1, axisLabelVisible: true, lineVisible: true };
-    if (style === "bid") { o.color = C.bid; o.lineStyle = LS.Solid; }
-    else if (style === "ask") { o.color = C.ask; o.lineStyle = LS.Solid; }
-    else if (style === "mark") { o.color = C.mark; o.lineStyle = LS.Dotted; }
-    else if (style === "oracle") { o.color = C.oracle; o.lineStyle = LS.Dotted; }
-    else if (style === "bidlvl") { o.color = C.bid; o.lineStyle = LS.LargeDashed; }
-    else if (style === "asklvl") { o.color = C.ask; o.lineStyle = LS.LargeDashed; }
-    else { o.color = C.dim; o.lineStyle = LS.Dashed; }
-    return o;
+  // Axis prices (Kevin, Nov 10): thousands separators, and the market's own decimals, at least two where it has them
+  // (BTC 75,000 and 74,775.5; HYPE 74.80; SP500 7,563.45; XYZ100 27,900).
+  function axisPrice(v, d) {
+    if (!isNum(v)) return "";
+    const dec = isNum(d) ? Math.max(0, Math.min(6, d)) : 2;
+    const min = dec >= 2 ? 2 : 0;
+    return Number(v).toLocaleString("en-US", { minimumFractionDigits: min, maximumFractionDigits: Math.max(min, dec) });
   }
 
   function PriceChart(props) {
@@ -17876,7 +17868,7 @@
     const api = useRef(null);
     const [failure, setFailure] = useState(LWC ? null : "Lightweight Charts isn't loaded (dist/index.js should carry it)");
     const [hover, setHover] = useState(null);
-    const [iv, setIv] = useState("15s");
+    const [iv, setIv] = useState("15m");       // 15 minutes by default (Kevin, Nov 10): 15 s loads too little to read
     const [cd, setCd] = useState(null);   // the /candles route's latest answer for iv (null for 15s)
     const fromRoute = iv !== "15s";
     const routeCandles = fromRoute && cd && cd.state === "ok" && cd.data ? (cd.data.candles || []) : [];
@@ -17923,11 +17915,12 @@
           rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.08, bottom: 0.24 } },
           timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: true },
           crosshair: { mode: LWC.CrosshairMode.Normal },
-          localization: { locale: "en-US" }
+          localization: { locale: "en-US", priceFormatter: function (v) { return axisPrice(v, api.current ? api.current.decimals : null); } }
         });
         const series = c.addSeries(LWC.CandlestickSeries, {
           upColor: C.bid, downColor: C.ask, borderVisible: true, borderUpColor: C.bid, borderDownColor: C.ask, wickUpColor: C.bid, wickDownColor: C.ask,
-          priceLineVisible: false, lastValueVisible: true
+          // One dashed line at the last price, in the last candle's colour, as a trading terminal draws it (Kevin, Nov 10).
+          priceLineVisible: true, priceLineStyle: LWC.LineStyle.Dashed, priceLineWidth: 1, lastValueVisible: true
         });
         const markers = typeof LWC.createSeriesMarkers === "function" ? LWC.createSeriesMarkers(series, []) : null;
         // Volume bars in the bottom fifth, on their own hidden scale, under the candles' margin.
@@ -17984,10 +17977,8 @@
             return { time: k.time, value: byTime[k.time][volKey], color: k.close >= k.open ? VOL_UP : VOL_DOWN };
           }));
         }
-        const lines = (chart.price_lines || []).filter(function (pl) { return isNum(pl.price); });
         const vals = [];
         candles.forEach(function (k) { vals.push(k.open, k.high, k.low, k.close); });
-        lines.forEach(function (pl) { vals.push(pl.price); });
         const d = decimalsOf(vals);
         if (d !== a.decimals) {
           a.series.applyOptions({ priceFormat: { type: "price", precision: d, minMove: Math.pow(10, -d) } });
@@ -17995,17 +17986,8 @@
         }
         a.series.setData(candles);
 
-        const want = {};
-        lines.forEach(function (pl, i) {
-          const key = pl.kind || ("line" + i);
-          want[key] = true;
-          const opts = lineOptions(pl, key);
-          if (a.lines[key]) a.lines[key].applyOptions(opts);
-          else a.lines[key] = a.series.createPriceLine(opts);
-        });
-        Object.keys(a.lines).forEach(function (k) {
-          if (!want[k]) { a.series.removePriceLine(a.lines[k]); delete a.lines[k]; }
-        });
+        // No other price lines since Nov 10 (Kevin: too many lines); the snapshot's price_lines stay in the data.
+        Object.keys(a.lines).forEach(function (k) { a.series.removePriceLine(a.lines[k]); delete a.lines[k]; });
 
         // A gap that ends inside the drawn range gets a marker on the first candle after it.
         if (a.markers) {
@@ -18057,7 +18039,7 @@
       label: "Price chart",
       why: h(Fragment, null,
         h("p", null, (isNum(chart.candle_s) ? chart.candle_s + " s candles" : "Candles") + " from public trades, times in UTC. " +
-          "Best bid and ask, mark, oracle and the largest returned levels are drawn as price lines; a gap marker sits on the first candle after a coverage gap, and no candle spans a gap. " +
+          "The dashed line is the last price, in the colour of the last candle; a gap marker sits on the first candle after a coverage gap, and no candle spans a gap. " +
           "The bars under the candles are each candle's traded notional in USD (the snapshot's volume_usd), in the buy colour when the candle closed at or above its open. " +
           "The readout at the top left follows the crosshair; with the pointer away it shows the latest candle. " +
           "The price lines carry no label on the chart: each shows its price on the axis and is named in the legend below."),
@@ -18081,10 +18063,6 @@
           ? (cd && cd.state === "error" ? h(Unavailable, { reason: iv + " candles: " + cd.error, block: true })
             : (cd && cd.state === "ok" ? "The plugin has no " + iv + " candles for " + m.market + " yet." : "Loading " + iv + " candles from the plugin" + ELLIPSIS))
           : "No candles in this snapshot: no trades in the current coverage segment yet.") : null),
-    h("div", { className: "hd-legend-lines" }, lines.length ? lines.map(function (pl, i) {
-      return h("span", { key: pl.kind || i, className: "hd-legend-line hd-ll-" + (LINE_STYLE[pl.kind] || "other") },
-        h("span", { className: "hd-ll-swatch", "aria-hidden": "true" }), (pl.label || pl.kind) + " ", h("b", { className: "hd-num" }, isNum(pl.price) ? px(pl.price) : "no price"));
-    }) : h("span", { className: "hd-dim" }, "No price lines in this snapshot.")),
     gaps.length ? h("div", { className: "hd-note hd-gapnote" }, h("b", null, "Gaps: "), gaps.map(function (gp, i) {
       return h("span", { key: i }, (i ? "; " : "") + hmsms(gp.start) + "\u2013" + hmsms(gp.end) + " UTC (" + (gp.reason || "no reason given") + ")");
     }), ". No candle, regime or window spans a gap.") : null,
