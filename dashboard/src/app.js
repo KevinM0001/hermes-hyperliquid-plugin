@@ -3076,6 +3076,82 @@
       head, reasonEl, lcEl, states, validEl, rule, grid, pathEl, domEl, twEl, buckets, meaning, foot);
   }
 
+  // The compact card (Kevin, Nov 10: the original deck's density, the key information in a line): a header line with
+  // the market, price, the latched regime with its confirmation time and what is pending; one line of the window's
+  // numbers with the regime's key number marked; one line of the node fills split; the rest (path, dominance, top
+  // wallet detail, meaning, window and freshness) behind a closed "details" fold. Every value is the card's own.
+  function DeckLine(props) {
+    const name = props.name;
+    const d = props.d || {};
+    const card = d.card || {};
+    const n = card.numbers || {};
+    const conf = card.confirmed_regime;
+    const live = card.live_classification;
+    const pending = card.pending;
+    const unavailable = !live;
+    const cardReason = unavailable ? reasonOf(card.regime) : null;
+    const liveMeaning = live && live.meaning;
+    const key = liveMeaning && liveMeaning.key_number ? KEY_NUMBER_FIELD[liveMeaning.key_number] : null;
+    const tw = n.top_wallet;
+    const ab = card.activity_buckets || {};
+    const sameNow = !!(conf && live && conf.state === live.state);
+    function cell(label, field, fmt, strong) {
+      return h("span", { className: cx("hd-dl-cell", key === field && "hd-dl-key", strong && "hd-dl-strong") },
+        h("span", { className: "hd-dl-k" }, label), " ", h(V, { m: n[field], fmt: fmt, compact: true }),   // the reason in the tooltip
+        key === field ? h("span", { className: "hd-dl-mark", title: "the number to watch for this regime" }, " <") : null);
+    }
+    const head = h("div", { className: "hd-dl-row hd-dl-head" },
+      h("span", { className: "hd-deck-mkt" }, name),
+      h("span", { className: "hd-deck-px hd-num" }, h(V, { m: n.price, fmt: px, compact: true })),
+      unavailable
+        ? h("span", { className: "hd-dl-reason", title: cardReason || "" }, h("span", { className: "hd-regime hd-regime-none" }, "NO REGIME"), " " + (cardReason || "unavailable"))
+        : h(Fragment, null,
+          conf ? h(RegimeBadge, { regime: conf.state, title: "the latched regime (needs 2 consecutive ticks)" })
+            : h("span", { className: "hd-regime hd-regime-none", title: reasonOf(card.regime) }, "NOT CONFIRMED"),
+          h("span", { className: "hd-deck-since" }, conf ? "since " + (conf.since ? hms(conf.since) + "Z" : "?") + (isNum(conf.held_s) ? " (" + heldS(conf.held_s) + ")" : "") : ""),
+          !sameNow ? h("span", { className: "hd-dl-now", title: "this tick's window classifies as " + live.state + ", not confirmed" }, "now ", h(RegimeBadge, { regime: live.state, unconfirmed: true })) : null,
+          pending ? h("span", { className: "hd-deck-pending" }, "pending " + pending.ticks + " of " + (pending.of || 2)) : null,
+          live.sparse ? h("span", { className: "hd-pill", title: live.sparse_note || "" }, "sparse") : null),
+      props.snapshotId ? h("span", { className: "hd-dl-ask" }, h(AskButton, { small: true, label: "ask Hermes",
+        question: askQuestion("card", name, props.snapshotId, conf ? conf.state : (live ? live.state : null)) })) : null);
+    const nums = h("div", { className: "hd-dl-row hd-dl-nums" },
+      cell("move", "move_bps", bpsSigned), cell("net flow", "net_flow_usd", usdSigned), cell("vol", "volume_usd", usd), cell("trades", "trades", intf),
+      cell("IMPACT", "impact", function (v) { return num(v, 2, 1) + " bps/$M"; }, true),
+      cell("PRESSURE", "pressure", function (v) { return num(v, 2, 2); }, true),
+      cell("accounts", "accounts", intf),
+      h("span", { className: "hd-dl-cell" }, h("span", { className: "hd-dl-k" }, "top wallet"), " ",
+        tw && tw.value ? h(Fragment, null, h("b", { className: "hd-num" }, isNum(tw.share_pct) ? pct(tw.share_pct, 0) : "?"), " ", h(Addr, { address: tw.value })) : h(Unavailable, { reason: reasonOf(tw), compact: true })));
+    const split = h("div", { className: "hd-dl-row hd-dl-split", "data-node-hook": "deck-activity-buckets" },
+      h("span", { className: "hd-dl-cell" }, h("span", { className: "hd-dl-k hd-bid" }, "buy"), " new-long ", h(V, { m: ab.new_long, fmt: usd, compact: true }), " \u00b7 cover ", h(V, { m: ab.cover, fmt: usd, compact: true })),
+      h("span", { className: "hd-dl-cell" }, h("span", { className: "hd-dl-k hd-ask" }, "sell"), " new-short ", h(V, { m: ab.new_short, fmt: usd, compact: true }), " \u00b7 exit ", h(V, { m: ab.exit, fmt: usd, compact: true })),
+      ab.stream ? h("span", { className: "hd-dim hd-dl-src" }, ab.stream) : null);
+    // Everything else, closed by default.
+    const path = card.path;
+    const dom = card.dominated_by;
+    const valid = (conf && conf.validation) || (live && live.validation) || (pending && pending.validation) || null;
+    const lc = card.last_confirmed;
+    const details = h(Why, { className: "hd-dl-fold", label: "details" },
+      h("div", { className: "hd-dl-details" },
+        liveMeaning ? h("div", null, h("b", null, "what " + liveMeaning.state + " means: "), liveMeaning.text) : null,
+        conf && conf.meaning && live && conf.state !== live.state ? h("div", null, h("b", null, "what " + conf.meaning.state + " means: "), conf.meaning.text) : null,
+        path && Array.isArray(path.points) ? h("div", null, h("b", null, "path: "), path.points.map(function (pt, i) {
+          return h("span", { key: i, className: "hd-pp", title: pt.reason || "" }, hms(pt.tick_ms).slice(3) + " " + (isNum(pt.price) ? px(pt.price) : "no trades") + " " +
+            (isNum(pt.move_bps) ? bpsSigned(pt.move_bps) : "") + " " + (isNum(pt.net_flow_usd) ? usdSigned(pt.net_flow_usd) : ""));
+        })) : null,
+        dom && dom.summary ? h("div", null, h("b", null, (dom.any ? "dominated: " : "no dominance: ")), dom.summary) : null,
+        tw && tw.value ? h("div", null, h("b", null, "top wallet: "), (tw.share_label || "") + " \u00b7 net aggr " + (isNum(tw.net_aggressive_usd) ? usdSigned(tw.net_aggressive_usd) : "unavailable") +
+          (isNum(tw.aggressive_bought_usd) && isNum(tw.aggressive_sold_usd) ? " (bought " + usd(tw.aggressive_bought_usd) + " \u00b7 sold " + usd(tw.aggressive_sold_usd) + ")" : "")) : null,
+        h("div", { className: "hd-deck-buckets" }, h(DeckBuckets, { ab: ab, nodeCfg: !!props.nodeSrc, nodeSrc: props.nodeSrc, flowFam: props.flowFam, cardIncomplete: card.complete !== true })),
+        lc ? h("div", null, h("b", null, "last confirmed: "), lc.regime + " since " + hms(lc.since) + "Z \u00b7 " + (lc.note || "historical")) : null,
+        valid ? h("div", { className: "hd-dim" }, "labels: " + valid) : null,
+        h("div", { className: "hd-dim" }, (isNum(card.window_start_ms) && isNum(card.window_end_ms)
+          ? "window " + hms(card.window_start_ms) + "\u2013" + hms(card.window_end_ms) + " UTC (" + card.window_s + " s, tick every " + card.tick_s + " s)"
+          : "window " + (card.window_s || "?") + " s, tick every " + (card.tick_s || "?") + " s"), " ", h(Fresh, { f: d.trades_freshness, label: "trades" }),
+          g(d, "provenance", "mode") && g(d, "provenance", "mode") !== "LIVE" ? h(ModeBadge, { mode: d.provenance.mode, title: d.provenance.source }) : null),
+        h("div", { className: "hd-dim" }, "Regimes are heuristic classifications of these window numbers; they don't establish a cause.")));
+    return h("article", { className: "hd-deck-card hd-dl", "aria-label": "Flow Deck " + name }, head, nums, split, details);
+  }
+
   function EventRow(props) {
     const e = props.e;
     const t = h("span", { className: "hd-ev-time" }, hms(isNum(e.at_ms) ? e.at_ms : e.at));
@@ -3167,7 +3243,7 @@
     chosen && deck[chosen] ? h("div", { className: "hd-dim hd-small hd-deck-note" },
       chosen + "'s card is at the top of the tab, under the summary; the other markets' cards are here.") : null,
     h("div", { className: "hd-deck-cards" }, others.length ? others.map(function (n) {
-      return h(DeckCard, { key: n, name: n, d: deck[n], nodeSrc: nodeSrc, flowFam: null, snapshotId: r.snapshot_id });
+      return h(DeckLine, { key: n, name: n, d: deck[n], nodeSrc: nodeSrc, flowFam: null, snapshotId: r.snapshot_id });
     }) : h("div", { className: "hd-empty" }, names.length ? "No other market's card in this snapshot." : "No Flow Deck cards in this snapshot.")),
     h("div", { className: "hd-events" },
       h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
@@ -3189,13 +3265,15 @@
     return h(Panel, {
       id: "deck-hero", className: "hd-p-deckhero", title: "Flow Deck \u00b7 " + name,
       label: "Flow Deck card for " + name,
-      why: h("p", null, "This market's regime over a 90 s window, ported from hl_deck: the confirmed regime needs two consecutive ticks, " +
-        "'now' is this tick's classification. The numbers are the window's own; the meaning text is a heuristic reading of them and " +
-        "establishes no cause. The other markets' cards and the events are in the Flow Deck panel further down."),
+      why: h("p", null, "This market's regime over a 90 s window, ported from hl_deck: the confirmed regime needs two consecutive ticks; " +
+        "'now' appears only when this tick's classification differs from it. The numbers are the window's own, with the regime's key " +
+        "number marked; the buy and sell lines split the aggressive flow by what each fill did to the taker's position (node fills). " +
+        "The details fold holds the path, the dominance, the top wallet's detail, what the regime means, and the window and freshness. " +
+        "The other markets' cards and the events are in the Flow Deck panel further down."),
       badges: h(Prov, { mode: r.mode, source: g(d, "provenance", "source"), what: "trades" })
     },
-    h(DeckCard, {
-      name: name, d: d, wide: true, snapshotId: r.snapshot_id,
+    h(DeckLine, {
+      name: name, d: d, snapshotId: r.snapshot_id,
       nodeSrc: g(r, "node_status", "live") || null,
       flowFam: g(r, "market", "node", "live", "families", "flow") || null
     }));

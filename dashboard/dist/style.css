@@ -648,6 +648,27 @@
 
 /* Flow Deck: confirmed, now and pending on separate lines (the confirmed label never describes other numbers) */
 .hd-deck-states { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; font-size: 12px; }
+/* the compact Flow Deck card (Kevin, Nov 10) */
+.hd-dl { display: flex; flex-direction: column; gap: 4px; }
+.hd-dl-row { display: flex; align-items: center; gap: 6px 14px; white-space: nowrap; overflow: hidden; min-width: 0; font: 500 12px/1.4 var(--hd-mono); color: var(--hd-text-2); }
+.hd-dl-head { height: 28px; gap: 6px 10px; }
+.hd-dl-head .hd-deck-mkt { font-size: 14px; }
+.hd-dl-head .hd-deck-px { font-size: 14px; color: var(--hd-text); }
+.hd-dl-now { display: inline-flex; align-items: center; gap: 4px; color: var(--hd-muted); }
+.hd-dl-reason { color: var(--hd-muted); overflow: hidden; text-overflow: ellipsis; }
+.hd-dl-ask { margin-left: auto; }
+.hd-dl-nums, .hd-dl-split { height: 22px; }
+.hd-dl-cell { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.hd-dl-cell .hd-num, .hd-dl-cell b { color: var(--hd-text); }
+.hd-dl-k { color: var(--hd-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+.hd-dl-strong .hd-dl-k { color: var(--hd-text-2); font-weight: 700; }
+.hd-dl-key { color: var(--hd-text); }
+.hd-dl-mark { color: var(--hd-warn); font-weight: 700; }
+.hd-dl-src { margin-left: auto; font-size: 10.5px; }
+.hd-dl-fold > summary { font-size: 10px; }
+.hd-dl-details { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; line-height: 1.4; color: var(--hd-text-2); }
+.hd-dl-details b { color: var(--hd-text); font-weight: 600; }
+@media (max-width: 900px) { .hd-dl-row { white-space: normal; height: auto; flex-wrap: wrap; } }
 .hd-deck-state { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hd-deck-state > .hd-dn-label { min-width: 72px; }
 /* the selected market's card under the summary (Kevin, Nov 9): three columns */
