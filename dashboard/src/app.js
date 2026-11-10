@@ -732,8 +732,11 @@
           const withheld = !(L.bids || []).length && !(L.asks || []).length;
           return h("option", { key: k, value: k }, (withheld ? "unavailable" : stepLabel(ladderStep(L.bids, L.asks))) + " (" + k + ")");
         }))) : null;
-    const bids = lad.bids || [];
-    const asks = lad.asks || [];
+    // The ten levels nearest the spread on each side (Kevin, Nov 10): the ladder fits its card without an inner
+    // scroll; the grouping dropdown widens the view. The venue's 20 levels per side stay in the snapshot.
+    const LADDER_SIDE_ROWS = 10;
+    const bids = (lad.bids || []).slice(0, LADDER_SIDE_ROWS);
+    const asks = (lad.asks || []).slice(0, LADDER_SIDE_ROWS);
     const boxRef = useRef(null);
     const spreadRef = useRef(null);
     const centredFor = useRef(null);
@@ -778,7 +781,7 @@
     });
 
     const why = h(Fragment, null,
-      h("p", null, "Up to 20 aggregated price levels per side from Hyperliquid's public 20-level l2Book, highest ask at the top. ",
+      h("p", null, "The ten aggregated price levels nearest the spread on each side, from Hyperliquid's public 20-level l2Book, highest ask at the top; the grouping dropdown widens the view. ",
         h("b", null, "Levels are aggregated by price: "), "a level is never an individual order. ", noteText,
         lad.aggregated === true ? " (aggregated: true)" : ""),
       kinds.length ? h("p", null, h("b", null, "Grouping: "), "the venue's own coarser books (l2Book at nSigFigs 4, 3 and 2, one request each, " +
