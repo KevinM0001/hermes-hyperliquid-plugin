@@ -332,6 +332,10 @@
 .hd-brand h1 { font-size: 15px; font-weight: 700; letter-spacing: .01em; color: var(--hd-text); }
 .hd-brand-sub { font-size: 11px; color: var(--hd-muted); }
 .hd-markets { display: flex; flex-wrap: wrap; gap: 2px; flex: none; align-self: stretch; }
+.hd-views { display: inline-flex; gap: 2px; padding: 2px; border-radius: 6px; background: #000; margin-right: 6px; }
+.hd-view { font: 600 12px/1 var(--hd-sans); color: var(--hd-muted); background: transparent; border: 0; border-radius: 4px; padding: 7px 12px; cursor: pointer; }
+.hd-view:hover { color: var(--hd-text); }
+.hd-view-on { color: #000; background: var(--hd-bid); }
 .hd-market {
   position: relative; font: 600 13px/1 var(--hd-sans); padding: 0 12px; min-height: 40px; border: 0; border-radius: 0;
   background: transparent; color: var(--hd-muted); cursor: pointer;

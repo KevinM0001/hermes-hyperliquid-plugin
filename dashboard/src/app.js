@@ -564,6 +564,12 @@
           h("div", null,
             h("h1", null, "Hyperliquid Desk"),
             h("div", { className: "hd-brand-sub" }, "Public Hyperliquid data \u00b7 read-only, no orders"))),
+        props.onView ? h("nav", { className: "hd-views", "aria-label": "Pages" },
+          [["desk", "Desk"], ["node", "Node"]].map(function (v) {
+            const on = props.view === v[0];
+            return h("button", { key: v[0], type: "button", className: cx("hd-view", on && "hd-view-on"), "aria-pressed": on ? "true" : "false",
+              onClick: function () { props.onView(v[0]); } }, v[1]);
+          })) : null,
         h("nav", { className: "hd-markets", "aria-label": "Markets" },
           markets.length ? markets.map(function (name) {
             const pressed = name === props.selected;
@@ -4475,6 +4481,15 @@
 
   function App() {
     const [market, setMarket] = useState(null);
+    // Two pages since Nov 10 (Kevin: one long page floods the reader): Desk, the public reading of the market, and
+    // Node, the engine's order-level products. The choice lives in the URL hash (#node) so a link keeps it.
+    const [view, setView] = useState(function () {
+      try { return window.location.hash === "#node" ? "node" : "desk"; } catch (e) { return "desk"; }
+    });
+    const chooseView = useCallback(function (v) {
+      setView(v);
+      try { window.history.replaceState(null, "", v === "node" ? "#node" : window.location.pathname + window.location.search); } catch (e) { /* no history */ }
+    }, []);
     const [resp, setResp] = useState(null);
     const [noSnap, setNoSnap] = useState(null);
     const [gap, setGap] = useState(null);      // the route's "no current snapshot" answer while a snapshot stays on screen
@@ -4669,54 +4684,53 @@
     return h("div", { className: "hd-root" },
       h(Banners, { resp: resp, noSnap: noSnap, gap: gap, pollErr: pollErr, lastOkAt: lastOkAt, hidden: hidden }),
       h(Header, {
-        resp: resp, noSnap: noSnap, gap: gap, selected: market, onMarket: chooseMarket,
+        resp: resp, noSnap: noSnap, gap: gap, selected: market, onMarket: chooseMarket, view: view, onView: chooseView,
         busy: busy, action: action, onControl: control, aged: aged, pollNote: pollNote
       }),
-      m ? h(Glance, { m: m, resp: resp, onOpen: openWallet }) : null,
-      // Kevin, Nov 10: the chart and ladder, then Hermes, directly under the top card; Watch and the Flow Deck follow.
-      // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
-      m ? h("div", { className: "hd-row hd-row-m" },
-        h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(FlowNotes, { resp: resp, m: m })),
-        h(Ladder, { m: m, nodeOn: non })) : null,
-      m ? h(HermesPanel, { resp: resp, m: m }) : null,
-      // Kevin's swing-context rows for every market (Watch), then the selected market's Flow Deck card.
-      m ? h(WatchStrip, { resp: resp, onMarket: chooseMarket }) : null,
-      // The selected market's Flow Deck card under the summary (Kevin, Nov 9), where the unavailable list and the
-      // delay bar were; the delay counter is in the node strip (node mode), the aging note on the header's snapshot line.
-      m ? h(DeckHero, { resp: resp }) : null,
-
-      m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market, delay: nlive && nlive.delay })
-        : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,
-      m ? h(Fragment, null,
-        h(SectionHead, { title: "Book", note: non ? "the node's order-level book; the public book's observed depth is folded at the end" : "the public book's observed depth, folded (the chart and ladder are above)" }),
+      // ---- Desk: the public reading of the market
+      m && view === "desk" ? h(Fragment, null,
+        h(Glance, { m: m, resp: resp, onOpen: openWallet }),
+        // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
+        h("div", { className: "hd-row hd-row-m" },
+          h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(FlowNotes, { resp: resp, m: m })),
+          h(Ladder, { m: m, nodeOn: non })),
+        h(HermesPanel, { resp: resp, m: m }),
+        h(WatchStrip, { resp: resp, onMarket: chooseMarket }),
+        h(DeckHero, { resp: resp }),
+        h(SectionHead, { title: "Flow", note: "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
+        h("div", { className: "hd-row hd-row-b" },
+          h(FlowPanel, { m: m }),
+          h(DeckPanel, { resp: resp })),
+        h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })),
+        h(SectionHead, { title: "Wallets", note: "the public addresses behind the volume" }),
+        h("div", { className: "hd-row hd-row-d" },
+          h(WalletsPanel, { m: m, win: walletWin, onWin: setWalletWin, onOpen: openWallet })),
+        // The observed depth is out of the main view (Kevin, Nov 9): folded, with its data one click away.
+        h("details", { className: "hd-foldcard", "data-panel": "depth-fold" },
+          h("summary", null, "Observed depth",
+            h("span", { className: "hd-foldcard-note" }, "folded: open it for the bands and the observed depth per book kind, with their freshness and reasons")),
+          h(DepthPanel, { m: m }))) : null,
+      // ---- Node: the engine's order-level products
+      m && view === "node" ? h(Fragment, null,
+        non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market, delay: nlive && nlive.delay })
+          : h(NodeOffBanner, { ns: nstat, reason: nodeReason }),
+        h(SectionHead, { title: "Book", note: non ? "the node's order-level book" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(StopsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(ThinningPanel, { v: nlive })) : null,
         non ? h("div", { className: "hd-row hd-row-n3" }, h(StopMapPanel, { v: nlive })) : null,
-        // The observed depth is out of the main view (Kevin, Nov 9): folded, with its data one click away.
-        h("details", { className: "hd-foldcard", "data-panel": "depth-fold" },
-          h("summary", null, "Observed depth",
-            h("span", { className: "hd-foldcard-note" }, "folded: open it for the bands and the observed depth per book kind, with their freshness and reasons")),
-          h(DepthPanel, { m: m })),
-        h(SectionHead, { title: "Flow", note: non ? "the order flow map from the node's fills, who is aggressive, the Flow Deck's regimes and alerts, and the tape"
-          : "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
+        h(SectionHead, { title: "Flow", note: non ? "the order flow map from the node's fills, and the node tape" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-c" }, h(OrderFlowMapPanel, { v: nlive })) : null,
-        h("div", { className: "hd-row hd-row-b" },
-          h(FlowPanel, { m: m }),
-          h(DeckPanel, { resp: resp })),
         non ? h("div", { className: "hd-row hd-row-c" }, h(NodeTapePanel, { v: nlive })) : null,
-        h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })),
-        h(SectionHead, { title: "Wallets", note: "the public addresses behind the volume" }),
-        h("div", { className: "hd-row hd-row-d" },
-          h(WalletsPanel, { m: m, win: walletWin, onWin: setWalletWin, onOpen: openWallet })),
         showReplay ? h(Fragment, null,
           h(SectionHead, { title: "Replay", note: "a recording played on its own clock, never current" }),
           h(ReplayArea, {
             ns: nstat, v: g(m, "node", "replay"), market: m.market,
             busy: replayBusy, act: replayAct, onCmd: replayCommand
-          })) : null)
+          })) : null) : null,
+      m ? null
         : h("div", { className: "hd-card hd-empty-state" },
           resp ? "The snapshot has no market to show." :
             (noSnap ? h(Fragment, null, h("b", null, "No snapshot yet. "), "Start the collector with the Start button above, or /hl start in chat; the banner above says why there is none.")
