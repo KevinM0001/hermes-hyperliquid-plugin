@@ -115,11 +115,13 @@ def _age_shown(payload: dict, age_s: float) -> dict:
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the tab's pure function")
 def test_b2_the_tab_withholds_lapsed_values_in_place(surfaces):
-    """Codex's reproduction in the tab: a real tab payload (the snapshot route's answer), held 14 s. The tab's own
-    ageShown turns the fast book stale with the reason and withholds the top of book and its price lines; past 15 s
-    the 20-level book's ladder and depth, past 30 s the trades-built flow values, card and wallet panels, in the
-    shapes the panels already render as unavailable; at 0.5 s nothing is withheld (fresh ages
-    advance). The Python and tab rules agree."""
+    """Codex's reproduction in the tab: a real tab payload (the snapshot route's answer), held on screen. The tab's
+    own ageShown advances every fresh age as the snapshot sits there, and once it has sat past the screen's allowance
+    (30 s, Kevin, Nov 10: the page refreshes about once a second, so a lapse declared within seconds was the refresh
+    cadence, not a lag) it re-judges the snapshot the way the backend serves a latest one: the fast book stale with
+    the reason and the top of book and its price lines withheld, the 20-level book's ladder and depth withheld, the
+    trades-built flow values, card and wallet panels withheld, in the shapes the panels already render as unavailable.
+    Within the allowance nothing is withheld. Past it, the Python and tab rules agree."""
     from hl_desk.serving_public import age_market
     plugin = surfaces(["BTC"])
     _feed(plugin)
@@ -128,30 +130,28 @@ def test_b2_the_tab_withholds_lapsed_values_in_place(surfaces):
                               params={"market": "BTC", "snapshot_id": snap["snapshot_id"]}).json()
     m0 = payload["market"]
     assert m0["freshness"]["book_fast"]["status"] == "fresh" and m0["book"]["top"]["best_bid"]["value"] == 100.0
-    same = _age_shown(payload, 0.5)
-    assert same["market"]["book"] == m0["book"]                              # nothing lapsed: values kept
-    for k, f in m0["freshness"].items():                                     # statuses kept, fresh ages as of now
-        g = same["market"]["freshness"][k]
-        assert g["status"] == f["status"]
-        if f["status"] == "fresh":
-            assert abs(g["progress_age_s"] - (f["progress_age_s"] + 0.5)) < 1e-6 and g["aged_by_s"] == 0.5
-    late = _age_shown(payload, 14.0)["market"]
+    for age in (0.5, 14.0, 29.0):                                             # within the allowance: nothing lapsed
+        same = _age_shown(payload, age)
+        assert same["market"]["book"] == m0["book"]                          # values kept
+        for k, f in m0["freshness"].items():                                 # statuses kept, fresh ages as of now
+            g = same["market"]["freshness"][k]
+            assert g["status"] == f["status"]
+            if f["status"] == "fresh":
+                assert abs(g["progress_age_s"] - (f["progress_age_s"] + age)) < 1e-6 and g["aged_by_s"] == age
+        assert same["market"]["flow"]["values"]["volume"]["value"] is not None
+    late = _age_shown(payload, 31.0)["market"]                                # past the allowance: re-judged
     fr = late["freshness"]
     assert fr["book_fast"]["status"] == "stale" and "while on screen" in fr["book_fast"]["reason"]
     assert late["book"]["top"]["best_bid"]["value"] is None and "stale" in late["book"]["top"]["best_bid"]["reason"]
     assert not [ln for ln in late["chart"]["price_lines"] if ln["kind"] in ("best_bid", "best_ask")]
-    assert fr["book_full"]["status"] == "fresh" and late["book"]["ladder"]["bids"]           # 15 s: not lapsed yet
-    assert fr["trades"]["status"] == "fresh" and late["flow"]["values"]["volume"]["value"] is not None   # 30 s: not lapsed
-    full = _age_shown(payload, 15.5)["market"]
-    assert full["freshness"]["book_full"]["status"] == "stale" and full["book"]["ladder"]["bids"] == []
-    assert full["book"]["ladder"]["reason"] and full["book"]["depth"]["observed"]["full precision"]["reason"]
-    later = _age_shown(payload, 31.0)["market"]
-    assert later["freshness"]["trades"]["status"] == "stale"
-    assert all(v["value"] is None for v in later["flow"]["values"].values())
-    assert later["deck"]["card"]["regime"]["value"] is None
-    assert all(p["buyers"] is None and p["reason"] for p in later["wallets"].values())
+    assert fr["book_full"]["status"] == "stale" and late["book"]["ladder"]["bids"] == []
+    assert late["book"]["ladder"]["reason"] and late["book"]["depth"]["observed"]["full precision"]["reason"]
+    assert fr["trades"]["status"] == "stale"
+    assert all(v["value"] is None for v in late["flow"]["values"].values())
+    assert late["deck"]["card"]["regime"]["value"] is None
+    assert all(p["buyers"] is None and p["reason"] for p in late["wallets"].values())
     # the backend's serving rule gives the same statuses and withheld top of book at the same age
-    py = age_market(m0, 14.0, "while on screen")
+    py = age_market(m0, 31.0, "while on screen")
     assert {k: v["status"] for k, v in py["freshness"].items()} == {k: v["status"] for k, v in fr.items()}
     assert py["book"]["top"]["best_bid"]["value"] is None and py["book"]["ladder"]["bids"] == late["book"]["ladder"]["bids"]
     assert [ln["kind"] for ln in py["chart"]["price_lines"]] == [ln["kind"] for ln in late["chart"]["price_lines"]]

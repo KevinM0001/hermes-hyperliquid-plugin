@@ -3793,6 +3793,13 @@
     if (!data || typeof ageS !== "number" || !(ageS > 0)) return data;
     const when = "while on screen (the snapshot is about " + ageS.toFixed(1) + " s old)";
     const NUM = function (x) { return typeof x === "number" && isFinite(x); };
+    // The screen's allowance (Kevin, Nov 10): the page refreshes about once a second and shows each snapshot for one
+    // to two seconds, so a field with a short limit (the fast book's 3 s, a node family's 2 s) crossed its limit on
+    // screen moments before the next snapshot replaced it, and values flickered to "stale" and back with no lag in
+    // the feed. Ages keep advancing on screen, but a lapse is declared only once the snapshot has been on screen past
+    // SCREEN_LAG_S (30 s, Kevin: a real outage, not a slow refresh); until then the plugin's own judgement at build stands.
+    const SCREEN_LAG_S = 30;
+    const screenLag = ageS > SCREEN_LAG_S;
     const NA = function (reason, unit) { const o = { value: null, reason: reason }; if (unit !== undefined) o.unit = unit; return o; };
     const withhold = function (block, reason) {
       const o = {};
@@ -3803,7 +3810,7 @@
       return o;
     };
     function lapse(f) {
-      if (!f || f.status !== "fresh") return null;
+      if (!f || f.status !== "fresh" || !screenLag) return null;
       if (NUM(f.progress_age_s) && NUM(f.max_age_s) && f.progress_age_s + ageS > f.max_age_s) {
         return ["stale", "no progress for " + (f.progress_age_s + ageS).toFixed(1) + " s (max " + f.max_age_s + " s)"];
       }
@@ -3845,9 +3852,10 @@
       if (!st || st.state !== "LIVE") return st;
       const out = Object.assign({}, st, { aged_by_ms: Math.round(ageS * 1000) });
       if (!NUM(st.delay_ms) || !NUM(st.delayed_after_ms) || !NUM(st.stale_after_ms)) {
-        return Object.assign(out, { state: "STALE", reason: "its delay or limit isn't known, so it can't be shown as current" });
+        return screenLag ? Object.assign(out, { state: "STALE", reason: "its delay or limit isn't known, so it can't be shown as current" }) : out;
       }
       ["watermark_age_ms", "source_age_ms", "delay_ms"].forEach(function (k) { if (NUM(st[k])) out[k] = Math.round(st[k] + ageS * 1000); });
+      if (!screenLag) return out;                      // within the screen's allowance: the state as served
       const win = (st.delay_window_ms || 5000) / 1000;
       if (out.delay_ms > st.stale_after_ms) return Object.assign(out, { state: "STALE", reason: "the node feed's delay is up to " +
         (out.delay_ms / 1000).toFixed(1) + " s (" + win + " s average; stale above " + st.stale_after_ms / 1000 + " s), " + when });
@@ -4113,7 +4121,7 @@
       if (!shown.length) return ms;
       // ageMarket has already added ageS to freshness.ctx.progress_age_s (aged_by_s says so); don't add it twice.
       const prog = NUM(f.progress_age_s) ? f.progress_age_s + (NUM(f.aged_by_s) ? 0 : ageS) : null;
-      const lapsed = prog !== null && prog > f.max_age_s;
+      const lapsed = screenLag && prog !== null && prog > f.max_age_s;
       const gone = lapsed ? "activeAssetCtx unverified: no changed context for longer than the max age (no source time; cadence undocumented) " +
         "(no progress for " + prog.toFixed(1) + " s, max age " + f.max_age_s + " s), " + when : null;
       const ctx = {};
