@@ -20410,6 +20410,23 @@
     });
     return out.filter(function (c) { return c.configured; }).slice(0, 60);
   }
+  // <pure:mdLite> The agent's answer, lightly formatted without HTML: **bold** spans, lines that start with "- " as
+  // bullet rows (indented ones nested), everything else as plain text lines. Nothing is interpreted beyond that.
+  function mdLiteLine(line, key) {
+    const parts = String(line).split("**");
+    return parts.map(function (t, i) { return i % 2 ? h("b", { key: key + ":" + i }, t) : t; });
+  }
+  function mdLite(text) {
+    const lines = String(text || "").replace(/\r/g, "").split("\n");
+    return lines.map(function (ln, i) {
+      const m = /^(\s*)- (.*)$/.exec(ln);
+      if (m) return h("div", { key: i, className: cx("hd-md-li", m[1].length >= 2 && "hd-md-li2") }, "\u2022 ", mdLiteLine(m[2], i));
+      if (!ln.trim()) return h("div", { key: i, className: "hd-md-gap" });
+      return h("div", { key: i, className: "hd-md-p" }, mdLiteLine(ln, i));
+    });
+  }
+  // </pure:mdLite>
+
   function HermesPanel(props) {
     const r = props.resp;
     const m = props.m;
@@ -20530,7 +20547,7 @@
         h("div", { className: "hd-hs-q", title: q || "" }, q || ""),
         status || busy ? h("div", { className: "hd-hs-status" }, (status || "") + (elapsed !== null ? " \u00b7 " + elapsed + " s" : "")) : null,
         err ? h("div", { className: "hd-hs-err" }, h(Unavailable, { reason: err, block: true })) : null,
-        h("div", { className: "hd-hs-text hd-hs-text-drill" }, answer || (busy ? "Waiting for the first words" + ELLIPSIS : "")))) : null);
+        h("div", { className: "hd-hs-text hd-hs-text-drill" }, answer ? mdLite(answer) : (busy ? "Waiting for the first words" + ELLIPSIS : "")))) : null);
   }
 
   // ---- Watch (Kevin's swing-context page, computed by the plugin as deck.<market>.watch; schema 1.3.0): one row per

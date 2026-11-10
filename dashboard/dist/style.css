@@ -121,6 +121,12 @@
 .hd-hs-drill { max-width: 860px; }
 .hd-hs-drill .hd-hs-q { white-space: normal; }
 .hd-hs-text-drill { max-height: 62vh; min-height: 120px; }
+.hd-hs-text-drill { white-space: normal; }
+.hd-md-p { margin: 0 0 2px; }
+.hd-md-li { padding-left: 14px; text-indent: -10px; margin: 0 0 2px; }
+.hd-md-li2 { padding-left: 30px; }
+.hd-md-gap { height: 8px; }
+.hd-hs-text b { color: var(--hd-text); font-weight: 600; }
 @media (max-width: 720px) { .hd-note-row { grid-template-columns: 1fr; } }
 .hd-row-m .hd-p-chart > .hd-card-body { flex: 1 1 auto; }
 .hd-row-m .hd-chart-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 480px; }
