@@ -359,7 +359,7 @@
 .hd-collector { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; font-size: 11.5px; color: var(--hd-text-2); max-width: 100%; }
 .hd-collector-line { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
 .hd-collector-err { color: #FFB3B6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
-.hd-collector-result { font-size: 11px; flex: 1 1 100%; text-align: right; }
+.hd-collector-res { font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hd-prov {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
   padding: 7px 14px; border-top: 1px solid var(--hd-line); font-size: 11.5px; color: var(--hd-muted);

@@ -527,8 +527,10 @@
       const act = g(body, "result", "action");
       const ok = a.error ? false : (act ? act.ok : body.ok);
       const text = a.error || (act ? act.message : (body.error || "no message"));
-      result = h("div", { className: cx("hd-collector-result", ok ? "hd-tone-text-ok" : "hd-tone-text-bad") },
-        a.action + ": " + text + (act && act.at ? " (" + hms(act.at) + " UTC)" : ""));
+      // Inline, on the collector's own line (Kevin, Nov 10): a second line pushed the Start button off centre.
+      result = h("span", { className: cx("hd-collector-res", ok ? "hd-tone-text-ok" : "hd-tone-text-bad"),
+        title: a.action + ": " + text + (act && act.at ? " (" + hms(act.at) + " UTC)" : "") },
+        " \u00b7 " + a.action + ": " + text);
     }
     return h("div", { className: "hd-collector", "aria-label": "Collector" },
       h("div", { className: "hd-collector-line" },
@@ -537,7 +539,8 @@
         "Collector ", h("b", null, String(state).toUpperCase()),
         isNum(c.conn) ? " \u00b7 conn #" + c.conn : null,
         isNum(c.reconnects) ? " \u00b7 reconnects " + intf(c.reconnects) : null,
-        c.note ? " \u00b7 " + c.note : null),
+        c.note ? " \u00b7 " + c.note : null,
+        result),
       c.last_error ? h("div", { className: "hd-collector-err", title: c.last_error }, "last error: " + c.last_error) : null,
       state === "disconnected" && isNum(c.next_retry_s)
         ? h("div", { className: "hd-dim" }, "next retry " + c.next_retry_s + " s after " + hms(c.since) + " UTC") : null,
@@ -547,8 +550,7 @@
             key: x[0], type: "button", className: cx("hd-btn", running ? "hd-btn-xs hd-btn-quiet" : "hd-btn-primary"), disabled: !!props.busy,
             onClick: function () { props.onControl(x[0]); }
           }, props.busy === x[0] ? x[1] + ELLIPSIS : x[1]);
-        })),
-      result);
+        })));
   }
 
   function Header(props) {
