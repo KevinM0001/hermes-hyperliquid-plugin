@@ -20574,24 +20574,41 @@
         watchKv("top wallet, 1h", tw && isNum(tw.share_pct) ? h(Fragment, null, num(tw.share_pct, 0) + "% ", tw.address ? h(Addr, { address: tw.address }) : null) : h("span", { className: "hd-dim" }, w.top_wallet_1h_reason || "unavailable"),
           tw ? (tw.label || "") : (w.top_wallet_1h_reason || ""))));
   }
+  // The other markets, one line each (Kevin, Nov 10: only the selected market in full): name, price, verdict; a
+  // click switches the tab to that market and opens its row.
+  function WatchMini(props) {
+    const w = props.w;
+    const v = w && w.verdict;
+    return h("div", { className: "hd-wrow hd-wrow-mini", role: "button", tabIndex: 0, onClick: props.onSelect,
+      onKeyDown: function (e) { if (e.key === "Enter" || e.key === " ") props.onSelect(); },
+      title: "show " + props.name + " in full" },
+      h("span", { className: "hd-wsym" }, props.name),
+      h("span", { className: "hd-num hd-wpx" }, w && isNum(w.price) ? px(w.price) : h("span", { className: "hd-dim" }, w ? "price unavailable" : "no watch block")),
+      v ? h("span", { className: "hd-chip hd-tone-" + (WATCH_TONE[v.tone] || "dim"), title: v.rule || "" }, v.label)
+        : h("span", { className: "hd-chip hd-tone-dim", title: (w && w.verdict_reason) || "" }, "no verdict"),
+      h("span", { className: "hd-wwhy hd-wmini-why" }, v ? v.text : ((w && w.verdict_reason) || "")));
+  }
+
   function WatchStrip(props) {
     const r = props.resp;
     const names = (r.markets || []).filter(function (n) { return r.deck && r.deck[n]; });
     if (!names.some(function (n) { return !!r.deck[n].watch; })) return null;   // an older plugin build: nothing to show
     const chosen = g(r, "market", "market");
     return h(Panel, {
-      id: "watch", className: "hd-p-watch", title: "Watch \u00b7 all markets", label: "Swing context, all markets",
+      id: "watch", className: "hd-p-watch", title: "Watch \u00b7 " + chosen, label: "Swing context",
       why: h("p", null, "Kevin's swing-context page, computed by the plugin: where the price sits between the 24h low and high (the hatched band is " +
         "the middle 30 %, the condition he identified as his loss-maker), the 7d position, flow imbalance over 15m, 1h and 4h ((taker buys - " +
         "taker sells) / total, so +1 is all buying), the 4h wave (the second half of the last four hours against the first: negative means " +
         "the push is losing force), taker notional per hour, and the top wallet's share of the hour's aggressive flow. The verdict is his own " +
         "rule: MIDDLE between 35 and 65 %, LOW or HIGH outside it, FADING or BUILDING by the wave. Descriptions, not signals. Every window says " +
-        "how many minutes it covers; the ranges use closed venue candles only; a part the plugin withholds shows its reason. Click a row to " +
-        "switch the tab to that market."),
+        "how many minutes it covers; the ranges use closed venue candles only; a part the plugin withholds shows its reason. The selected " +
+        "market is shown in full; the others are one line each, and a click on one switches the tab to it."),
       badges: h(Prov, { mode: r.mode, source: g(r, "market", "provenance", "source"), what: "trades + candles" })
     },
     h("div", { className: "hd-wrows" }, names.map(function (n) {
-      return h(WatchRow, { key: n, name: n, w: r.deck[n].watch, selected: n === chosen, onSelect: function () { props.onMarket(n); } });
+      return n === chosen
+        ? h(WatchRow, { key: n, name: n, w: r.deck[n].watch, selected: true, onSelect: function () { props.onMarket(n); } })
+        : h(WatchMini, { key: n, name: n, w: r.deck[n].watch, onSelect: function () { props.onMarket(n); } });
     })),
     h("div", { className: "hd-note" }, "Not a forecast: descriptions by Kevin's own rule, from the plugin's counted trades and the venue's closed candles."));
   }
