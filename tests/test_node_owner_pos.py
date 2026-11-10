@@ -446,3 +446,13 @@ def test_the_sentence_counts_the_orders_taken_at_a_nearer_trigger_and_the_total_
     assert "4 of 5 (80%) whole-position, 1 estimated, 2 counted at a nearer trigger, 1 unknown" in text
     for r in (r for side in v["stops"]["map"]["sides"].values() for r in side["bands"] if r.get("total_est_usd") is not None):
         assert r["total_est_usd"] == round((r["notional_usd"] or 0.0) + (r["estimate"]["notional_usd"] or 0.0), 2)
+
+
+def test_the_plausibility_ratio_is_defined_once_and_no_price_means_no_estimate():
+    from hl_desk.node import triggers
+    assert panels.MAP_PLAUSIBLE_RATIO is triggers.MAP_PLAUSIBLE_RATIO
+    c, h, msgs, now = _play(HAND)
+    mf = c.markets[M]
+    mf.crossed = {"since_seq": 1, "since_block_time_ms": 0, "best_bid": Decimal(1), "best_ask": Decimal(1)}   # no usable mid
+    est, meta = panels.owner_estimates(mf, panels.families(c, M, *now))
+    assert est is None and meta["available"] is False and "can't be set aside" in meta["reason"]

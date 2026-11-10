@@ -222,7 +222,7 @@ def _cbucket() -> dict:
 
 # --- whole-position size estimates from owners' positions (Kevin, Nov 10; PROTOCOL.md 4.8) ---------------------
 
-MAP_PLAUSIBLE = Decimal(10)          # the stop map's plausibility ratio (panels.MAP_PLAUSIBLE_RATIO), mirrored here
+MAP_PLAUSIBLE_RATIO = Decimal(10)    # the stop map's plausibility ratio, defined once here (panels imports it)
 EST_FLAT = "owner flat"
 EST_WRONG_SIDE = "wrong side: the order would add to the position, not close it"
 EST_MISSING = "owner missing from owner_pos (feed defect)"
@@ -256,7 +256,7 @@ def estimates(orders: dict, positions: dict, missing_reason: str = EST_MISSING, 
             # An order the map excludes at the price (a stale bracket already true at it, or an implausible price)
             # neither carries the position nor fires first: it is set aside, so it can't take the estimate from a
             # waiting order of the same owner.
-            if (px <= 0 or px > ref_px * MAP_PLAUSIBLE or px < ref_px / MAP_PLAUSIBLE
+            if (px <= 0 or px > ref_px * MAP_PLAUSIBLE_RATIO or px < ref_px / MAP_PLAUSIBLE_RATIO
                     or (d == "fall" and px >= ref_px) or (d == "rise" and px <= ref_px)):
                 if g.position_tpsl:
                     out[g.oid] = {"sz": None, "reason": EST_SET_ASIDE, "upper_bound": False}

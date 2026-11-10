@@ -19,7 +19,8 @@ from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
 from .flow_map import FlowMapState, build as build_flow_map
 from .transport import source_label
-from .triggers import CENSUS_EXCLUSIONS, EST_COUNTED_NEARER, EST_MISSING, EST_NOT_YET, category, census, estimates
+from .triggers import (CENSUS_EXCLUSIONS, EST_COUNTED_NEARER, EST_MISSING, EST_NOT_YET, MAP_PLAUSIBLE_RATIO, category, census,
+                       estimates)
 from .proto import dec, fmt, num
 from ..util import iso_ms, median
 
@@ -89,7 +90,7 @@ TAPE_ROWS = 30
 VENUE_CHECK = ("checked against the venue only at restart: the engine compares its waiting-stop set with the venue's only when it restarts (its rebase check); during a run nothing compares them, so a stop the venue has already ended can stay shown until the next restart")
 STOPS_ROWS_RANGE_BPS = 200          # band rows shown within 2% of the mid; everything beyond is counted below/above
 BOOK_PANEL_FAMILIES = ("book",)
-MAP_PLAUSIBLE_RATIO = Decimal(10)   # stop map: a trigger price outside [ref/10, ref x 10] is implausible
+# stop map: a trigger price outside [ref/10, ref x 10] is implausible (defined once, in triggers, beside the estimate)
 MAP_CLUSTERS_PER_SIDE = 2
 MAP_SIDES = {"fall": {"side": "sell", "label": "Sell-side triggers", "book_side": "bids_below", "book": "B",
                       "walked": "bids at and below", "sign": "-",
@@ -365,6 +366,10 @@ def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
     # market's line and its stream's line of the same block it is the expected moment before the set arrives.
     missing = EST_MISSING if same else EST_NOT_YET
     ref = mf.book.mid() if (mf.book is not None and mf.crossed is None) else None
+    if ref is None:
+        # Without a reference price an order already true at it can't be set aside, so no estimate is made (the map
+        # isn't shown then either).
+        return None, base | {"reason": "no valid book mid, so orders already true at the price can't be set aside"}
     bf = mf.fam["book"]
     key = (tf.last_change_seq, tf.since_seq, ps.fam.last_change_seq, ps.fam.since_seq, same, bf.last_change_seq, ref)
     cache = getattr(mf, "_est_cache", None)
