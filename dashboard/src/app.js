@@ -480,7 +480,7 @@
     // One line (Kevin, Nov 10, the chart card's head): label and value side by side, the sub text in the tooltip.
     if (props.inline) {
       const subText = typeof props.sub === "string" ? props.sub : "";
-      return h("div", { className: "hd-stat hd-stat-inline", title: subText || undefined },
+      return h("div", { className: cx("hd-stat hd-stat-inline", props.slot && "hd-slot-" + props.slot), title: subText || undefined },
         h("span", { className: "hd-stat-label" }, props.label, " ", props.f ? h(StatusDot, { f: props.f }) : null),
         h("span", { className: "hd-stat-value" }, props.value));
     }
@@ -507,22 +507,22 @@
     const inline = !!props.inline;
     return h("div", { className: cx("hd-stats", inline && "hd-stats-inline") },
       h(Stat, {
-        inline: inline, label: "Mark / oracle", f: fr.ctx,
+        inline: inline, slot: "mark", label: "Mark / oracle", f: fr.ctx,
         value: h(Fragment, null, h(V, { m: ctx.mark, fmt: px, compact: true }), " / ", h(V, { m: ctx.oracle, fmt: px, compact: true })),
         sub: shared ? null : firstReason([ctx.mark, ctx.oracle]) || (valueOf(ctx.prev_day_px) !== null ? "prev day px " + px(ctx.prev_day_px.value) : "prev day px: " + reasonOf(ctx.prev_day_px))
       }),
       h(Stat, {
-        inline: inline, label: "Funding, 1h", f: fr.ctx,
+        inline: inline, slot: "funding", label: "Funding, 1h", f: fr.ctx,
         value: h(V, { m: ctx.funding_pct_per_hour, fmt: pctSigned6, compact: true, title: unitsNote }),
         sub: shared ? null : firstReason([ctx.funding_pct_per_hour]) || ("per 1 hour \u00b7 fraction " + (valueOf(ctx.funding) !== null ? String(ctx.funding.value) : "unavailable"))
       }),
       h(Stat, {
-        inline: inline, label: "Open interest", f: fr.ctx,
+        inline: inline, slot: "oi", label: "Open interest", f: fr.ctx,
         value: h(V, { m: ctx.open_interest_usd, fmt: usd, compact: true, title: unitsNote }),
         sub: shared ? null : firstReason([ctx.open_interest_usd]) || (valueOf(ctx.open_interest) !== null ? sz(ctx.open_interest.value) + " " + (ctx.open_interest.unit || "") : "coin: " + reasonOf(ctx.open_interest))
       }),
       h(Stat, {
-        inline: inline, label: "Day volume", f: fr.ctx,
+        inline: inline, slot: "vol", label: "Day volume", f: fr.ctx,
         value: h(V, { m: ctx.day_notional_volume, fmt: usd, compact: true, title: unitsNote }),
         sub: shared ? null : firstReason([ctx.day_notional_volume]) || "notional, Hyperliquid's day window"
       }),

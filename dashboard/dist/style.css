@@ -469,10 +469,17 @@
 /* the context values in the chart card's head (Kevin, Nov 10) */
 .hd-p-chart .hd-badges { flex: 1 1 auto; justify-content: flex-end; align-items: center; min-width: 0; }
 .hd-ctx-inline { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
-.hd-ctx-inline .hd-stats { gap: 2px 14px; justify-content: flex-end; }
-.hd-stat-inline { display: inline-flex; align-items: baseline; gap: 6px; max-width: none; }
-.hd-stat-inline .hd-stat-label { font-size: 9.5px; }
-.hd-stat-inline .hd-stat-value { font-size: 12px; }
+/* Centred between the title and the badge, each value in a fixed-width slot so a digit more or less never moves
+   the row (Kevin, Nov 10). */
+.hd-ctx-inline { justify-content: center; }
+.hd-ctx-inline .hd-stats { gap: 2px 10px; justify-content: center; }
+.hd-stat-inline { display: inline-flex; align-items: baseline; justify-content: center; gap: 6px; max-width: none; white-space: nowrap; }
+.hd-stat-inline .hd-stat-label { font-size: 9.5px; white-space: nowrap; }
+.hd-stat-inline .hd-stat-value { font-size: 12px; font-variant-numeric: tabular-nums; }
+.hd-slot-mark { width: 230px; }
+.hd-slot-funding { width: 160px; }
+.hd-slot-oi { width: 150px; }
+.hd-slot-vol { width: 145px; }
 .hd-late { font-size: 11px; }
 /* what the node sees */
 .hd-brief { display: flex; flex-direction: column; gap: 5px; }
