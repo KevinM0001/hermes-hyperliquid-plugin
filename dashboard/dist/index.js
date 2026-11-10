@@ -17677,8 +17677,9 @@
         }),
         h(Tile, {
           label: "Spread", f: fr.book_fast,
+          // One uniform figure (Kevin, Nov 10): the spread in price, then in basis points, in the same type.
           value: h(Fragment, null, h(V, { m: top.spread, fmt: px, compact: true }),
-            h("span", { className: "hd-tile-value-sm hd-dim" }, h(V, { m: top.spread_bps, fmt: bps, compact: true }))),
+            h("span", { className: "hd-dim" }, "\u00a0\u00b7\u00a0"), h(V, { m: top.spread_bps, fmt: bps, compact: true })),
           sub: "fast l2Book, 5 levels"
         }),
         h(Tile, { label: "Regime", f: d.trades_freshness, value: regimeValue, sub: regimeSub }),
