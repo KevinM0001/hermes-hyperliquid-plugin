@@ -17485,10 +17485,10 @@
     for (let i = 0; i < fields.length; i++) {
       const f = fields[i];
       if (f && typeof f === "object" && f.value !== null && f.value !== undefined && f.status === "unverified") {
-        // No badge box (Kevin, Nov 10): the status stays as a muted word with the reason in the tooltip; the label's
-        // dot carries the status colour and the card's "not fresh" fold names the fields shown unverified.
-        return h("span", { className: "hd-unv", title: f.reason || "unverified" },
-          "unverified" + (isNum(f.received_age_s) ? " \u00b7 changed " + secs(f.received_age_s) + " ago" : ""));
+        // No badge and no word (Kevin, Nov 10): the sub line shows the receipt age; the status and its reason stay in
+        // the tooltip and in the label's dot colour.
+        return h("span", { className: "hd-unv", title: "unverified: " + (f.reason || "no source timestamp") },
+          isNum(f.received_age_s) ? "changed " + secs(f.received_age_s) + " ago" : "no source timestamp");
       }
     }
     return null;
