@@ -3442,6 +3442,21 @@
         text: (t.side === "B" ? "Buy" : "Sell") + " " + (isNum(t.notional_usd) ? usd(t.notional_usd) : "?") + " at " + (isNum(t.px) ? px(t.px) : "?") +
           (isNum(lp.threshold_usd) ? " (at or above the " + usd(lp.threshold_usd) + " print threshold; one taker order can produce several fills)" : "") });
     });
+    // New walls (Kevin, Nov 10: when a major player starts placing large orders): the node's wall watch lists the
+    // largest single resting orders near the price with when each was first seen; those first seen in the last
+    // 15 minutes are notes here, with their size, price, public address and placement time. Served fields in words.
+    const wl = g(m, "node", "live", "walls");
+    const wbt = wl && isNum(wl.book_time_ms) ? wl.book_time_ms : g(m, "node", "live", "book", "book_time_ms");
+    if (wl && Array.isArray(wl.current) && isNum(wbt)) {
+      wl.current.forEach(function (o, i) {
+        if (!isNum(o.first_seen_ms) || wbt - o.first_seen_ms > 15 * 60 * 1000) return;
+        notes.push({ key: "w" + (o.oid || i) + ":" + o.first_seen_ms, t: o.first_seen_ms, tag: "NEW WALL", tone: o.side === "B" ? "ok" : "bad",
+          text: (o.side === "B" ? "Bid" : "Ask") + " " + (isNum(o.notional_usd) ? usd(o.notional_usd) : "?") + (isNum(o.sz) ? " (" + sz(o.sz) + ")" : "") + " resting at " + (dpx(o.px) || "?") +
+            (o.user ? " by " + shortAddr(o.user) : "") + (isNum(o.placed_ms) ? ", placed " + hms(o.placed_ms) + "Z" : "") +
+            (isNum(o.absorbed_sz) && o.absorbed_sz > 0 ? ", " + sz(o.absorbed_sz) + " absorbed so far" : "") + (isNum(o.pulled_sz) && o.pulled_sz > 0 ? ", " + sz(o.pulled_sz) + " pulled so far" : "") +
+            (wl.definition ? " (a wall by the plugin's definition: " + wl.definition + ")" : "") });
+      });
+    }
     notes.sort(function (a, b) { return b.t - a.t; });
     const shown = notes.slice(0, 6);
     // State lines (the plugin's current numbers as of this snapshot, never a forecast): the activity split of node
