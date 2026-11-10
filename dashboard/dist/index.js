@@ -17918,7 +17918,7 @@
         const series = c.addSeries(LWC.CandlestickSeries, {
           upColor: C.bid, downColor: C.ask, borderVisible: true, borderUpColor: C.bid, borderDownColor: C.ask, wickUpColor: C.bid, wickDownColor: C.ask,
           // One dashed line at the last price, in the last candle's colour, as a trading terminal draws it (Kevin, Nov 10).
-          priceLineVisible: true, priceLineStyle: LWC.LineStyle.Dashed, priceLineWidth: 1, lastValueVisible: true
+          priceLineVisible: true, priceLineStyle: LWC.LineStyle.Dotted, priceLineWidth: 1, lastValueVisible: true
         });
         const markers = typeof LWC.createSeriesMarkers === "function" ? LWC.createSeriesMarkers(series, []) : null;
         // Volume bars in the bottom fifth, on their own hidden scale, under the candles' margin.
@@ -17983,6 +17983,10 @@
           a.decimals = d;
         }
         a.series.setData(candles);
+        // The last-price line takes the colour of the last candle (the one in progress when there is one): green when
+        // it closes at or above its open, red below, as a trading terminal draws it (Kevin, Nov 10).
+        const lk = candles.length ? candles[candles.length - 1] : null;
+        if (lk && isNum(lk.close) && isNum(lk.open)) a.series.applyOptions({ priceLineColor: lk.close >= lk.open ? C.bid : C.ask });
 
         // No other price lines since Nov 10 (Kevin: too many lines); the snapshot's price_lines stay in the data.
         Object.keys(a.lines).forEach(function (k) { a.series.removePriceLine(a.lines[k]); delete a.lines[k]; });
