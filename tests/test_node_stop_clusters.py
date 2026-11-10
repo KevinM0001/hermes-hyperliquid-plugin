@@ -254,9 +254,11 @@ def test_recorded_window_clusters_are_the_two_largest_bands_per_side_quoted_in_t
         assert cl["text"].startswith(head), cl["text"]
         assert "% of the liquidity it would walk" in cl["text"]
         if u:
-            assert cl["text"].endswith(f"; {u} of {cl['orders']} orders report{'s' if u == 1 else ''} no size, so this is understated")
+            share = 100 * u / cl["orders"]                       # the unsized count and its share (Kevin, Nov 10)
+            pct = f"{share:,.0f}%" if share >= 10 else (f"{share:.1f}%" if share >= 1 else f"{share:.2f}%")
+            assert cl["text"].endswith(f"; {u} of {cl['orders']} ({pct}) size unknown")
         else:
-            assert "understated" not in cl["text"] and "at least" not in cl["text"]
+            assert "size unknown" not in cl["text"] and "at least" not in cl["text"]
         # the share quoted is the walk's, to two significant figures
         share = cl["text"].split("so this cluster is ")[1].removeprefix("at least ").split("%")[0]
         assert abs(float(share) - w["ratio_pct"]) <= (0.5 if w["ratio_pct"] >= 10 else 0.05 if w["ratio_pct"] >= 1 else 0.005)
@@ -353,7 +355,7 @@ def test_hand_checked_ratios_null_forms_and_exclusions():
                              "the bids at and below it total $3K, so this cluster is 10% of the liquidity it would walk")
     assert cl[1]["text"] == ("Sell-side triggers at 99 to 98.5 (-1.0% to -1.5%): at least $99 across 2 orders from 2 accounts; "
                              "the bids at and below it total $5K, so this cluster is at least 2.0% of the liquidity it would "
-                             "walk; 1 of 2 orders reports no size, so this is understated")
+                             "walk; 1 of 2 (50%) size unknown")
     assert cl[1]["lower_bound"] is True and cl[1]["unknown_size_orders"] == 1 and cl[0]["lower_bound"] is False
     assert cl[2]["text"] == ("Buy-side triggers at 102 to 102.5 (+2.0% to +2.5%): $5K across 1 order from 1 account; "
                              "the asks at and above it total $5K, so this cluster is 98% of the liquidity it would walk")

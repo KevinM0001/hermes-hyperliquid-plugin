@@ -635,7 +635,9 @@ def _cluster_text(row: dict) -> str:
         tail = walk["ratio_reason"]
     parts = [head, tail]
     if unsized:
-        parts.append(f"{unsized} of {n} orders report{'s' if unsized == 1 else ''} no size, so this is understated")
+        # The unsized count as a number and a share (Kevin, Nov 10): "301 of 663 (45%) size unknown"; "at least" in
+        # the head already says the notional is a floor.
+        parts.append(f"{unsized} of {n} ({_pct2(100 * unsized / n)}) size unknown")
     return "; ".join(parts)
 
 
