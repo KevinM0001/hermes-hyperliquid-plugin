@@ -1939,7 +1939,12 @@
     const e = props.e;
     if (!e) return null;
     if (e.available !== true) {
-      return h("div", { className: "hd-small hd-dim", title: e.rule || "" }, "Whole-position orders: size unknown; no position estimate (" + (e.reason || "unavailable") + ").");
+      // A feed without position streams (the common case on an older runner) gets the short line; any other reason
+      // is quoted, since it names what to fix.
+      const none = /carries no owner positions|no owner position stream/.test(e.reason || "");
+      return h("div", { className: "hd-small hd-dim", title: (e.rule || "") + (e.reason ? "\n" + e.reason : "") },
+        none ? "Whole-position orders: size unknown; this feed carries no owner positions."
+             : "Whole-position orders: size unknown; no position estimate (" + (e.reason || "unavailable") + ").");
     }
     const unk = Object.keys(e.unknown || {}).reduce(function (n, k) { return n + e.unknown[k]; }, 0);
     const why = Object.keys(e.unknown || {}).map(function (k) { return e.unknown[k] + " " + k; }).join("; ");
