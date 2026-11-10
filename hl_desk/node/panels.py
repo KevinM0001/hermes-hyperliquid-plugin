@@ -360,7 +360,9 @@ def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
     if not usable(ost) or ps.positions is None or mf.triggers is None:
         return None, base | {"reason": f"owner positions {ost['state']}: {ost.get('reason')}"}
     tf = mf.fam["triggers"]
-    tb, pb, tbt, pbt = mf.block, ps.block, mf.block_time_ms, ps.block_time_ms
+    # The as-of is what the two families' last consistent watermarks vouch for (the same source as the late-data
+    # note), not the latest line's envelope, which can name a block not fully applied yet.
+    tb, pb, tbt, pbt = tf.wm_block, ps.fam.wm_block, tf.wm_block_time_ms, ps.fam.wm_block_time_ms
     same = tb == pb
     # An owner missing from the stream is a feed defect only when both families stand at the same block; between a
     # market's line and its stream's line of the same block it is the expected moment before the set arrives.
