@@ -371,7 +371,8 @@
 .hd-tile-sub { height: 47px; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .hd-stat-value, .hd-num { font-variant-numeric: tabular-nums; }
 .hd-prov { flex-wrap: nowrap; min-height: 0; height: 30px; padding: 0 14px; overflow: hidden; }
-.hd-prov-1 { height: 32px; padding-top: 2px; }
+.hd-provcard { padding: 2px 0 4px; }
+.hd-prov-1 { height: 32px; padding-top: 2px; border-top: none; }
 .hd-prov-2 { border-top: none; height: 30px; padding-bottom: 2px; }
 .hd-prov-item { flex: 0 1 auto; min-width: 0; }
 .hd-prov-grow { flex: 1 1 auto; }

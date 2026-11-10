@@ -554,9 +554,7 @@
     const m = g(r, "market");
     const markets = (r && r.markets) || [];
     const prov = g(m, "provenance") || {};
-    const cov = g(prov, "coverage", "trades") || {};
     const collector = props.noSnap ? g(props.noSnap, "runtime", "collector") : (g(props.gap, "runtime", "collector") || g(r, "collector"));
-    const unsupported = (r && r.unsupported_markets) || [];
     const shown = m ? m.market : null;
     return h("header", { className: "hd-card hd-header" },
       h("div", { className: "hd-header-top" },
@@ -578,38 +576,6 @@
           h(CollectorBox, { collector: collector, busy: props.busy, action: props.action, onControl: props.onControl,
             mode: r ? r.mode : null, modeTitle: prov.source }),
           r && shown ? h(AskButton, { question: askQuestion("market", shown, r.snapshot_id) }) : null)),
-      // Two rows of fixed height that never wrap (Kevin, Nov 10): a long item is cut with an ellipsis and carries its
-      // full text in a tooltip, so a width change (the observed seconds, a status note) never moves the badge to a
-      // third line and the card never grows. Row 1: identity and status. Row 2: coverage, versions and the badge.
-      r ? h(Fragment, null,
-        h("div", { className: "hd-prov hd-prov-1" },
-          h("span", { className: "hd-prov-item" }, "snapshot ", h("code", { className: "hd-code" }, r.snapshot_id), " ",
-            h(CopyButton, { text: r.snapshot_id, what: "snapshot ID" })),
-          h("span", { className: "hd-prov-item" }, "built " + dateTime(r.built_at)),
-          // When the snapshot on screen has aged past a limit, or the last poll failed, it is said here (it was the
-          // delay bar's note until Nov 9); the next snapshot replaces the one on screen in place, nothing blanks.
-          props.aged || props.pollNote ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
-            title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
-            (props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "") + (props.aged ? "Snapshot on screen: " + props.aged : "")) : null,
-          g(m, "clock", "clock_skew_suspected") ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
-            title: "clock skew suspected (" + g(m, "clock", "offset_ms") + " ms)" + (g(m, "clock", "note") ? ": " + g(m, "clock", "note") : "") },
-            "clock skew suspected (" + g(m, "clock", "offset_ms") + " ms)") : null,
-          m ? h("span", { className: "hd-prov-item hd-prov-grow", title: prov.source }, "source: " + prov.source) : null),
-        h("div", { className: "hd-prov hd-prov-2" },
-          m ? h("span", { className: "hd-prov-item" }, "dex: " + (g(m, "meta", "dex_label") || prov.dex || "not in snapshot")) : null,
-          m ? h("span", { className: "hd-prov-item" },
-            "trade coverage since " + (cov.segment_start ? hmsms(cov.segment_start) + " UTC" : "(none)") +
-            (isNum(cov.observed_s) ? " \u00b7 observed " + secs(cov.observed_s) : "") +
-            " \u00b7 gaps " + ((cov.gaps || []).length)) : null,
-          r.schema ? h("span", { className: "hd-prov-item", title: r.schema.path }, "schema " + r.schema.schema_id + " v" + r.schema.version) : null,
-          h("span", { className: "hd-prov-item" }, "plugin v" + r.plugin_version),
-          unsupported.length ? h("span", { className: "hd-prov-item hd-dim", title: unsupported.map(function (u) {
-            return u.market + (u.reason ? " (" + u.reason + ")" : "");
-          }).join("; ") }, "unsupported: " + unsupported.map(function (u) { return u.market; }).join(", ")) : null,
-          h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
-          props.selected && shown && props.selected !== shown
-            ? h("span", { className: "hd-chip hd-tone-info" }, "loading " + props.selected + ELLIPSIS) : null,
-          h(Badge, { kind: "api", title: prov.source }, "PUBLIC API \u00b7 websocket + info"))) : null,
       m ? null : h("div", { className: "hd-pad hd-dim" }, "waiting for the first snapshot"));
   }
 
@@ -4466,6 +4432,46 @@
 
   // ------------------------------------------------------------------ footer
 
+  // The snapshot's provenance (its id and build time, status notes, source, dex, coverage, schema, versions and the
+  // API badge): at the foot of the page since Nov 10 (Kevin: not what a user looks at first). Two fixed rows.
+  function ProvRows(props) {
+    const r = props.resp;
+    const m = g(r, "market");
+    const prov = g(m, "provenance") || {};
+    const cov = g(prov, "coverage", "trades") || {};
+    const unsupported = (r && r.unsupported_markets) || [];
+      // Two rows of fixed height that never wrap (Kevin, Nov 10): a long item is cut with an ellipsis and carries its
+      // full text in a tooltip, so a width change (the observed seconds, a status note) never moves the badge to a
+      // third line and the card never grows. Row 1: identity and status. Row 2: coverage, versions and the badge.
+    return h("section", { className: "hd-card hd-provcard", "aria-label": "Snapshot provenance", "data-panel": "provenance" },
+        h("div", { className: "hd-prov hd-prov-1" },
+          h("span", { className: "hd-prov-item" }, "snapshot ", h("code", { className: "hd-code" }, r.snapshot_id), " ",
+            h(CopyButton, { text: r.snapshot_id, what: "snapshot ID" })),
+          h("span", { className: "hd-prov-item" }, "built " + dateTime(r.built_at)),
+          // When the snapshot on screen has aged past a limit, or the last poll failed, it is said here (it was the
+          // delay bar's note until Nov 9); the next snapshot replaces the one on screen in place, nothing blanks.
+          props.aged || props.pollNote ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
+            title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
+            (props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "") + (props.aged ? "Snapshot on screen: " + props.aged : "")) : null,
+          g(m, "clock", "clock_skew_suspected") ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
+            title: "clock skew suspected (" + g(m, "clock", "offset_ms") + " ms)" + (g(m, "clock", "note") ? ": " + g(m, "clock", "note") : "") },
+            "clock skew suspected (" + g(m, "clock", "offset_ms") + " ms)") : null,
+          m ? h("span", { className: "hd-prov-item hd-prov-grow", title: prov.source }, "source: " + prov.source) : null),
+        h("div", { className: "hd-prov hd-prov-2" },
+          m ? h("span", { className: "hd-prov-item" }, "dex: " + (g(m, "meta", "dex_label") || prov.dex || "not in snapshot")) : null,
+          m ? h("span", { className: "hd-prov-item" },
+            "trade coverage since " + (cov.segment_start ? hmsms(cov.segment_start) + " UTC" : "(none)") +
+            (isNum(cov.observed_s) ? " \u00b7 observed " + secs(cov.observed_s) : "") +
+            " \u00b7 gaps " + ((cov.gaps || []).length)) : null,
+          r.schema ? h("span", { className: "hd-prov-item", title: r.schema.path }, "schema " + r.schema.schema_id + " v" + r.schema.version) : null,
+          h("span", { className: "hd-prov-item" }, "plugin v" + r.plugin_version),
+          unsupported.length ? h("span", { className: "hd-prov-item hd-dim", title: unsupported.map(function (u) {
+            return u.market + (u.reason ? " (" + u.reason + ")" : "");
+          }).join("; ") }, "unsupported: " + unsupported.map(function (u) { return u.market; }).join(", ")) : null,
+          h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
+          h(Badge, { kind: "api", title: prov.source }, "PUBLIC API \u00b7 websocket + info")));
+  }
+
   function Footer(props) {
     return h("footer", { className: "hd-card hd-footer" },
       h("details", { className: "hd-legend-fold" }, h("summary", null, "Where each number comes from"),
@@ -4685,13 +4691,13 @@
     const nstat = resp ? resp.node_status : null;
     const nodeReason = (nlive && !non && nlive.reason) || NO_NODE;
     const showReplay = !!(nstat && (nstat.replay || g(nstat, "configured", "node_replay_file") || g(m, "node", "replay")));
+    const pollNote = pollErr && resp && aged ? "Last poll failed at " + localClock(pollErr.at) + " (local): " + pollErr.message +
+      "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null;
     return h("div", { className: "hd-root" },
       h(Banners, { resp: resp, noSnap: noSnap, gap: gap, pollErr: pollErr, lastOkAt: lastOkAt, hidden: hidden }),
       h(Header, {
         resp: resp, noSnap: noSnap, gap: gap, selected: market, onMarket: chooseMarket,
-        busy: busy, action: action, onControl: control, aged: aged,
-        pollNote: pollErr && resp && aged ? "Last poll failed at " + localClock(pollErr.at) + " (local): " + pollErr.message +
-          "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null
+        busy: busy, action: action, onControl: control, aged: aged, pollNote: pollNote
       }),
       m ? h(Glance, { m: m, resp: resp, onOpen: openWallet }) : null,
       // Kevin, Nov 10: the chart and ladder, then Hermes, directly under the top card; Watch and the Flow Deck follow.
@@ -4742,6 +4748,7 @@
           resp ? "The snapshot has no market to show." :
             (noSnap ? h(Fragment, null, h("b", null, "No snapshot yet. "), "Start the collector with the Start button above, or /hl start in chat; the banner above says why there is none.")
               : (pollErr ? "Couldn't reach the plugin's snapshot route: " + pollErr.message : "Loading the first snapshot" + ELLIPSIS))),
+      resp && resp.ok === true ? h(ProvRows, { resp: resp, aged: aged, pollNote: pollNote }) : null,
       h(Footer, { nodeOn: non }),
       drill ? h(WalletDrill, { drill: drill, onRefresh: refreshWallet, onClose: function () { setDrill(null); } }) : null);
   }
