@@ -1804,8 +1804,9 @@
     const ex = props.ex;
     if (!ex) return null;
     if (ex.available === false) return h("div", { className: "hd-small" }, h("b", null, "Exclusions: "), h(Unavailable, { reason: ex.reason || "unavailable", compact: true }));
+    // In the plugin's order of classification (each trigger once, first match): the size test comes last, inside the bands.
     const items = [["trailing_stops", "trailing stops"], ["unclassified_by_engine", "unclassified by the engine"], ["implausible_price", "implausible trigger price"],
-      ["size_outlier", "size outliers"], ["already_true_at_price", "already true at the price"], ["beyond_range", "beyond 10%"]];
+      ["already_true_at_price", "already true at the price"], ["beyond_range", "beyond 10%"], ["size_outlier", "size outliers"]];
     const acc = ex.accounted || {};
     return h("div", { className: "hd-smap-excl" },
       h("div", { className: "hd-small" }, h("b", null, "Left out of the bands, each trigger once: "), items.map(function (it, i) {
