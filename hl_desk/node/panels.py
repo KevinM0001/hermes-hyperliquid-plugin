@@ -18,6 +18,7 @@ from decimal import Decimal
 from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
 from .flow_map import FlowMapState, build as build_flow_map
+from .transport import source_label
 from .triggers import CENSUS_EXCLUSIONS, category, census
 from .proto import dec, fmt, num
 from ..util import iso_ms, median
@@ -324,7 +325,7 @@ def node_delay(client, market: str, now_mono_ns=None) -> dict:
 
 
 def provenance(client, market: str) -> dict:
-    return {"source": client.source, "mode": client.mode, "epoch": client.epoch, "session": client.session,
+    return {"source": source_label(client.source), "mode": client.mode, "epoch": client.epoch, "session": client.session,
             "replay_session": client.replay_session if client.mode == "REPLAY" else None,
             "stream": client.stream_label(), "market": market, "protocol": "l4-livefeed v2 (document revision 2.2)"}
 

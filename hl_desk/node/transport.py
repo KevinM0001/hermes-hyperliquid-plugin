@@ -37,6 +37,20 @@ def parse_source(spec: str) -> tuple[str, str] | None:
     return None
 
 
+def source_label(spec) -> str:
+    """The feed source as it is served and shown: never a local path, so no screenshot, video or chat answer carries
+    the machine's user name or folder layout (the Nov 9 compliance audit). A Unix socket reads "local socket
+    (<file name>)", a relay URL "relay <host>"; anything else (a test label) is given back as it is."""
+    src = parse_source(str(spec)) if isinstance(spec, str) else None
+    if src is None:
+        return str(spec)
+    if src[0] == "unix":
+        return f"local socket ({os.path.basename(src[1]) or 'socket'})"
+    from urllib.parse import urlparse
+    host = urlparse(src[1]).hostname
+    return f"relay {host}" if host else "relay"
+
+
 def handshake(client, markets: list[str]) -> dict:
     hs = {"v": 2, "markets": list(markets), "start": "snapshot"}
     if client.epoch is not None:

@@ -17,7 +17,7 @@ from . import panels
 from .bursts import NodeBurstRule
 from .client import FeedClient
 from .replay import Recording, ReplayPlayer
-from .transport import parse_source, run_feed
+from .transport import parse_source, run_feed, source_label
 
 DEADLINE_CHECK_S = 0.25
 REPLAY_TICK_S = 0.05
@@ -160,7 +160,7 @@ class NodeManager:
 
     def status(self) -> dict:
         return {"live": None if self.live is None else {
-                    "source": self.live.source, "connection": dict(self.live.connection),
+                    "source": source_label(self.live.source), "connection": dict(self.live.connection),
                     "epoch": self.live.epoch, "session": self.live.session,
                     "counters": dict(self.live.counters), "skew": dict(self.live.skew)},
                 "replay": None if self.player is None else self.player.status() | {"error": self.replay_error},

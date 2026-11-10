@@ -115,7 +115,7 @@ SCHEMAS = {
     },
     "hl_watch": {
         "name": "hl_watch",
-        "description": ("Kevin's swing-context page for Hyperliquid markets, computed by the plugin from its own data, for one "
+        "description": ("The swing-context block for Hyperliquid markets, computed by the plugin from its own data, for one "
                         "market or every followed market: the price and where it sits in the 24h range (the last 24 closed 1h "
                         "candles; the middle 35 to 65% is the band he identified as his loss-maker) and in the 7d range, taker "
                         "flow imbalance over 15m, 1h and 4h from minute bars of public trades, the 4h wave (the second half of "
@@ -546,9 +546,9 @@ def hl_watch(snap: dict, args: dict, rt=None) -> dict:
     return {"tool": "hl_watch", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
             "mode": snap["mode"], **_served(snap), "markets": markets,
             "definitions": {k: m[k] for k in ("formula", "thresholds", "window", "completeness_rule")}
-            | {"source": "schema/metrics.v1.json deck.watch (ported from Kevin's swing-context page)"},
+            | {"source": "schema/metrics.v1.json deck.watch (ported from a private swing-context page)"},
             "schema": snap["schema"], "disclaimer": DISCLAIMER,
-            "note": ("descriptions by Kevin's own rule, not a forecast or a signal: say where the price sits, what the flow "
+            "note": ("descriptions by a fixed rule, not a forecast or a signal: say where the price sits, what the flow "
                      "and the wave measured and over how many covered minutes, which wallet led the hour, and what is "
                      "unavailable and why (a null part has its reason beside it as <part>_reason)")}
 

@@ -26,6 +26,7 @@ import pytest
 import hl_desk
 from hl_desk.node import panels
 from hl_desk.node.client import FeedClient
+from hl_desk.node.transport import source_label      # the served source is a label, never a local path
 
 ROOT = Path(hl_desk.__file__).resolve().parent.parent
 
@@ -282,15 +283,15 @@ class Surfaces:
             out["wallet_split"] = wal["panel"].get("node_activity_split")
             # every node-fill result names its source and the flow family's freshness, available or not
             cb = out["card_buckets"]
-            assert cb["stream"] == "node fills" and cb["provenance"]["source"] == c.source, cb
+            assert cb["stream"] == "node fills" and cb["provenance"]["source"] == source_label(c.source), cb
             assert cb["freshness"].get("family") == "flow" or cb["freshness"].get("state") == "INVALID", cb
             for ev in out["events"]:
                 if ev.get("type") == "burst":
-                    assert ev["node_activity"]["provenance"]["source"] == c.source and "freshness" in ev["node_activity"]
+                    assert ev["node_activity"]["provenance"]["source"] == source_label(c.source) and "freshness" in ev["node_activity"]
                 elif ev.get("type") == "liquidation_burst":
-                    assert ev["provenance"]["source"] == c.source and ev["freshness"]["family"] == "flow"
+                    assert ev["provenance"]["source"] == source_label(c.source) and ev["freshness"]["family"] == "flow"
             if out["wallet_split"] is not None:
-                assert out["wallet_split"]["provenance"]["source"] == c.source and "freshness" in out["wallet_split"]
+                assert out["wallet_split"]["provenance"]["source"] == source_label(c.source) and "freshness" in out["wallet_split"]
         self.reads += 1
         self.last = out
         return view

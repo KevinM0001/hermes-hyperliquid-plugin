@@ -141,7 +141,8 @@ class FeedClient:
 
     # --- partition -------------------------------------------------------------
     def stream_label(self) -> str:
-        parts = [self.source, self.mode, f"epoch {self.epoch}", f"session {self.session}"]
+        from .transport import source_label                      # the label, never a local path
+        parts = [source_label(self.source), self.mode, f"epoch {self.epoch}", f"session {self.session}"]
         if self.mode == "REPLAY":
             parts.append(f"replay {self.replay_session}")
         return " · ".join(str(p) for p in parts)

@@ -18064,6 +18064,10 @@
           rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.08, bottom: 0.24 } },
           timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: true },
           crosshair: { mode: LWC.CrosshairMode.Normal },
+          // The wheel scrolls the page (the Nov 9 audit: a reader got stuck zooming); the interval buttons set the range,
+          // dragging still pans and pinching still zooms.
+          handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
+          handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
           localization: { locale: "en-US", priceFormatter: function (v) { return axisPrice(v, api.current ? api.current.decimals : null); } }
         });
         const series = c.addSeries(LWC.CandlestickSeries, {
@@ -18310,6 +18314,19 @@
     return Math.floor(s / 86400) + "d " + Math.floor((s % 86400) / 3600) + "h";
   }
   function shortId(s) { return typeof s === "string" && s.length > 12 ? s.slice(0, 8) + ELLIPSIS : String(s); }
+  // A feed source for the screen: the plugin already serves a label, never a path; an older snapshot's raw path is
+  // reduced here the same way (a Unix socket by its file name, a relay by its host).
+  function srcLabel(s) {
+    const t = String(s || "");
+    if (/^(unix:)?[\/~]/.test(t)) return "local socket (" + baseName(t.replace(/^unix:/, "")) + ")";
+    const m = /^wss?:\/\/([^\/:?#]+)/.exec(t);
+    return m ? "relay " + m[1] : t;
+  }
+  function streamLabel(st) {
+    const t = String(st || "");
+    const i = t.indexOf(" \u00b7 ");
+    return i > 0 ? srcLabel(t.slice(0, i)) + t.slice(i) : srcLabel(t);
+  }
   function baseName(p) {
     const t = String(p);
     const i = Math.max(t.lastIndexOf("/"), t.lastIndexOf("\\"));
@@ -18397,8 +18414,8 @@
   function NodeProv(props) {
     const p = g(props.v, "provenance") || {};
     return h(Fragment, null,
-      h(ModeBadge, { mode: p.mode || "UNKNOWN", title: p.stream }),
-      h(Badge, { kind: "node", title: (props.what ? props.what + " \u00b7 " : "") + (p.stream || "node feed") }, "NODE"));
+      h(ModeBadge, { mode: p.mode || "UNKNOWN", title: streamLabel(p.stream) }),
+      h(Badge, { kind: "node", title: (props.what ? props.what + " \u00b7 " : "") + (p.stream ? streamLabel(p.stream) : "node feed") }, "NODE"));
   }
 
   // A node panel's status row: its families' states, then source, producer epoch and replay session.
@@ -18407,7 +18424,7 @@
     const p = v.provenance || {};
     return h(Fragment, null,
       h(FamChips, { fams: v.families, names: props.fams }),
-      h("span", { className: "hd-prov-item", title: p.stream || undefined },
+      h("span", { className: "hd-prov-item", title: p.stream ? streamLabel(p.stream) : undefined },
         (p.source || "source not in snapshot") + " \u00b7 " + (p.mode || "mode not in snapshot") +
         " \u00b7 epoch " + (p.epoch !== null && p.epoch !== undefined ? p.epoch : "none yet") +
         (p.replay_session ? " \u00b7 replay session " + shortId(p.replay_session) : "")),
@@ -18464,7 +18481,7 @@
         h("span", { className: "hd-dot", "aria-hidden": "true" }), label) : null),
       h("span", { className: "hd-delaybar-sub hd-dim" }, live
         ? "latest watermark's age, " + (d.window_ms / 1000) + " s average \u00b7 now " + (d.current_ms / 1000).toFixed(1) +
-          " s \u00b7 delayed above " + (d.delayed_after_ms / 1000) + " s, stale above " + (d.stale_after_ms / 1000) + " s"
+          " s \u00b7 shown as delayed above " + (d.delayed_after_ms / 1000) + " s"
         : why),
       h("span", { className: cx("hd-delaybar-note", (props.aged || props.pollNote) && "hd-tone-text-warn"),
         title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
@@ -18480,8 +18497,9 @@
     const rep = ns ? ns.replay : null;
     const conn = (live && live.connection) || {};
     const cstate = conn.state || "state not in snapshot";
-    const cfgLine = h("span", { className: "hd-prov-item hd-dim", title: cfg ? JSON.stringify(cfg) : undefined },
-      cfg ? "configured: node_feed " + (cfg.node_feed || "not set") + " \u00b7 node_replay_file " +
+    // Never a local path on screen (the Nov 9 audit): the feed setting and the recording are named by kind and file name.
+    const cfgLine = h("span", { className: "hd-prov-item hd-dim" },
+      cfg ? "configured: node_feed " + (cfg.node_feed ? srcLabel(cfg.node_feed) : "not set") + " \u00b7 node_replay_file " +
         (cfg.node_replay_file ? baseName(cfg.node_replay_file) : "not set") + " \u00b7 key " + (cfg.key || "not stated")
         : "configured: not in this snapshot");
     return h("section", { className: "hd-card hd-nodestrip", "aria-label": "Node feed status", "data-panel": "node-status" },
@@ -18493,7 +18511,7 @@
           conn.reason ? h("span", { className: cx("hd-nodestrip-why", "hd-tone-text-" + (CONN_TONE[cstate] || "warn")) }, conn.reason) : null,
           isNum(conn.since_wall_ms) ? h("span", { className: "hd-prov-item" }, "since " + hms(conn.since_wall_ms) + " UTC") : null,
           isNum(conn.retry_in_s) ? h("span", { className: "hd-prov-item" }, "retry in " + conn.retry_in_s + " s") : null,
-          h("span", { className: "hd-prov-item", title: live.source }, "source " + (live.source || "not in snapshot")),
+          h("span", { className: "hd-prov-item" }, "source " + (live.source ? srcLabel(live.source) : "not in snapshot")),
           h("span", { className: "hd-prov-item" }, "producer epoch " + (live.epoch !== null && live.epoch !== undefined ? live.epoch : "none yet")),
           live.session ? h("span", { className: "hd-prov-item", title: live.session }, "session " + shortId(live.session)) : null)
           : h(Unavailable, { reason: (v && !nodeOn(v) && v.reason) || (ns ? NO_NODE : "needs node mode: the node status isn't in this snapshot") }),
@@ -19070,7 +19088,7 @@
       why: h("p", null, "Sentences the plugin writes from the node's own order-level data: the order flow map's readings over the last two hours " +
         "(each fill placed by what it did to the taker's position), the largest waiting-trigger cluster on each side with its lower-bound " +
         "wording, the largest single resting orders near the price with who placed them and when (public addresses; the plugin never guesses " +
-        "who owns one), and the Watch verdict by Kevin's rule. Descriptions, not signals, and nothing here is a liquidation level. The full " +
+        "who owns one), and the Watch verdict. Descriptions, not signals, and nothing here is a liquidation level. The full " +
         "panels are on the Node page."),
       badges: h(Fragment, null,
         props.onToggle ? h("button", { type: "button", className: "hd-btn hd-btn-xs hd-btn-quiet", onClick: props.onToggle, "aria-expanded": open },
@@ -19564,7 +19582,7 @@
     const mode = g(v, "provenance", "mode") || "REPLAY";
     const fam = h(ReplayBox, { title: "Families", mode: mode, wide: true },
       h("div", { className: "hd-chips" }, h(FamChips, { fams: v.families })), h(FamNotes, { fams: v.families }),
-      h("div", { className: "hd-small hd-dim", title: g(v, "provenance", "stream") }, h(NodeStatus, { v: { provenance: v.provenance }, fams: [] })));
+      h("div", { className: "hd-small hd-dim", title: streamLabel(g(v, "provenance", "stream")) }, h(NodeStatus, { v: { provenance: v.provenance }, fams: [] })));
     if (v.available === false) return h("div", { className: "hd-replay-grid" }, fam, h(ReplayBox, { title: props.market, mode: mode }, h(Unavailable, { reason: v.reason, block: true })));
     const lg = nodeGate(v, "ladder", true);
     const lad = v.ladder || {};
@@ -19670,7 +19688,7 @@
           h("h2", null, "Node replay"),
           h(Why, null, h("p", null, "A recorded node feed played back on its own clock, with its original timestamps. Separate from every live panel above: never drawn over live prices and never part of current metrics or commentary. It starts only from these controls."))),
         h("div", { className: "hd-badges" }, h(ModeBadge, { mode: "REPLAY", title: "every value in this area is REPLAY, ended included" }),
-          h(Badge, { kind: "node", title: g(v, "provenance", "stream") || "recording" }, "NODE \u00b7 recording"))),
+          h(Badge, { kind: "node", title: streamLabel(g(v, "provenance", "stream")) || "recording" }, "NODE \u00b7 recording"))),
       h("div", { className: "hd-card-body" },
         h("div", { className: "hd-replay-status" },
           h("span", { className: cx("hd-replay-state", "hd-replay-" + state.replace(/\s+/g, "-")) }, state.toUpperCase()),
@@ -19725,8 +19743,8 @@
       s && s.available === true && s.window_label
         ? h("span", { className: "hd-dim", title: s.as_of_note || undefined }, " \u00b7 " + s.window_label) : null,
       nodeOn(nv) ? h("span", { className: "hd-wsplit-prov" }, " ", h(FamChip, { name: "flow", f: g(nv, "families", "flow") }), " ",
-        h("span", { className: "hd-dim", title: g(nv, "provenance", "stream") }, (g(nv, "provenance", "mode") || "?") + " \u00b7 " +
-          (g(nv, "provenance", "source") || "source not in snapshot") + " \u00b7 epoch " + (isNum(g(nv, "provenance", "epoch")) ? nv.provenance.epoch : "none yet"))) : null);
+        h("span", { className: "hd-dim", title: streamLabel(g(nv, "provenance", "stream")) }, (g(nv, "provenance", "mode") || "?") + " \u00b7 " +
+          (g(nv, "provenance", "source") ? srcLabel(nv.provenance.source) : "source not in snapshot") + " \u00b7 epoch " + (isNum(g(nv, "provenance", "epoch")) ? nv.provenance.epoch : "none yet"))) : null);
     if (!s) {
       return h("div", { className: "hd-dim hd-small", "data-node-hook": "wallet-activity-split" },
         "Wallet activity split (new long, cover, new short, exit): needs node mode.");
@@ -19767,8 +19785,10 @@
               const pv = g(sp, "pct", c[0]);
               const why = g(sp, "pct_reason", c[2]);
               if (!isNum(pv)) note(why);
-              cells.push(h("td", { key: c[0], className: "hd-r" }, isNum(uv) ? usd(uv) : missing(), " ",
-                isNum(pv) ? h("b", { className: "hd-dim" }, pct(pv, 1)) : h(Unavailable, { reason: why || "percentage not in snapshot", compact: true })));
+              // A bucket without a percentage shows only the reason (the tab's own rule: never a 0 beside "unavailable").
+              cells.push(h("td", { key: c[0], className: "hd-r" }, isNum(pv)
+                ? h(Fragment, null, isNum(uv) ? usd(uv) : missing(), " ", h("b", { className: "hd-dim" }, pct(pv, 1)))
+                : h(Unavailable, { reason: why || "percentage not in snapshot", compact: true })));
             });
           }
         }
@@ -19821,7 +19841,7 @@
   // Where node fills come from: the live node source and its producer epoch (the replay never feeds these).
   function nodeSrcText(src) {
     if (!src) return "node source not in this snapshot";
-    return "LIVE \u00b7 " + (src.source || "source not in snapshot") + " \u00b7 epoch " +
+    return "LIVE \u00b7 " + (src.source ? srcLabel(src.source) : "source not in snapshot") + " \u00b7 epoch " +
       (src.epoch !== null && src.epoch !== undefined ? src.epoch : "none yet");
   }
 
@@ -19835,7 +19855,7 @@
       // "as of" note is its tooltip. A current window shows the card's times after the label.
       h("span", { className: "hd-dim", title: ab.as_of_note || undefined }, (ab.window_label || "activity buckets") +
         (!ab.as_of_note && isNum(w.start_ms) && isNum(w.end_ms) ? " (" + hms(w.start_ms) + "\u2013" + hms(w.end_ms) + " UTC)" : "")),
-      props.nodeSrc ? h("span", { className: "hd-dim", title: props.nodeSrc.source }, nodeSrcText(props.nodeSrc)) : null);
+      props.nodeSrc ? h("span", { className: "hd-dim", title: srcLabel(props.nodeSrc.source) }, nodeSrcText(props.nodeSrc)) : null);
     if (ab.available === true) {
       return h(Fragment, null, head,
         h(BucketSide, { ab: ab, side: "buying" }),
@@ -20955,7 +20975,7 @@
     const chosen = g(r, "market", "market");
     return h(Panel, {
       id: "watch", className: "hd-p-watch", title: "Watch \u00b7 " + chosen, label: "Swing context",
-      why: h("p", null, "Kevin's swing-context page, computed by the plugin: where the price sits between the 24h low and high (the hatched band is " +
+      why: h("p", null, "The swing-context panel, computed by the plugin: where the price sits between the 24h low and high (the hatched band is " +
         "the middle 30 %, the condition he identified as his loss-maker), the 7d position, flow imbalance over 15m, 1h and 4h ((taker buys - " +
         "taker sells) / total, so +1 is all buying), the 4h wave (the second half of the last four hours against the first: negative means " +
         "the push is losing force), taker notional per hour, and the top wallet's share of the hour's aggressive flow. The verdict is his own " +
@@ -20971,7 +20991,7 @@
         h("div", { className: "hd-wrows" }, names.filter(function (n) { return n !== chosen; }).map(function (n) {
           return h(WatchMini, { key: n, name: n, w: r.deck[n].watch, onSelect: function () { props.onMarket(n); } });
         }))) : null),
-    h("div", { className: "hd-note" }, "Not a forecast: descriptions by Kevin's own rule, from the plugin's counted trades and the venue's closed candles."));
+    h("div", { className: "hd-note" }, "Not a forecast: descriptions by a fixed rule, from the plugin's counted trades and the venue's closed candles."));
   }
 
   // ------------------------------------------------------------------ wallets
@@ -21391,7 +21411,7 @@
     // The watch block (schema 1.3.0, deck.<market>.watch): the same withholding as hl_desk.watch.withhold, at the
     // same lapses the serving code uses (trades for the flow parts, the price's own source for the position).
     function watchVerdict(pos, delta) {
-      if (pos >= 35 && pos <= 65) return { label: "MIDDLE", tone: "warning", text: "mid-range: the condition you said costs you money" };
+      if (pos >= 35 && pos <= 65) return { label: "MIDDLE", tone: "warning", text: "mid-range: neither the low nor the high of the range" };
       const edge = pos < 35 ? "low" : "high";
       if (delta === null) return { label: edge.toUpperCase(), tone: "serious", text: "at the " + edge + " of range, wave not measurable yet" };
       if (delta < -0.05) return { label: edge.toUpperCase() + " + FADING", tone: "good", text: "at the " + edge + " of range and the 4h wave is decelerating" };
@@ -21425,7 +21445,7 @@
         const delta = o.wave && NUM(o.wave.delta) ? o.wave.delta : null;
         const v = watchVerdict(pos, delta);
         o.verdict = Object.assign(v, { position_pct: pos, wave_delta: delta, wave_state: o.wave ? o.wave.state : null,
-          rule: (w.verdict && w.verdict.rule) || "", kind: (w.verdict && w.verdict.kind) || "a description by Kevin's own rule, not a signal or a forecast" });
+          rule: (w.verdict && w.verdict.rule) || "", kind: (w.verdict && w.verdict.kind) || "a description by a fixed rule, not a signal or a forecast" });
         if (delta === null) o.verdict.wave_reason = o.wave_reason || "no wave";
         delete o.verdict_reason;
       }
@@ -21664,6 +21684,9 @@
                     live.status === "fresh" && isNum(live.age) ? " \u00b7 now about " + live.age.toFixed(1) + " s old" : ""),
                   (live.reason || fr.reason) ? h("div", { className: "hd-na" }, live.reason || fr.reason) : null,
                   h(KV, { k: "account value" }, h(V, { m: shown(ms.account_value_usd), fmt: usdFull, compact: true })),
+                  valueOf(shown(ms.account_value_usd)) === 0 && posList !== null && !posList.length
+                    ? h("div", { className: "hd-dim hd-small" }, "A zero account value with no positions beside trades in the window usually means an agent (API) wallet trading for another account, or activity on another dex; the trades here are counted by taker address.")
+                    : null,
                   h(KV, { k: "total position notional" }, h(V, { m: shown(ms.total_position_notional_usd), fmt: usdFull, compact: true })),
                   h(KV, { k: "margin used" }, h(V, { m: shown(ms.total_margin_used_usd), fmt: usdFull, compact: true }))),
                 h("h4", null, "Positions"),

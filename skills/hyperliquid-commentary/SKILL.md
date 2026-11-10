@@ -57,7 +57,7 @@ Cut first: stop levels, wallet lists and ladder detail. A short answer must neve
 
 ## 2.5 Question B: for and against a long and a short
 
-Kevin's requirement: extremely useful, never "it could go either way". The answer is still a description; the usefulness comes from reading the structure from days down to minutes and stating conditions, not a lean.
+The requirement: extremely useful, never "it could go either way". The answer is still a description; the usefulness comes from reading the structure from days down to minutes and stating conditions, not a lean.
 
 Call, with the snapshot ID: `hl_structure` (default intervals; if some intervals come back `loading`, call it once more a second later), `hl_alerts`, `hl_market`, `hl_flow`, `hl_context`, and `hl_watch` when the tools list has it. Then answer in this order, 150–200 words, never over 220:
 
