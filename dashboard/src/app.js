@@ -1574,10 +1574,11 @@
     },
     // A withheld panel's box already names the family and its reason, so the family notes are shown only with values.
     gate ? null : h(FamNotes, { fams: v && v.families, names: ["book", "triggers"], pad: true }),
-    gate ? h("div", { className: "hd-pad" }, gate) : h(NodeLadderTable, { lad: lad, centreKey: g(v, "provenance", "market") }),
+    gate ? h("div", { className: "hd-pad" }, gate) : h(NodeLadderTable, { lad: lad, limit: 10, centreKey: g(v, "provenance", "market") }),
     lad ? h("div", { className: "hd-note" },
       "Full book: " + (isNum(lps.bids) ? intf(lps.bids) : "?") + " bid levels, " + (isNum(lps.asks) ? intf(lps.asks) : "?") + " ask levels; the " +
-      Math.max((lad.bids || []).length, (lad.asks || []).length) + " nearest per side are shown.") : null);
+      Math.min(10, Math.max((lad.bids || []).length, (lad.asks || []).length)) + " nearest per side are shown (the snapshot carries " +
+      Math.max((lad.bids || []).length, (lad.asks || []).length) + ").") : null);
   }
 
   // ---- waiting stops (conditional interest)
@@ -1878,6 +1879,13 @@
         censusKv("snapshot totals", st ? intf(g(st, "book", "total_orders")) + " orders / " + intf(g(st, "triggers", "total_triggers")) + " triggers = " + (isNum(st.executable_to_trigger_ratio) ? num(st.executable_to_trigger_ratio, 2, 2) : "?") : null, c.snapshot_totals_reason, st ? (isNum(g(st, "book", "block")) ? "book snapshot at block " + g(st, "book", "block") : "") + (st.note ? "\n" + st.note : "") : null)),
       c.note ? h("div", { className: "hd-small hd-dim" }, c.note) : null);
   }
+  function thinMax(th) {
+    let maxV = 0;
+    [th && th.bids_below, th && th.asks_above].forEach(function (sd) {
+      ((sd && sd.bands) || []).forEach(function (b) { if (isNum(b.usd_per_1_price) && b.usd_per_1_price > maxV) maxV = b.usd_per_1_price; });
+    });
+    return maxV;
+  }
   function StopMapPanel(props) {
     const v = props.v;
     const gate = nodeGate(v, "stops", false);
@@ -1894,7 +1902,7 @@
     }
     const rules = (ok && mp.rules) || {};
     return h(Panel, {
-      id: "stop-map", className: "hd-p-smap", title: "Stop and liquidity map (node triggers against the full book)", nodeHook: "stop-map",
+      id: "stop-map", className: "hd-p-smap", title: "Stop and liquidity map (node triggers against the full book)", nodeHook: "stop-map thinning",
       why: h(Fragment, null,
         h("p", null, "Per 0.5% band out to 10% on each side of the node book mid: the resting depth in the band (the thinning panel's own bands, so the two never disagree on an edge) " +
           "beside the waiting trigger orders that would fire into it, sell-side triggers below the price and buy-side triggers above. The walk column is the band's trigger notional " +
@@ -1913,6 +1921,11 @@
         h(KV, { k: "bands" }, (isNum(mp.band_pct) ? pct(mp.band_pct, 1) : "0.5%") + " out to " + (isNum(mp.out_to_pct) ? pct(mp.out_to_pct, 0) : "10%")),
         isNum(g(mp, "as_of", "book_time_ms")) ? h(KV, { k: "book time" }, hmsms(mp.as_of.book_time_ms) + " UTC") : null)
         : h(Unavailable, { reason: (mp && mp.reason) || "stop map not in this snapshot", block: true }),
+      // The liquidity thinning's two sharpest-drop lines live here now (Kevin, Nov 10: one map instead of three tables);
+      // its per-band tables are behind the fold further down.
+      th && th.available !== false ? h("div", { className: "hd-thin-pair hd-smap-drops" },
+        h(ThinDrop, { d: g(th, "bids_below", "sharpest_drop"), side: "bid" }),
+        h(ThinDrop, { d: g(th, "asks_above", "sharpest_drop"), side: "ask" })) : null,
       h("div", { className: "hd-subhead" }, "Clusters"),
       st.clusters && st.clusters.length ? h("ol", { className: "hd-smap-clusters" }, st.clusters.map(function (c) {
         return h("li", { key: c.fires_on + ":" + c.k, title: bandTip(c, null) }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text);
@@ -1921,10 +1934,20 @@
         h(StopMapSide, { side: mp.sides.fall, th: th && th.bids_below, depthMax: depthMax, trigMax: trigMax, ranked: ranked }),
         h(StopMapSide, { side: mp.sides.rise, th: th && th.asks_above, depthMax: depthMax, trigMax: trigMax, ranked: ranked })) : null,
       ok ? h("div", { className: "hd-small hd-dim" }, "Bars: resting depth to the largest band on either side; triggers to the largest stated trigger notional; a hatched trigger bar is a lower bound (some orders in it report no size). Hover a row for its categories, largest order and depths.") : null,
-      h(Exclusions, { ex: st.exclusions }),
-      h(Census, { c: st.census }),
-      // The waiting stops rows (the former panel), behind a fold (Kevin, Nov 10): the map supersedes them.
-      st.rows ? h(Why, { className: "hd-smap-rowsfold", label: "waiting stops by band" }, h(StopsBody, { st: st })) : null,
+      // The accounted line stays visible; the exclusions' detail and the census sit behind one fold (Kevin, Nov 10).
+      (function () {
+        const acc = st.exclusions && st.exclusions.accounted;
+        return acc && isNum(acc.waiting_triggers) ? h("div", { className: cx("hd-small", acc.complete === false && "hd-tone-text-bad") },
+          h("b", null, "Accounted: "), intf(acc.waiting_triggers) + " waiting triggers = " + intf(acc.in_bands) + " in the bands + " + intf(acc.excluded_here) + " left out" + (acc.complete === false ? " (they differ)" : "")) : null;
+      })(),
+      h("div", { className: "hd-smap-folds" },
+        st.exclusions || st.census ? h(Why, { className: "hd-smap-fold", label: "exclusions and census" }, h(Exclusions, { ex: st.exclusions }), h(Census, { c: st.census })) : null,
+        th && th.available !== false ? h(Why, { className: "hd-smap-fold", label: "resting depth per band, $ per $1 of price" },
+          h("div", { className: "hd-thin-pair" },
+            h(ThinSide, { s: th.bids_below, side: "bid", maxV: thinMax(th) }),
+            h(ThinSide, { s: th.asks_above, side: "ask", maxV: thinMax(th) }))) : null,
+        // The waiting stops rows (the former panel), behind a fold (Kevin, Nov 10): the map supersedes them.
+        st.rows ? h(Why, { className: "hd-smap-fold", label: "waiting stops by band" }, h(StopsBody, { st: st })) : null),
       mp && mp.venue_check ? h("div", { className: "hd-small hd-venue-check" }, mp.venue_check) : null));
   }
 
@@ -2130,7 +2153,8 @@
     },
     gate ? null : h(FamNotes, { fams: v && v.families, names: ["flow"], pad: true }),
     tp ? h("div", { className: "hd-pad hd-pad-tight" }, h(TapeCoverage, { c: tp.coverage })) : null,
-    gate ? h("div", { className: "hd-pad" }, gate) : h(NodeTapeTable, { rows: tp.rows }));
+    gate ? h("div", { className: "hd-pad" }, gate) : h(NodeTapeTable, { rows: (tp.rows || []).slice(0, 15) }),
+    !gate && tp && (tp.rows || []).length > 15 ? h("div", { className: "hd-note" }, "The newest 15 of " + intf(tp.rows.length) + " executions in the snapshot.") : null);
   }
 
   // ---- liquidity thinning (step 18)
@@ -4692,11 +4716,14 @@
     const [market, setMarket] = useState(null);
     // Two pages since Nov 10 (Kevin: one long page floods the reader): Desk, the public reading of the market, and
     // Node, the engine's order-level products. The choice lives in the URL hash (#node) so a link keeps it.
+    // The host may rewrite the URL while it routes, so the choice is also kept in this browser's local storage.
     const [view, setView] = useState(function () {
-      try { return window.location.hash === "#node" ? "node" : "desk"; } catch (e) { return "desk"; }
+      try { if (window.location.hash === "#node") return "node"; } catch (e) { /* no location */ }
+      try { return window.localStorage.getItem("hyperliquid-desk.view") === "node" ? "node" : "desk"; } catch (e) { return "desk"; }
     });
     const chooseView = useCallback(function (v) {
       setView(v);
+      try { window.localStorage.setItem("hyperliquid-desk.view", v); } catch (e) { /* storage blocked */ }
       try { window.history.replaceState(null, "", v === "node" ? "#node" : window.location.pathname + window.location.search); } catch (e) { /* no history */ }
     }, []);
     const [resp, setResp] = useState(null);
@@ -4921,15 +4948,16 @@
       m && view === "node" ? h(Fragment, null,
         non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market, delay: nlive && nlive.delay })
           : h(NodeOffBanner, { ns: nstat, reason: nodeReason }),
-        h(SectionHead, { title: "Book", note: non ? "the node's order-level book" : "needs node mode" }),
-        non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n3" }, h(ThinningPanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n3" }, h(StopMapPanel, { v: nlive })) : null,
-        h(SectionHead, { title: "Flow", note: non ? "the order flow map from the node's fills, and the node tape" : "needs node mode" }),
+        // Order (Kevin, Nov 10, one map instead of three tables): order flow, liquidity and stops, the book, the tape, the heatmap.
+        h(SectionHead, { title: "Order flow", note: non ? "taker flow from the node's fills, by what each fill did to the taker's position" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-c" }, h(OrderFlowMapPanel, { v: nlive })) : null,
+        h(SectionHead, { title: "Liquidity and stops", note: non ? "resting depth and waiting triggers per band, the sharpest thinning, the largest resting orders" : "needs node mode" }),
+        non ? h("div", { className: "hd-row hd-row-n3" }, h(StopMapPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
+        h(SectionHead, { title: "Book", note: non ? "the node's order-level book, ten levels a side" : "needs node mode" }),
+        non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
+        h(SectionHead, { title: "Tape", note: non ? "the node's fills with flags, newest first" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-c" }, h(NodeTapePanel, { v: nlive })) : null,
-        // The heatmap last (Kevin, Nov 10).
         non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
         showReplay ? h(Fragment, null,
           h(SectionHead, { title: "Replay", note: "a recording played on its own clock, never current" }),
