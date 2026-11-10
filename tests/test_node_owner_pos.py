@@ -21,8 +21,8 @@ from decimal import Decimal
 
 from hl_desk.node import panels, serving
 from hl_desk.node.transport import handshake
-from hl_desk.node.triggers import (EST_COUNTED_NEARER, EST_FLAT, EST_MISSING, EST_NO_OWNER, EST_UPPER, EST_WRONG_SIDE,
-                                   Trigger, estimates)
+from hl_desk.node.triggers import (EST_COUNTED_NEARER, EST_FLAT, EST_MISSING, EST_NOT_YET, EST_NO_OWNER, EST_UPPER, EST_WRONG_SIDE,
+                                   Trigger, _cadd, _cbucket, estimates, fires_on)
 
 from node_helpers import FIX, NO_AGE, OPTS, client, hello_from, jsonable, read_recording, surfaces
 
@@ -214,7 +214,7 @@ def test_serving_time_aging_keeps_the_estimate_with_its_as_of():
     assert v["families"]["owner_pos"]["state"] == "LIVE" and v["stops"]["estimate"]["available"] is True
     aged = serving.aged_view(v, 1.5 * 10 ** 9)
     assert aged["families"]["owner_pos"]["state"] == "BEHIND" and aged["families"]["triggers"]["state"] == "BEHIND"
-    assert aged["stops"]["estimate"] == v["stops"]["estimate"] and aged["stops"]["freshness"] == "BEHIND"
+    assert aged["stops"]["estimate"] == dict(v["stops"]["estimate"], freshness="BEHIND") and aged["stops"]["freshness"] == "BEHIND"
     assert aged["stops"]["map"]["sides"]["fall"]["bands"][2]["estimate"] == v["stops"]["map"]["sides"]["fall"]["bands"][2]["estimate"]
 
 
@@ -236,7 +236,7 @@ def test_the_estimate_pass_is_cheap_and_cached(monkeypatch):
     c, h, msgs, now = _play(HAND)
     calls = []
     real = panels.estimates
-    monkeypatch.setattr(panels, "estimates", lambda orders, positions: calls.append(1) or real(orders, positions))
+    monkeypatch.setattr(panels, "estimates", lambda orders, positions, *a: calls.append(1) or real(orders, positions, *a))
     _view(c, now)
     _view(c, (now[0] + 1_000, now[1] + 10 ** 9))
     assert len(calls) == 1
@@ -321,3 +321,73 @@ def test_the_producers_recording_gives_real_estimates_beside_the_stated_clusters
     assert round(float(want), 2) == top["estimate"]["notional_usd"]       # the served figure is rounded to cents
     served = json.dumps(jsonable(v))
     assert '"positions"' not in served                           # nothing per account leaves the plugin
+
+
+# --- the independent review's findings (Nov 10 evening), each pinned ---------------------------------------------
+
+def test_the_outsized_flag_names_no_owner_and_no_size():
+    """A per-account position never leaves the plugin: the outsized flag carries the notional and the note only."""
+    L = "0x" + "a" * 40
+    g = _t(1, "A", "stop", "74000", "0", L, True)
+    b = _cbucket()
+    _cadd(b, g, {1: {"sz": Decimal("10"), "reason": None, "upper_bound": False}})
+    meta = panels.MAP_SIDES["fall"]
+    dband = {"lo": Decimal("73500"), "hi": Decimal("74000")}
+    row = panels._map_row("fall", meta, 2, b, dband, Decimal("1000"), Decimal("5000"), {"available": True, "as_of_ms": 1})
+    assert row["estimate"]["outsized"] == {"notional_usd": 740000.0, "note": row["estimate"]["outsized"]["note"]}
+    assert "user" not in row["estimate"]["outsized"] and "sz" not in row["estimate"]["outsized"]
+    assert "0x" not in json.dumps(row["estimate"])
+
+
+def test_the_streams_own_watermarks_bound_its_freshness():
+    """A silent position stream beside a live market reads BEHIND by its own last watermark's age; the market's
+    families stay LIVE. Before: the family's delay came from the market's watermarks."""
+    c, h, msgs, now = _play(HAND, cfg={"delayed_after_ms": 2_000, "stale_after_ms": 10 ** 12})
+    mf = c.markets[M]
+    last = msgs[-1][1]
+    seq, block, bt = mf.last_seq, mf.block, mf.block_time_ms
+    sess = last["session"]
+    for k in range(1, 4):                                      # the market goes on: fresh watermarks every second
+        seq += 1
+        bt2 = bt + 1_000 * k
+        c.on_line({"v": 2, "epoch": last["epoch"], "session": sess, "market": M, "seq": seq, "kind": "watermark", "block": block + k,
+                   "block_time_ms": bt2, "pub_ms": bt2 + 10, "body": {"through_seq": seq - 1}}, bt2 + 50, (len(msgs) + 1 + k) * 10 ** 9)
+    at = (bt + 3_100, (len(msgs) + 4) * 10 ** 9 + 100 * 10 ** 6)
+    assert c.family_status(M, "book", *at)["state"] == "LIVE" and c.family_status(M, "triggers", *at)["state"] == "LIVE"
+    st = c.family_status(M, "owner_pos", *at)
+    assert st["state"] == "BEHIND" and st["delay_ms"] > 2_000
+    assert panels.market_view(c, M, OPTS, *at)["stops"]["estimate"]["freshness"] == "BEHIND"
+
+
+def test_a_dropped_subscriber_discards_a_half_assembled_position_snapshot():
+    h, msgs = read_recording(HAND)
+    c = client(cfg=NO_AGE)
+    c.on_line(hello_from(h), msgs[0][0] - 1, 0)
+    first = next(m for _, m in msgs if m.get("market") == S and m["kind"] == "opos_snapshot")
+    part = dict(first, body=dict(first["body"], parts=2, positions=first["body"]["positions"][:1]))
+    c.on_line(part, msgs[0][0], 10 ** 9)
+    ps = c.markets[M].opos
+    assert ps.assembly is not None and ps.assembly.next_part == 2
+    c.on_line({"v": 2, "control": "dropped", "reason": "slow subscriber", "last_sent": {}}, msgs[0][0] + 1, 2 * 10 ** 9)
+    assert ps.assembly is None and ps.counters["snapshots_discarded"] == 1 and "dropped" in ps.fam.reason
+
+
+def test_an_owner_missing_between_the_markets_line_and_the_streams_is_not_a_defect():
+    """The market's trig_delta adding U5's whole-position order lands one line before the stream's set for U5: at that
+    moment the families stand at different blocks, so U5 reads "not in the position stream yet", not a feed defect;
+    once the set arrives the blocks agree and U5 is estimated."""
+    h, msgs = read_recording(HAND)
+    c = client(cfg=NO_AGE)
+    c.on_line(hello_from(h), msgs[0][0] - 1, 0)
+    idx = next(i for i, (_, m) in enumerate(msgs) if m.get("market") == S and m["kind"] == "opos_delta")
+    for i, (rx, m) in enumerate(msgs[:idx]):
+        c.on_line(m, rx, (i + 1) * 10 ** 9)
+    now = (msgs[idx - 1][0] + 100, (idx + 1) * 10 ** 9)
+    e = panels.market_view(c, M, OPTS, *now)["stops"]["estimate"]
+    assert e["same_block"] is False and e["defects"] == 0 and e["unknown"].get(EST_NOT_YET) == 1 and EST_MISSING not in e["unknown"]
+    assert "different blocks" in e["basis"]
+    for i, (rx, m) in enumerate(msgs[idx:], idx):
+        c.on_line(m, rx, (i + 1) * 10 ** 9)
+    now = (msgs[-1][0] + 100, (len(msgs) + 2) * 10 ** 9)
+    e = panels.market_view(c, M, OPTS, *now)["stops"]["estimate"]
+    assert e["same_block"] is True and e["defects"] == 0 and EST_NOT_YET not in e["unknown"] and e["estimated"] == 3

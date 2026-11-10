@@ -19,7 +19,7 @@ from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
 from .flow_map import FlowMapState, build as build_flow_map
 from .transport import source_label
-from .triggers import CENSUS_EXCLUSIONS, EST_COUNTED_NEARER, EST_MISSING, category, census, estimates
+from .triggers import CENSUS_EXCLUSIONS, EST_COUNTED_NEARER, EST_MISSING, EST_NOT_YET, category, census, estimates
 from .proto import dec, fmt, num
 from ..util import iso_ms, median
 
@@ -359,15 +359,18 @@ def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
     if not usable(ost) or ps.positions is None or mf.triggers is None:
         return None, base | {"reason": f"owner positions {ost['state']}: {ost.get('reason')}"}
     tf = mf.fam["triggers"]
-    key = (tf.last_change_seq, tf.since_seq, ps.fam.last_change_seq, ps.fam.since_seq)
+    tb, pb, tbt, pbt = mf.block, ps.block, mf.block_time_ms, ps.block_time_ms
+    same = tb == pb
+    # An owner missing from the stream is a feed defect only when both families stand at the same block; between a
+    # market's line and its stream's line of the same block it is the expected moment before the set arrives.
+    missing = EST_MISSING if same else EST_NOT_YET
+    key = (tf.last_change_seq, tf.since_seq, ps.fam.last_change_seq, ps.fam.since_seq, same)
     cache = getattr(mf, "_est_cache", None)
     if cache is None or cache[0] != key:
-        cache = mf._est_cache = (key, estimates(mf.triggers.orders, ps.positions))
+        cache = mf._est_cache = (key, estimates(mf.triggers.orders, ps.positions, missing))
     est = cache[1]
-    tb, pb, tbt, pbt = mf.block, ps.block, mf.block_time_ms, ps.block_time_ms
     times = [x for x in (tbt, pbt) if isinstance(x, int) and not isinstance(x, bool)]
     older = min(times) if times else None
-    same = tb == pb
     unknown: dict = {}
     for e in est.values():
         if e["sz"] is None:
@@ -666,7 +669,8 @@ def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal,
             "notional_usd": usd(e_not) if e_n else None, "sz": num(b["est_sz"]) if e_n else None, "orders": e_n,
             "upper_bound_orders": b["est_upper"], "counted_at_nearer": b["est_nearer"], "unknown_orders": unk,
             "unknown_reasons": dict(b["est_unknown"]), "owners": len(b["est_users"]), "as_of_ms": est_meta.get("as_of_ms"),
-            "outsized": ({"notional_usd": usd(lg_e[0]), "sz": num(lg_e[2]), "user": lg_e[1].user,
+            # the flag names no owner and no size (a per-account position never leaves the plugin): only the notional
+            "outsized": ({"notional_usd": usd(lg_e[0]),
                           "note": "one owner's estimated size is worth more than everything resting at and beyond this band; "
                                   "shown, and kept out of the stated-size outlier test"}
                          if lg_e is not None and beyond > 0 and lg_e[0] > beyond else None)}

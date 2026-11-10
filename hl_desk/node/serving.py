@@ -84,6 +84,10 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
             out[key] = dict(block, freshness=st, as_of_note=as_of_note(label, st))   # its own freshness is the full status
         else:
             out[key] = dict(block, freshness=st.get("state"), as_of_note=as_of_note(label, st))
+    est_block = (out.get("stops") or {}).get("estimate") if isinstance(out.get("stops"), dict) else None
+    if isinstance(est_block, dict) and isinstance(fams.get("owner_pos"), dict):
+        # The estimate's state follows the aged owner_pos family (its as-of time is already in the block).
+        out["stops"] = dict(out["stops"], estimate=dict(est_block, freshness=fams["owner_pos"].get("state")))
     bands = fams.get("bands") or {}
     if "stops" in out and not usable(bands) and usable(view["families"].get("bands")):
         st = out.get("stops")

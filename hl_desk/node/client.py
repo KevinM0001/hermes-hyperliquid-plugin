@@ -134,6 +134,7 @@ class PosStream:
         self.basis: str | None = None
         self.block: int | None = None
         self.block_time_ms: int | None = None
+        self.wm_hist: deque = deque()             # the stream's own timed watermarks: (receipt mono ns, receipt wall - block time)
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_applied": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "orphan_parts": 0, "deltas_unapplied": 0, "unknown_kinds": 0,
                          "sets": 0, "drops": 0}
@@ -142,6 +143,7 @@ class PosStream:
         self.fam.invalidate(reason)
         self.positions = None
         self.assembly = None
+        self.wm_hist.clear()                      # the stream's delay restarts at its next timed watermark
 
 
 class FeedClient:
@@ -350,12 +352,14 @@ class FeedClient:
                 if self.replay.get("state") == "ended":
                     for mf in self.markets.values():
                         self._discard_assembly(mf, "the replay ended inside a snapshot")
+                        self._discard_stream_assembly(mf.opos, "the replay ended inside a snapshot")
         elif c == "dropped":
             self.counters["dropped"] += 1
             self.connection = {"state": "dropped", "since_wall_ms": wall_ms,
                                "reason": f"dropped by the producer ({obj.get('reason')})"}
             for mf in self.markets.values():
                 self._discard_assembly(mf, "dropped as a slow subscriber")
+                self._discard_stream_assembly(mf.opos, "dropped as a slow subscriber")
         elif c == "error":
             self.counters["errors"] += 1
             self.connection = {"state": "refused", "since_wall_ms": wall_ms, "reason": str(obj.get("reason"))}
@@ -472,9 +476,15 @@ class FeedClient:
         f = ps.fam
         if f.valid:
             f.applied_through = seq
-        if kind == "watermark" and f.valid and isinstance(bt, int) and not isinstance(bt, bool):
-            f.wm_block, f.wm_block_time_ms = block, bt
-            f.wm_recv_wall_ms, f.wm_recv_mono_ns = wall_ms, mono_ns
+        if kind == "watermark" and isinstance(bt, int) and not isinstance(bt, bool):
+            # The stream's own delay history: its freshness is judged by its watermarks, not the market's.
+            ps.wm_hist.append((mono_ns, wall_ms - bt))
+            keep_ns = (self.cfg["delay_window_ms"] + 60_000) * 1_000_000
+            while len(ps.wm_hist) > 2 and ps.wm_hist[1][0] < mono_ns - keep_ns:
+                ps.wm_hist.popleft()
+            if f.valid:
+                f.wm_block, f.wm_block_time_ms = block, bt
+                f.wm_recv_wall_ms, f.wm_recv_mono_ns = wall_ms, mono_ns
 
     def _stream_snapshot_part(self, mf: MarketFeed, ps: PosStream, seq, body, block, bt, mono_ns) -> None:
         if isinstance(body.get("unavailable"), str):
@@ -905,12 +915,12 @@ class FeedClient:
         since_ms = (now_mono_ns - f.wm_recv_mono_ns) / 1e6
         out["watermark_age_ms"] = round(since_ms)
         out["source_age_ms"] = round((f.wm_recv_wall_ms - f.wm_block_time_ms) + since_ms)
-        d = self.delay(market, now_mono_ns)
+        d = self.delay(market, now_mono_ns, hist=mf.opos.wm_hist if fam == "owner_pos" else None)
         out["delay_ms"] = d["delay_ms"]
         state, reason = delay_state(d["delay_ms"], self.cfg)
         return out | {"state": state, "reason": reason}
 
-    def delay(self, market: str, now_mono_ns: int | None = None) -> dict:
+    def delay(self, market: str, now_mono_ns: int | None = None, hist=None) -> dict:
         """The node feed's delay for a market: the age of its latest watermark (receipt wall time minus block time,
         plus the time since receipt), averaged exactly over the last delay_window_ms (or since the first watermark,
         if that is shorter), and its current value. Heartbeats don't count: a silent feed's delay keeps growing."""
@@ -919,7 +929,7 @@ class FeedClient:
         win = self.cfg["delay_window_ms"]
         base = {"window_ms": win, "delayed_after_ms": self.cfg["delayed_after_ms"],
                 "stale_after_ms": self.cfg["stale_after_ms"]}
-        allh = list(mf.wm_hist) if mf is not None else []
+        allh = list(hist) if hist is not None else (list(mf.wm_hist) if mf is not None else [])
         if not allh:
             return base | {"delay_ms": None, "current_ms": None,
                            "reason": "no timed watermark from this source yet (since the start or the last gap)"}

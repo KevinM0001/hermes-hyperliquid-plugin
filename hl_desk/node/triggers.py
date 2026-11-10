@@ -225,12 +225,13 @@ def _cbucket() -> dict:
 EST_FLAT = "owner flat"
 EST_WRONG_SIDE = "wrong side: the order would add to the position, not close it"
 EST_MISSING = "owner missing from owner_pos (feed defect)"
+EST_NOT_YET = "owner not in the position stream yet (the two families stand at different blocks)"
 EST_NO_OWNER = "owner unknown"
 EST_COUNTED_NEARER = "same position, counted at its nearest trigger"
 EST_UPPER = "upper bound: stated orders on this position may fire first"
 
 
-def estimates(orders: dict, positions: dict) -> dict:
+def estimates(orders: dict, positions: dict, missing_reason: str = EST_MISSING) -> dict:
     """oid -> {"sz": Decimal | None, "reason": str | None, "upper_bound": bool} for every whole-position order: the
     size it would close if it fired now, from its owner's signed position (the Plugin session's rules, Nov 10).
     |pos| when the order's side closes the position (a sell, side A, for a long; a buy, side B, for a short), less
@@ -253,7 +254,7 @@ def estimates(orders: dict, positions: dict) -> dict:
             continue
         pos = positions.get(user)
         if pos is None or pos == 0 or not ((side == "A" and pos > 0) or (side == "B" and pos < 0)):
-            why = EST_MISSING if pos is None else (EST_FLAT if pos == 0 else EST_WRONG_SIDE)
+            why = missing_reason if pos is None else (EST_FLAT if pos == 0 else EST_WRONG_SIDE)
             for g in gs:
                 if g.position_tpsl:
                     out[g.oid] = {"sz": None, "reason": why, "upper_bound": False}
