@@ -18227,7 +18227,7 @@
   //   ladder's numbers; live and replay never share a panel, and the replay is never started by the tab.
 
   const NODE_FAMILIES = ["book", "triggers", "depth", "bands", "flow"];
-  const FAMILY_TONE = { LIVE: "ok", REPLAY: "replay", STALE: "warn", BEHIND: "warn", DELAYED: "warn", UNKNOWN: "info", INVALID: "bad" };
+  const FAMILY_TONE = { LIVE: "ok", REPLAY: "replay", STALE: "dim", BEHIND: "dim", DELAYED: "dim", UNKNOWN: "info", INVALID: "bad" };
   const FAMILY_LEGEND = [
     ["LIVE", "the node feed's delay (the latest watermark's age, 5 s average) is within its limit"],
     ["DELAYED", "the node feed's 5 s average delay is above the delayed limit (state BEHIND in the data)"],
@@ -18245,7 +18245,10 @@
 
   function famTone(s) { return FAMILY_TONE[s] || "dim"; }
   // BEHIND is shown as DELAYED: since Nov 8 it means the node feed's averaged delay is above the delayed limit.
-  function famLabel(s) { return s === "BEHIND" ? "DELAYED" : (s || "?"); }
+  // Late node data reads "delayed" quietly (Kevin, Nov 10): BEHIND and STALE are one word in a muted tone, and the
+  // delay itself is shown beside it where the family carries one (famDelay), counting up as the snapshot ages.
+  function famLabel(s) { return s === "BEHIND" || s === "STALE" ? "delayed" : (s || "?"); }
+  function famDelay(f) { return f && (f.state === "BEHIND" || f.state === "STALE") && isNum(f.delay_ms) ? " \u00b7 " + (f.delay_ms >= 60000 ? dur(f.delay_ms) : (f.delay_ms / 1000).toFixed(0) + " s") : ""; }
   function famOk(f) { return !!f && (f.state === "LIVE" || f.state === "REPLAY"); }
   // A view from a configured node source always names its provenance; the "no node feed" placeholder doesn't.
   function nodeOn(v) { return !!(v && v.provenance); }
@@ -18314,7 +18317,7 @@
     const f = props.f;
     if (!f) return h("span", { className: "hd-chip hd-tone-dim" }, props.name + ": not in snapshot");
     return h("span", { className: "hd-chip hd-tone-" + famTone(f.state), title: famTitle(props.name, f) },
-      h("span", { className: "hd-dot", "aria-hidden": "true" }), props.name + " \u00b7 " + famLabel(f.state));
+      h("span", { className: "hd-dot", "aria-hidden": "true" }), props.name + " \u00b7 " + famLabel(f.state) + famDelay(f));
   }
 
   function FamChips(props) {
@@ -18340,7 +18343,7 @@
     });
     return h("div", { className: cx("hd-fresh-notes", props.pad && "hd-pad hd-pad-tight") }, groups.map(function (gr) {
       return h("div", { key: gr.key, className: "hd-tone-text-" + famTone(gr.state) },
-        h("b", null, gr.names.join(", ") + " " + famLabel(gr.state) + ": "), gr.reason);
+        h("b", null, gr.names.join(", ") + " " + famLabel(gr.state) + famDelay(fams[gr.names[0]]) + ": "), gr.reason);
     }));
   }
 
