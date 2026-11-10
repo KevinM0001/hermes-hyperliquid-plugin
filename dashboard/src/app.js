@@ -1062,16 +1062,8 @@
           ? (cd && cd.state === "error" ? h(Unavailable, { reason: iv + " candles: " + cd.error, block: true })
             : (cd && cd.state === "ok" ? "The plugin has no " + iv + " candles for " + m.market + " yet." : "Loading " + iv + " candles from the plugin" + ELLIPSIS))
           : "No candles in this snapshot: no trades in the current coverage segment yet.") : null),
-    gaps.length ? h("div", { className: "hd-note hd-gapnote" }, h("b", null, "Gaps: "), gaps.map(function (gp, i) {
-      return h("span", { key: i }, (i ? "; " : "") + hmsms(gp.start) + "\u2013" + hmsms(gp.end) + " UTC (" + (gp.reason || "no reason given") + ")");
-    }), ". No candle, regime or window spans a gap.") : null,
-    chart.note && !fromRoute ? h("div", { className: "hd-note" }, chart.note + ".") : null,
-    rd && rd.history ? h("div", { className: "hd-note" }, h("b", null, "History: "),
-      (isNum(rd.history.count) ? intf(rd.history.count) + " " + iv + " candles" : "candles") +
-      (isNum(rd.history.first_ms) ? " from " + dateTime(rd.history.first_ms) : "") +
-      (isNum(rd.history.last_closed_ms) ? " \u00b7 last closed " + hms(rd.history.last_closed_ms) + " UTC" : "") +
-      (isNum(rd.history.fetched_at_ms) ? " \u00b7 fetched " + hms(rd.history.fetched_at_ms) + " UTC" : "") +
-      (rd.history.note ? " \u00b7 " + rd.history.note : "") + ".") : null,
+    // No footnotes under the chart since Nov 10 (Kevin): gaps are marked on the candles themselves and listed in the
+    // snapshot; the candle history's count and fetch time live in the data, not on the card.
     h("div", { className: "hd-attribution" }, ATTRIBUTION,
       h("a", { href: TV_URL, target: "_blank", rel: "noopener noreferrer" }, TV_URL)));
   }
