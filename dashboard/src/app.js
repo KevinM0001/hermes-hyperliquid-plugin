@@ -4694,16 +4694,18 @@
           "; showing snapshot " + resp.snapshot_id + " (received " + localClock(lastOkAt) + " local)" : null
       }),
       m ? h(Glance, { m: m, resp: resp, onOpen: openWallet }) : null,
+      // Kevin, Nov 10: the chart and ladder, then Hermes, directly under the top card; Watch and the Flow Deck follow.
+      // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
+      m ? h("div", { className: "hd-row hd-row-m" },
+        h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(FlowNotes, { resp: resp, m: m })),
+        h(Ladder, { m: m, nodeOn: non })) : null,
+      m ? h(HermesPanel, { resp: resp, m: m }) : null,
       // Kevin's swing-context rows for every market (Watch), then the selected market's Flow Deck card.
       m ? h(WatchStrip, { resp: resp, onMarket: chooseMarket }) : null,
       // The selected market's Flow Deck card under the summary (Kevin, Nov 9), where the unavailable list and the
       // delay bar were; the delay counter is in the node strip (node mode), the aging note on the header's snapshot line.
       m ? h(DeckHero, { resp: resp }) : null,
-      m ? h(HermesPanel, { resp: resp, m: m }) : null,
-      // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
-      m ? h("div", { className: "hd-row hd-row-m" },
-        h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(FlowNotes, { resp: resp, m: m })),
-        h(Ladder, { m: m, nodeOn: non })) : null,
+
       m ? (non ? h(NodeStrip, { ns: nstat, v: nlive, market: m.market, delay: nlive && nlive.delay })
         : h(NodeOffBanner, { ns: nstat, reason: nodeReason })) : null,
       m ? h(Fragment, null,
