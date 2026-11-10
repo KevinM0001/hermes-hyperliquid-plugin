@@ -17863,13 +17863,90 @@
     return Number(v).toLocaleString("en-US", { minimumFractionDigits: min, maximumFractionDigits: Math.max(min, dec) });
   }
 
+  // The chart's liquidity overlay (Kevin, Nov 10): the node's stop clusters and resting depth drawn as translucent
+  // bands over the candles, in the plugin's own 0.5 % bands out to 10 %. Each band's opacity follows its notional
+  // against the largest band of its kind on screen; the hover text quotes the served figures with their lower-bound
+  // wording. Nothing is computed here beyond the mapping of prices to pixels.
+  function overlayBands(node, ov) {
+    const out = [];
+    if (!node || node.available === false) return out;
+    const stops = node.stops;
+    const mp = stops && stops.map;
+    if (ov.stops && mp && mp.available !== false && mp.sides) {
+      let mx = 0;
+      ["fall", "rise"].forEach(function (k) { ((mp.sides[k] || {}).bands || []).forEach(function (b) { if (isNum(b.notional_usd) && b.notional_usd > mx) mx = b.notional_usd; }); });
+      ["fall", "rise"].forEach(function (k) {
+        ((mp.sides[k] || {}).bands || []).forEach(function (b) {
+          if (!b.band || !isNum(b.notional_usd) || b.notional_usd <= 0) return;
+          const w = b.walk || {};
+          out.push({
+            key: "s:" + k + ":" + b.k, kind: "stops", lo: Number(b.band.lo), hi: Number(b.band.hi), share: mx > 0 ? b.notional_usd / mx : 0,
+            text: (k === "fall" ? "Sell-side triggers " : "Buy-side triggers ") + dpx(b.band.near_px) + " to " + dpx(b.band.far_px) +
+              " (" + (k === "fall" ? "-" : "+") + qp(b.band.from_pct, 1) + " to " + (k === "fall" ? "-" : "+") + qp(b.band.to_pct, 1) + "%): " +
+              (b.lower_bound ? "at least " : "") + usd(b.notional_usd) + " across " + intf(b.orders) + " orders from " + intf(b.accounts) + " accounts" +
+              (b.unknown_size_orders ? "; " + intf(b.unknown_size_orders) + " report no size, so this is understated" : "") +
+              (isNum(w.ratio_pct) ? "; " + (w.lower_bound ? "at least " : "") + walkPct(w.ratio_pct) + " of the resting " + (k === "fall" ? "bids" : "asks") + " at and beyond it" : "")
+          });
+        });
+      });
+    }
+    const th = node.thinning;
+    if (ov.depth && th && th.available !== false) {
+      let mx = 0;
+      [th.bids_below, th.asks_above].forEach(function (sd) { ((sd && sd.bands) || []).forEach(function (b) { if (isNum(b.depth_usd) && b.depth_usd > mx) mx = b.depth_usd; }); });
+      [["bid", th.bids_below], ["ask", th.asks_above]].forEach(function (pair) {
+        (((pair[1]) && pair[1].bands) || []).forEach(function (b, i) {
+          if (!isNum(b.depth_usd) || b.depth_usd <= 0) return;
+          out.push({
+            key: "d:" + pair[0] + ":" + i, kind: pair[0] === "bid" ? "depthbid" : "depthask", lo: Number(b.lo), hi: Number(b.hi), share: mx > 0 ? b.depth_usd / mx : 0,
+            text: (pair[0] === "bid" ? "Resting bids " : "Resting asks ") + dpx(b.lo) + " to " + dpx(b.hi) + " (" + qp(b.from_pct, 1) + " to " + qp(b.to_pct, 1) + "% " +
+              (pair[0] === "bid" ? "below" : "above") + "): " + usd(b.depth_usd) + (isNum(b.orders) ? " across " + intf(b.orders) + " orders" : "") +
+              (isNum(b.cumulative_from_price_usd) ? "; " + usd(b.cumulative_from_price_usd) + " from the price out to here" : "")
+          });
+        });
+      });
+    }
+    return out.filter(function (b) { return isNum(b.lo) && isNum(b.hi) && b.hi > b.lo; });
+  }
+
   function PriceChart(props) {
     const m = props.m;
+    const node = props.node || null;
+    const nodeOn = !!(node && node.available !== false);
     const chart = g(m, "chart") || {};
     const boxRef = useRef(null);
     const api = useRef(null);
     const [failure, setFailure] = useState(LWC ? null : "Lightweight Charts isn't loaded (dist/index.js should carry it)");
     const [hover, setHover] = useState(null);
+    // The liquidity overlay: which layers are on, the bands' pixel rectangles, and the band under the pointer.
+    const [ov, setOv] = useState({ stops: false, depth: false });
+    const [rects, setRects] = useState([]);
+    const [bandTip, setBandTip] = useState(null);
+    const bandsRef = useRef([]);
+    const rectSig = useRef("");
+    const syncOverlay = useCallback(function () {
+      const a = api.current;
+      if (!a) return;
+      const list = bandsRef.current;
+      const out = [];
+      let axisW = 0;
+      try { axisW = a.chart.priceScale("right").width(); } catch (e) { axisW = 0; }
+      list.forEach(function (b) {
+        const y1 = a.series.priceToCoordinate(b.hi);
+        const y2 = a.series.priceToCoordinate(b.lo);
+        if (y1 === null || y2 === null || !isNum(y1) || !isNum(y2)) return;
+        out.push({ key: b.key, kind: b.kind, share: b.share, top: Math.min(y1, y2), height: Math.max(1, Math.abs(y2 - y1)), right: axisW });
+      });
+      const sig = out.map(function (r) { return r.key + ":" + Math.round(r.top) + ":" + Math.round(r.height) + ":" + r.right; }).join("|");
+      if (sig !== rectSig.current) { rectSig.current = sig; setRects(out); }
+    }, []);
+    useEffect(function () {
+      bandsRef.current = (ov.stops || ov.depth) ? overlayBands(node, ov) : [];
+      syncOverlay();
+      if (!ov.stops && !ov.depth) { setBandTip(null); return undefined; }
+      const id = setInterval(syncOverlay, 500);        // the price scale moves with new data and with a user's zoom
+      return function () { clearInterval(id); };
+    }, [node, ov, syncOverlay]);
     const [iv, setIv] = useState("15m");       // 15 minutes by default (Kevin, Nov 10): 15 s loads too little to read
     const [cd, setCd] = useState(null);   // the /candles route's latest answer for iv (null for 15s)
     const fromRoute = iv !== "15s";
@@ -17939,6 +18016,16 @@
           const cand = k && isNum(k.time) ? a2.byTime[k.time] || null : null;
           const t = cand ? cand.time : null;
           if (t !== a2.hoverT) { a2.hoverT = t; setHover(cand); }
+          // The overlay band under the pointer, by the price at the pointer's height (the bands take no pointer events,
+          // so the chart's own crosshair, zoom and scroll keep working).
+          const bands = bandsRef.current;
+          if (param && param.point && bands.length) {
+            const pr = a2.series.coordinateToPrice(param.point.y);
+            const hit = isNum(pr) ? bands.filter(function (b) { return pr >= b.lo && pr <= b.hi; }) : [];
+            setBandTip(hit.length ? { x: param.point.x, y: param.point.y, texts: hit.map(function (b) { return b.text; }) } : null);
+          } else {
+            setBandTip(null);
+          }
         });
       } catch (e) {
         setFailure("chart could not be created: " + errText(e));
@@ -18041,10 +18128,26 @@
       label: "Price chart",
       // No WHY fold on the chart (Kevin, Nov 10).
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades + l2Book + ctx" }),
-      status: h(Fragment, null, ivBar, routeChip)
+      status: h(Fragment, null, ivBar, routeChip,
+        h("div", { className: "hd-toggle hd-ovbar", role: "group", "aria-label": "Liquidity overlay" },
+          [["stops", "Stop clusters"], ["depth", "Resting depth"]].map(function (x) {
+            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && "hd-btn-on"), disabled: !nodeOn,
+              title: nodeOn ? (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node (lower bounds where sizes are unknown)" : "resting depth per 0.5% band, from the node's full book") : "needs node mode",
+              "aria-pressed": ov[x[0]] ? "true" : "false", onClick: function () { setOv(Object.assign({}, ov, { [x[0]]: !ov[x[0]] })); } }, x[1]);
+          })))
     },
     h("div", { className: "hd-chart-wrap" },
       h("div", { className: "hd-chart", ref: boxRef, role: "img", "aria-label": "Candlestick chart of " + m.market }),
+      rects.length ? h("div", { className: "hd-chart-ov", "aria-hidden": "true" }, rects.map(function (r) {
+        // A profile, not a fill: resting depth as bars from the right edge, stop clusters as bars from the left edge,
+        // each bar's width by its notional against the largest of its kind; the candles stay clear between them.
+        const w = (5 + 25 * Math.min(1, Math.max(0, r.share))).toFixed(1) + "%";
+        const st = { top: r.top + "px", height: r.height + "px", width: w };
+        if (r.kind === "stops") st.left = "0px"; else st.right = r.right + "px";
+        return h("div", { key: r.key, className: "hd-chart-band hd-band-" + r.kind, style: st });
+      })) : null,
+      bandTip ? h("div", { className: "hd-band-tip", style: { left: Math.min(bandTip.x + 14, 420) + "px", top: Math.max(4, bandTip.y - 10) + "px" } },
+        bandTip.texts.map(function (t, i) { return h("div", { key: i }, t); })) : null,
       !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market) }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" },
@@ -18788,6 +18891,52 @@
       // The waiting stops rows (the former panel), behind a fold (Kevin, Nov 10): the map supersedes them.
       st.rows ? h(Why, { className: "hd-smap-rowsfold", label: "waiting stops by band" }, h(StopsBody, { st: st })) : null,
       mp && mp.venue_check ? h("div", { className: "hd-small hd-venue-check" }, mp.venue_check) : null));
+  }
+
+  // ---- What the node sees (Kevin, Nov 10): the plugin's own sentences from the node data, on the Desk page where a
+  // trader reads first: the order flow map's readings, the largest stop cluster on each side, the largest resting
+  // orders near the price with who placed them and when, and the Watch verdict. Every line is served text or served
+  // fields in words; nothing is computed here. Only with a node feed.
+  function NodeBrief(props) {
+    const v = props.node;
+    const r = props.resp;
+    const name = props.m.market;
+    if (!v || v.available === false) return null;
+    const fm = v.flow_map;
+    const readings = fm && fm.available !== false && Array.isArray(fm.readings) ? fm.readings : [];
+    const st = v.stops;
+    const clusters = st && Array.isArray(st.clusters) ? st.clusters.filter(function (c) { return c.rank === 1; }) : [];
+    const wl = v.walls;
+    const bt = wl && isNum(wl.book_time_ms) ? wl.book_time_ms : (v.book && isNum(v.book.book_time_ms) ? v.book.book_time_ms : null);
+    const walls = wl && Array.isArray(wl.current) ? wl.current.slice().sort(function (a, b) { return (b.placed_ms || 0) - (a.placed_ms || 0); }).slice(0, 3) : [];
+    const w = g(r, "deck", name, "watch");
+    const verdict = w && w.verdict;
+    const lines = [];
+    readings.forEach(function (x, i) { lines.push({ k: i === 0 ? "order flow, 2 h" : "", t: x.text }); });
+    clusters.forEach(function (c, i) { lines.push({ k: i === 0 ? "stop clusters" : "", t: c.text }); });
+    walls.forEach(function (o, i) {
+      lines.push({ k: i === 0 ? "large resting orders" : "", el: h(Fragment, null,
+        h("span", { className: o.side === "B" ? "hd-bid" : "hd-ask" }, bookSide(o.side)), " " + (isNum(o.sz) ? sz(o.sz) : "?") + " (" + (isNum(o.notional_usd) ? usd(o.notional_usd) : "?") + ") at ",
+        h(DPx, { v: o.px }), " by ", h(Addr, { address: o.user }),
+        isNum(o.placed_ms) ? ", placed " + (isNum(bt) ? dur(bt - o.placed_ms) + " ago" : "at " + hms(o.placed_ms) + "Z") : "",
+        isNum(o.absorbed_sz) || isNum(o.pulled_sz) ? h(Fragment, null, " \u00b7 absorbed ", zsz(o.absorbed_sz), ", pulled ", zsz(o.pulled_sz)) : null) });
+    });
+    if (verdict) lines.push({ k: "watch", el: h(Fragment, null, h("span", { className: "hd-chip hd-tone-" + (WATCH_TONE[verdict.tone] || "dim") }, verdict.label), " " + verdict.text) });
+    if (!lines.length) return null;
+    return h(Panel, {
+      id: "node-brief", className: "hd-p-brief", title: "What the node sees \u00b7 " + name, label: "What the node sees",
+      why: h("p", null, "Sentences the plugin writes from the node's own order-level data: the order flow map's readings over the last two hours " +
+        "(each fill placed by what it did to the taker's position), the largest waiting-trigger cluster on each side with its lower-bound " +
+        "wording, the largest single resting orders near the price with who placed them and when (public addresses; the plugin never guesses " +
+        "who owns one), and the Watch verdict by Kevin's rule. Descriptions, not signals, and nothing here is a liquidation level. The full " +
+        "panels are on the Node page."),
+      badges: h(NodeProv, { v: v, what: "fills + triggers + book" })
+    },
+    h("div", { className: "hd-brief" }, lines.map(function (ln, i) {
+      return h("div", { key: i, className: "hd-brief-row" }, h("span", { className: "hd-brief-k" }, ln.k), h("span", { className: "hd-brief-t" }, ln.el || ln.t));
+    })),
+    h("div", { className: "hd-notes-foot" }, "Descriptions, not signals. ",
+      props.onNode ? h("button", { type: "button", className: "hd-btn hd-btn-xs hd-btn-quiet", onClick: props.onNode }, "open the Node page") : null));
   }
 
   // ---- Order Flow Map (node fills; Kevin's order-flow map report): eight clock-aligned 15-minute buckets of taker
@@ -21715,11 +21864,12 @@
       // ---- Desk: the public reading of the market
       m && view === "desk" ? h(Fragment, null,
         h(Glance, { m: m, resp: resp, onOpen: openWallet }),
+        non ? h(NodeBrief, { node: nlive, resp: resp, m: m, onNode: function () { chooseView("node"); } }) : null,
         // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
         // A two-column grid (Kevin, Nov 10): the chart and the ladder share the first row and one height; Ask Hermes
         // and the Flow notes sit under the chart, the public Flow panel ("who is aggressive") under the ladder.
         h("div", { className: "hd-row hd-row-m" },
-          h(PriceChart, { m: m }), h(Ladder, { m: m, nodeOn: non }),
+          h(PriceChart, { m: m, node: non ? nlive : null }), h(Ladder, { m: m, nodeOn: non }),
           h(HermesPanel, { resp: resp, m: m }), h(FlowPanel, { m: m }),
           h(FlowNotes, { resp: resp, m: m })),
         h(WatchStrip, { resp: resp, onMarket: chooseMarket }),
