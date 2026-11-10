@@ -21672,9 +21672,9 @@
         h(Glance, { m: m, resp: resp, onOpen: openWallet }),
         // The market row: the chart on the left, the aggregated ladder beside it (Kevin, Nov 9).
         h("div", { className: "hd-row hd-row-m" },
-          h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(FlowNotes, { resp: resp, m: m })),
+          // Ask Hermes directly under the chart (Kevin, Nov 10), then the Flow notes, in the chart's column.
+          h("div", { className: "hd-col-main" }, h(PriceChart, { m: m }), h(HermesPanel, { resp: resp, m: m }), h(FlowNotes, { resp: resp, m: m })),
           h(Ladder, { m: m, nodeOn: non })),
-        h(HermesPanel, { resp: resp, m: m }),
         h(WatchStrip, { resp: resp, onMarket: chooseMarket }),
         h(DeckHero, { resp: resp }),
         h(SectionHead, { title: "Flow", note: "who is aggressive, the Flow Deck's regimes and alerts, and the tape" }),
