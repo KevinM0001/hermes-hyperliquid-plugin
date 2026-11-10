@@ -72,8 +72,8 @@ def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000,
     """Feed exec bodies to the plugin's live node client as protocol v2 lines (each followed by a watermark), next
     to a complete public Flow Deck card and a wallet panel listing W over the same span. After every line, read
     the card's activity buckets (hl_alerts) and the wallet panel's node split (hl_wallets), through chat and the
-    tab. Until the fills are processed through the window's end both stay unavailable with a reason, never
-    partial. drop: the index of a body whose execs line is lost (a real sequence gap). Returns the final reads."""
+    tab. Until the fills are processed through the window's end both stay unavailable with a reason or (Kevin,
+    Nov 10) show the last covered window of the same length, labelled; never a partial present window. drop: the index of a body whose execs line is lost (a real sequence gap). Returns the final reads."""
     from helpers import NS, open_segment, trade
     plugin = surfaces([SP], **(desk_cfg or {}))
     ms = plugin.desk.markets[SP]
@@ -114,9 +114,18 @@ def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000,
         if history is not None:
             history.append((m, plugin.last))
         if m is not lines[-1]:
-            assert card["available"] is False and card["reason"], card
-            assert all(card[k]["value"] is None and card[k]["reason"] for k in ("new_long", "cover", "new_short", "exit"))
-            assert wal["available"] is False and wal["reason"], wal
+            # Until the fills reach the window's end: unavailable with a reason, or (Kevin, Nov 10) the last window of
+            # the same length the fills do cover, shifted and labelled as such; never a partial present window.
+            if card["available"]:
+                assert card["window"]["shifted_by_ms"] > 0 and card["window"]["requested"] and card["as_of_note"]
+                assert card["window"]["end_ms"] == m["block_time_ms"]
+            else:
+                assert card["reason"], card
+                assert all(card[k]["value"] is None and card[k]["reason"] for k in ("new_long", "cover", "new_short", "exit"))
+            if wal["available"]:
+                assert wal["window"]["shifted_by_ms"] > 0 and wal["as_of_note"]
+            else:
+                assert wal["reason"], wal
         assert card["stream"] == "node fills" and card["provenance"]["source"] == "test-socket"
         assert card["freshness"]["family"] == "flow"
     return plugin, reads[-1]

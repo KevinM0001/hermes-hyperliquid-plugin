@@ -105,7 +105,7 @@ def aged_fill_result(res: dict | None, age_ms: float) -> dict | None:
     if st is res["freshness"] or usable(st):
         return dict(res, freshness=st)
     why = f"node fills {st.get('state')}: {st.get('reason')}"
-    keep = {k: res[k] for k in ("stream", "window_label", "provenance", "coverage", "window") if k in res}
+    keep = {k: res[k] for k in ("stream", "window_label", "as_of_note", "provenance", "coverage", "window") if k in res}
     out = keep | {"available": False, "reason": why, "freshness": st}
     for k in BUCKET_KEYS:                               # the bucket metrics a card or burst shows, withheld
         if k in res:

@@ -81,6 +81,6 @@ and replay are separate partitions and are never mixed. A view is:
 | `liquidation_events` | liquidation bursts (also merged into `deck.events`) |
 
 Each market's view also has `bursts` (the node burst rule's status, as in `deck.bursts`). Flow Deck cards carry `activity_buckets` from node fills (`stream: "node fills"`), node burst events `node_activity` (their side only, from exactly the burst's executions), and
-wallet panels `node_activity_split`; each is unavailable with a reason when the node fills don't cover its window. Top level:
+wallet panels `node_activity_split`; each is unavailable with a reason when the node fills don't cover its window, except (Kevin, Nov 10) when the only gap is that the node hasn't processed through the window's end: the card's buckets and the wallet split then cover the last window of the same length the fills do cover, with `window` (the covered bounds, `requested`, `shifted_by_ms`), `window_label` and `as_of_note`; a burst's own window is never shifted. Top level:
 `node_status` (live connection, configured settings, replay status).
 

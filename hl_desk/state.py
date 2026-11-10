@@ -392,7 +392,7 @@ class MarketState:
                 "stream": "node fills", "available": False, "reason": why} | flow_meta(client, self.market, *now)
         # The card's window is [start, end]; node fills are counted over the same block-time span.
         b = deck_buckets(client, self.market, card["window_start_ms"] - 1, card["window_end_ms"], *now)
-        return _bucket_metrics(b, "the card's 90 s window") | {"hook": base.get("hook")}
+        return _bucket_metrics(b, b.get("window_label") or "the card's 90 s window") | {"hook": base.get("hook")}
 
     def _node_events(self, events: list, client, live_view: dict | None, now=(None, None)) -> list:
         """The Flow Deck's events. In node mode, bursts come only from node fills (the burst calibration's rule,
@@ -573,7 +573,7 @@ def _bucket_metrics(b: dict, window_label: str, only: str | None = None) -> dict
     own side's aggressive notional from the same node fills (one population)."""
     keys = {"buying": ("new_long", "cover"), "selling": ("new_short", "exit")}
     out = {"stream": "node fills", "window_label": window_label, "provenance": b.get("provenance"),
-           "freshness": b.get("freshness"), "coverage": b.get("coverage")}
+           "freshness": b.get("freshness"), "coverage": b.get("coverage"), "as_of_note": b.get("as_of_note")}
     if not b.get("available"):
         reason = b.get("reason") or "node fills unavailable"
         for side, ks in keys.items():

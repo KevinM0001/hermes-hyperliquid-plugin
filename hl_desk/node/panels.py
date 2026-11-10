@@ -55,6 +55,21 @@ def late_fields(label: str, st: dict) -> dict:
     return {"freshness": st.get("state"), "as_of_note": as_of_note(label, st)}
 
 
+def shift_fields(win: dict, prefix: str, of: str) -> dict:
+    """What a result built over a shifted node-fill window says about it (Kevin, Nov 10): an 'as of' note with the
+    block time the fills reach and the shift, and a label naming the window it covers; both None when the window
+    served is the one asked for (NodeFlow.covered_window), so a current window reads as the present."""
+    n = win.get("shifted_by_ms") or 0
+    if not n:
+        return {"as_of_note": None, "window_label": None}
+    length = win["end_ms"] - win["start_ms"]
+    span = f"{round(length / 60_000)} min" if length >= 120_000 else f"{round(length / 1000)} s"
+    clock = lambda ms: iso_ms(ms)[11:19]
+    return {"as_of_note": f"as of the node's fills at {iso_ms(win['end_ms'])}, {n / 1000:.1f} s behind {of}",
+            "window_label": f"{prefix}the node's last {span}, {clock(win['start_ms'])} to {clock(win['end_ms'])} UTC, "
+                            f"{n / 1000:.0f} s behind {of}"}
+
+
 ZERO = Decimal(0)
 LADDER_LEVELS = 20
 CHANGE_WINDOW_MS = 10_000
@@ -976,7 +991,7 @@ def deck_buckets(client, market: str, start_ms: int, end_ms: int, now_wall_ms=No
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:
         return meta | {"available": False, "reason": f"node fills {st['state']}: {st.get('reason')}"}
-    execs, cov = mf.flow.window(start_ms, end_ms)
+    execs, cov, win = mf.flow.covered_window(start_ms, end_ms)
     if not cov["covers"]:
         return meta | {"available": False, "reason": cov["reason"], "coverage": cov}
     a = activity_buckets(execs)
@@ -986,8 +1001,8 @@ def deck_buckets(client, market: str, start_ms: int, end_ms: int, now_wall_ms=No
         # single taker) could belong to either side: no split of this window is exact, so none is shown.
         return meta | {"available": False, "coverage": cov, "unclassified_usd": num(unknown_side),
                        "reason": "unclassified notional in this window: " + a["buying"]["reason"].split(": ", 1)[-1]}
-    return meta | {"available": True, "stream": "node fills", "window": {"start_ms": start_ms, "end_ms": end_ms},
-                   "coverage": cov, **_jsonable_activity(a)}
+    return meta | {"available": True, "stream": "node fills", "window": win, "coverage": cov,
+                   **shift_fields(win, "", "the card's window"), **_jsonable_activity(a)}
 
 
 def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int, now_wall_ms=None, now_mono_ns=None) -> dict:
@@ -1000,11 +1015,15 @@ def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int, now_w
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:
         return meta | {"available": False, "reason": f"node fills {st['state']}: {st.get('reason')}"}
-    execs, cov = mf.flow.window(start_ms, end_ms)
+    execs, cov, win = mf.flow.covered_window(start_ms, end_ms)
     if not cov["covers"]:
         return meta | {"available": False, "reason": cov["reason"]}
-    return meta | {"available": True, "stream": "node fills", "window": {"start_exclusive_ms": start_ms, "end_ms": end_ms},
-                   "coverage": cov, "wallets": _jsonable(wallet_splits(execs, set(users)))}
+    req = win["requested"]
+    window = {"start_exclusive_ms": win["start_ms"], "end_ms": win["end_ms"], "shifted_by_ms": win["shifted_by_ms"],
+              "requested": {"start_exclusive_ms": req["start_ms"], "end_ms": req["end_ms"]} if req else None}
+    return meta | {"available": True, "stream": "node fills", "window": window, "coverage": cov,
+                   **shift_fields(win, "these wallets' node split over ", "the panel's window"),
+                   "wallets": _jsonable(wallet_splits(execs, set(users)))}
 
 
 def _jsonable_activity(a: dict) -> dict:
