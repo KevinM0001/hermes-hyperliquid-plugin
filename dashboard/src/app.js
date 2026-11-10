@@ -204,8 +204,11 @@
         "needs node mode",
         props.compact || !rest ? null : h("span", { className: "hd-na-why" }, ": " + rest));
     }
+    // A value that only needs time ("window incomplete: needs 90 s after the segment start ...") is warming up,
+    // not unavailable: the first 90 s after a start say so in one word (Kevin, Nov 10), the reason in the tooltip.
+    const word = reason.indexOf("window incomplete") === 0 ? "warming up" : "unavailable";
     return h("span", { className: cx("hd-na", props.block && "hd-na-block"), title: reason },
-      "unavailable",
+      word,
       props.compact ? null : h("span", { className: "hd-na-why" }, ": " + reason));
   }
 
