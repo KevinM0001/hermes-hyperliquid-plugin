@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 
 from . import schema
 
-DEFAULT_MARKETS = ["BTC", "HYPE", "xyz:SP500", "xyz:XYZ100"]
+# The followed markets by default (Kevin, Nov 10: ETH and SOL added, the two most traded perps after BTC); any
+# perp the venue lists can be followed through the markets setting.
+DEFAULT_MARKETS = ["BTC", "ETH", "SOL", "HYPE", "xyz:SP500", "xyz:XYZ100"]
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 INFO_URL = "https://api.hyperliquid.xyz/info"
 
