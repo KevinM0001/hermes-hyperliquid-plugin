@@ -602,6 +602,9 @@
           props.aged || props.pollNote ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
             title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
             (props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "") + (props.aged ? "Snapshot on screen: " + props.aged : "")) : null,
+          g(m, "clock", "clock_skew_suspected") ? h("span", { className: "hd-prov-item hd-tone-text-warn", role: "status",
+            title: "clock skew suspected (" + g(m, "clock", "offset_ms") + " ms)" + (g(m, "clock", "note") ? ": " + g(m, "clock", "note") : "") },
+            "clock skew suspected (" + g(m, "clock", "offset_ms") + " ms)") : null,
           m ? h("span", { className: "hd-prov-item hd-prov-grow", title: prov.source }, "source: " + prov.source) : null),
         h("div", { className: "hd-prov hd-prov-2" },
           m ? h("span", { className: "hd-prov-item" }, "dex: " + (g(m, "meta", "dex_label") || prov.dex || "not in snapshot")) : null,
@@ -652,8 +655,6 @@
     const lc = card.last_confirmed;
     const tw = n.top_wallet;
     const net = valueOf(fv.net);
-    const unavailable = g(m, "unavailable") || [];
-    const clock = g(m, "clock") || {};
     const cardWhy = live ? null : reasonOf(card.regime);
     // The confirmed (latched) regime, and this tick's classification only when it differs from it.
     const sameNow = !!(conf && live && conf.state === live.state);
@@ -670,33 +671,8 @@
         pending ? "pending " + pending.state + " " + pending.ticks + " of " + (pending.of || 2) + " ticks" : null].filter(Boolean).join(" \u00b7 ")
       : (lc ? "last confirmed " + lc.regime + " since " + hms(lc.since) + "Z" + (lc.note ? " \u00b7 " + lc.note : "")
         : "90 s window, a tick every " + (card.tick_s || 15) + " s");
-    // What is unavailable and why: every non-fresh field with its reason, the card when it has none, and a clock
-    // warning, written out in full behind the "not fresh" fold at the foot of the card (Kevin, Nov 9: no row of its own).
-    const whys = unavailable.map(function (u) {
-      return { key: u.field, tone: toneOfStatus(u.status), field: u.field + " " + String(u.status).replace("_", " "), why: u.reason };
-    });
-    if (cardWhy) whys.push({ key: "regime", tone: "warn", field: "regime", why: cardWhy });
-    // Context values shown marked unverified (schema 1.3.0) are named here, so the change of promise is on screen.
-    const ctxAll = g(m, "context") || {};
-    const shownUnv = Object.keys(ctxAll).filter(function (k) {
-      const v = ctxAll[k];
-      return !!(v && typeof v === "object" && v.value !== null && v.value !== undefined && v.status === "unverified");
-    });
-    if (shownUnv.length) {
-      whys.push({ key: "shown-unverified", tone: "warn", field: "shown unverified",
-        why: shownUnv.join(", ") + ": " + (reasonOf(ctxAll[shownUnv[0]]) || "no source timestamp; shown with the receipt age") });
-    }
-    if (clock.clock_skew_suspected) {
-      whys.push({ key: "clock", tone: "warn", field: "clock", why: "clock skew suspected (" + clock.offset_ms + " ms)" + (clock.note ? ": " + clock.note : "") });
-    }
-    function whyList(full) {
-      return h("ul", { className: cx("hd-tile-list", full && "hd-tile-list-full") }, whys.map(function (w) {
-        return h("li", { key: w.key, title: full ? undefined : w.why },
-          h("span", { className: "hd-sdot hd-tone-" + w.tone, "aria-hidden": "true" }),
-          h("span", { className: "hd-tl-field" }, w.field + ":"),
-          h("span", { className: "hd-tl-why" }, w.why));
-      }));
-    }
+    // The card lists no "not fresh" fold (Kevin, Nov 10: not relevant to users): each value carries its own reason,
+    // the labels' dots carry the status colour, and a clock-skew warning sits in the header's status line.
     return h("section", { className: "hd-card hd-glance", "aria-label": "At a glance", "data-panel": "glance" },
       h("div", { className: "hd-tiles" },
         h(Tile, {
@@ -730,10 +706,7 @@
           sub: tw && tw.value ? (tw.share_label || "share label not in snapshot") + " \u00b7 net aggr " +
             (isNum(tw.net_aggressive_usd) ? usdSigned(tw.net_aggressive_usd) : "unavailable") : "the card's 90 s window"
         })),
-      h("div", { className: "hd-ctx" }, h(HeaderStats, { m: m }),
-        // The fold's row is always there, so the card's height doesn't change as fields go fresh and back.
-        whys.length ? h(Why, { label: "not fresh: " + whys.length }, whyList(true))
-          : h("div", { className: "hd-why hd-why-none", title: "every field on this card is fresh right now" }, h("span", { className: "hd-why-static" }, "all fresh"))));
+      h("div", { className: "hd-ctx" }, h(HeaderStats, { m: m })));
   }
 
   // Public mode: one banner says what node mode adds and how to turn it on, in place of a note on every panel.
