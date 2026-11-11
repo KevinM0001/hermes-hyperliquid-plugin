@@ -1488,12 +1488,20 @@
     return null;
   }
 
-  // ---- node status strip (connection, producer, families, configuration)
+  // ---- node status strip (connection and delay)
 
   // The node feed's delay for the market on screen: the age of the latest watermark averaged over the last 5 s, from
   // each snapshot (about once a second), with the state it gives. In the node strip since Nov 9 (Kevin; from Nov 8 it
   // was a row of its own under the summary); the aging and failed-poll notes it carried are on the header's snapshot
   // line now. A delay never blanks the page: the next snapshot replaces the one on screen in place.
+  // Since Kevin's review of Nov 11 the strip shows the figure and its chip only: what the delay is (the watermark's
+  // age, the averaging window, the delayed and stale limits, as served) sits on the chip's hover and, in words, in
+  // the page's bottom legend; nothing is written out on the card.
+  function delayNote(d) {
+    const s = function (ms) { return isNum(ms) ? (ms / 1000) + " s" : "?"; };
+    return "the age of the node feed's latest watermark (the feed's marker that everything through block N at time T has been sent), averaged over " +
+      s(d.window_ms) + "; shown as delayed above " + s(d.delayed_after_ms) + " and stale above " + s(d.stale_after_ms);
+  }
   function DelayBar(props) {
     const d = props.delay;
     const live = props.nodeOn && d && d.available;
@@ -1505,12 +1513,9 @@
     return h("div", { className: "hd-delaybar", role: "status", "aria-live": "off" },
       h("span", { className: "hd-delaybar-k" }, "Node feed delay"),
       h("b", { className: cx("hd-delaybar-v", live && "hd-tone-text-" + famTone(d.state)) }, value),
-      h("span", { className: "hd-delaybar-state" }, live ? h("span", { className: "hd-chip hd-tone-" + famTone(d.state), title: d.reason || "" },
+      h("span", { className: "hd-delaybar-state" }, live ? h("span", { className: "hd-chip hd-tone-" + famTone(d.state), title: [d.reason, delayNote(d)].filter(Boolean).join("\n") },
         h("span", { className: "hd-dot", "aria-hidden": "true" }), label) : null),
-      h("span", { className: "hd-delaybar-sub hd-dim" }, live
-        ? "latest watermark's age, " + (d.window_ms / 1000) + " s average \u00b7 now " + (d.current_ms / 1000).toFixed(1) +
-          " s \u00b7 shown as delayed above " + (d.delayed_after_ms / 1000) + " s"
-        : why),
+      live ? null : h("span", { className: "hd-delaybar-sub hd-dim" }, why),
       h("span", { className: cx("hd-delaybar-note", (props.aged || props.pollNote) && "hd-tone-text-warn"),
         title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
         props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "",
@@ -1520,16 +1525,13 @@
   function NodeStrip(props) {
     const ns = props.ns;
     const v = props.v;
-    const cfg = ns ? ns.configured : null;
     const live = ns ? ns.live : null;
     const rep = ns ? ns.replay : null;
     const conn = (live && live.connection) || {};
     const cstate = conn.state || "state not in snapshot";
-    // Never a local path on screen (the Nov 9 audit): the feed setting and the recording are named by kind and file name.
-    const cfgLine = h("span", { className: "hd-prov-item hd-dim" },
-      cfg ? "configured: node_feed " + (cfg.node_feed ? srcLabel(cfg.node_feed) : "not set") + " \u00b7 node_replay_file " +
-        (cfg.node_replay_file ? baseName(cfg.node_replay_file) : "not set") + " \u00b7 key " + (cfg.key || "not stated")
-        : "configured: not in this snapshot");
+    // Kevin's review of Nov 11: the card keeps the connection (state, since, source; never a local path, the Nov 9
+    // audit) and the delay. The configured settings, the producer epoch and the session stay in the data and the
+    // tools; the families' chips and notes are on each node panel, beside its title.
     return h("section", { className: "hd-card hd-nodestrip", "aria-label": "Node feed status", "data-panel": "node-status" },
       h("div", { className: "hd-nodestrip-line" },
         h(Badge, { kind: "node", title: "l4-livefeed v2 node feed: order-level book, waiting triggers and fills" }, "NODE FEED"),
@@ -1539,20 +1541,10 @@
           conn.reason ? h("span", { className: cx("hd-nodestrip-why", "hd-tone-text-" + (CONN_TONE[cstate] || "warn")) }, conn.reason) : null,
           isNum(conn.since_wall_ms) ? h("span", { className: "hd-prov-item" }, "since " + hms(conn.since_wall_ms) + " UTC") : null,
           isNum(conn.retry_in_s) ? h("span", { className: "hd-prov-item" }, "retry in " + conn.retry_in_s + " s") : null,
-          h("span", { className: "hd-prov-item" }, "source " + (live.source ? srcLabel(live.source) : "not in snapshot")),
-          h("span", { className: "hd-prov-item" }, "producer epoch " + (live.epoch !== null && live.epoch !== undefined ? live.epoch : "none yet")),
-          live.session ? h("span", { className: "hd-prov-item", title: live.session }, "session " + shortId(live.session)) : null)
-          : h(Unavailable, { reason: (v && !nodeOn(v) && v.reason) || (ns ? NO_NODE : "needs node mode: the node status isn't in this snapshot") }),
-        h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
-        cfgLine),
+          h("span", { className: "hd-prov-item" }, "source " + (live.source ? srcLabel(live.source) : "not in snapshot")))
+          : h(Unavailable, { reason: (v && !nodeOn(v) && v.reason) || (ns ? NO_NODE : "needs node mode: the node status isn't in this snapshot") })),
       // The node feed's delay (the latest watermark's age, 5 s average): in this strip since Nov 9, no longer a bar of its own.
       h(DelayBar, { delay: props.delay, nodeOn: true, conn: cstate }),
-      live && nodeOn(v) ? h("div", { className: "hd-nodestrip-line" },
-        h("span", { className: "hd-dim" }, props.market + " families"),
-        h(FamChips, { fams: v.families }),
-        g(v, "book", "valid") === false ? h("span", { className: "hd-chip hd-tone-bad", title: g(v, "book", "reason") }, "book INVALID") : null)
-        : null,
-      live && nodeOn(v) ? h(FamNotes, { fams: v.families }) : null,
       live && v && v.available === false ? h("div", { className: "hd-small" }, h(Unavailable, { reason: props.market + ": " + v.reason })) : null,
       rep ? h("div", { className: "hd-nodestrip-line hd-small" },
         h(ModeBadge, { mode: "REPLAY" }),
@@ -4864,7 +4856,8 @@
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "mode-replay" }, "REPLAY"), "recorded data played back (public replay mode, or the Node replay area); never current"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "mode-synthetic" }, "SYNTHETIC"), "constructed test data, not market data"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "NODE"), "from the node feed (l4-livefeed v2): order-level book, waiting trigger orders and fills; one banner at the top says when no node feed is configured (setting node_feed)"),
-        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "HEATMAP"), "resting bid and ask notional per price bin over 15 min, sampled from the node's full book (node mode)"))),
+        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "HEATMAP"), "resting bid and ask notional per price bin over 15 min, sampled from the node's full book (node mode)"),
+        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "NODE FEED DELAY"), "the age of the node feed's latest watermark (the feed's marker that everything through block N at time T has been sent), averaged over 5 s; shown as delayed above 10 s and stale above 30 s, counting up on screen as the snapshot ages"))),
       h("div", { className: "hd-legend" },
         h("span", { className: "hd-dim" }, "Freshness"),
         FRESHNESS_LEGEND.map(function (x) {
