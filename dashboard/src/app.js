@@ -318,9 +318,22 @@
     }
   }
 
+  // A card's fold (Kevin, Nov 11): one toggle for every card that folds, a bordered chip reading COLLAPSE or EXPAND
+  // at the right of the card head beside the provenance badges, rendered by the card frame so every card places it
+  // the same way. The card decides what its folded state shows; the choice is kept per card in this browser's local
+  // storage (useFold).
+  function FoldButton(props) {
+    const open = props.open === true;
+    return h("button", {
+      type: "button", className: "hd-fold-btn", onClick: props.onToggle, "aria-expanded": open,
+      title: open ? "fold this card to its first line" : "show the whole card"
+    }, open ? "COLLAPSE" : "EXPAND");
+  }
+
   function Panel(props) {
+    const folds = typeof props.onToggle === "function";
     return h("section", {
-      className: cx("hd-card", props.className),
+      className: cx("hd-card", props.className, folds && (props.open === true ? "hd-open" : "hd-folded")),
       "aria-label": props.label || props.title,
       "data-panel": props.id,
       "data-node-hook": props.nodeHook
@@ -330,7 +343,9 @@
         h("h2", null, props.title),
         props.why ? h(Why, null, props.why) : null,
         props.sub ? h("p", null, props.sub) : null),
-      props.badges ? h("div", { className: "hd-badges" }, props.badges) : null),
+      props.badges || folds ? h("div", { className: "hd-badges" },
+        folds ? h(FoldButton, { open: props.open, onToggle: props.onToggle }) : null,
+        props.badges || null) : null),
     props.status ? h("div", { className: "hd-card-status" }, props.status) : null,
     h("div", { className: cx("hd-card-body", props.flush && "hd-flush") }, h(PanelBoundary, { id: props.id }, props.children)));
   }
@@ -2164,7 +2179,7 @@
       lines.push({ k: "node feed", el: h("span", { className: "hd-dim" }, "nothing to show right now: " + why) });
     }
     // Folded (Kevin, Nov 10): the one line a trader scans, the Watch verdict (else the first line), with the feed's
-    // delay after it; "expand" in the head shows the whole brief.
+    // delay after it; EXPAND in the head shows the whole brief.
     const open = props.open === true;
     let shown = lines;
     if (!open) {
@@ -2180,10 +2195,8 @@
         "wording, the largest single resting orders near the price with who placed them and when (public addresses; the plugin never guesses " +
         "who owns one), and the Watch verdict. Descriptions, not signals, and nothing here is a liquidation level. The full " +
         "panels are on the Node page."),
-      badges: h(Fragment, null,
-        props.onToggle ? h("button", { type: "button", className: "hd-btn hd-btn-xs hd-btn-quiet", onClick: props.onToggle, "aria-expanded": open },
-          open ? "collapse" : "expand") : null,
-        h(NodeProv, { v: v, what: "fills + triggers + book" }))
+      badges: h(NodeProv, { v: v, what: "fills + triggers + book" }),
+      open: open, onToggle: props.onToggle
     },
     h("div", { className: "hd-brief" }, shown.map(function (ln, i) {
       return h("div", { key: i, className: "hd-brief-row" }, h("span", { className: "hd-brief-k" }, ln.k), h("span", { className: "hd-brief-t" }, ln.el || ln.t));
@@ -3078,44 +3091,75 @@
         (cvd.resets_at_gap ? "; it resets at every gap." : ".")));
   }
 
+  // The figures at the top of "Who is aggressive" (Kevin, Nov 11): two rows that share their columns, net (the
+  // largest, coloured by its sign) with volume and trades beside it, then the buy and sell aggressor notionals.
+  // Folded, the first row only. A withheld figure says "unavailable" in its cell with the reason in its tooltip, and
+  // the reasons are written out once under the grid, each with the figures it covers.
+  const FLOW_ROWS = [
+    [["net", "net"], ["volume", "volume"], ["trade_count", "trades"]],
+    [["buy_aggressive_notional", "buy aggressor"], ["sell_aggressive_notional", "sell aggressor"]]
+  ];
+  const FLOW_FMT = { net: usdSigned, trade_count: intf };
+  function FlowFigures(props) {
+    const v = props.v || {};
+    const net = valueOf(v.net);
+    const cells = [];
+    const reasons = [];
+    (props.open ? FLOW_ROWS : FLOW_ROWS.slice(0, 1)).forEach(function (row) {
+      row.forEach(function (x) {
+        const key = x[0];
+        if (valueOf(v[key]) === null) {
+          const why = reasonOf(v[key]);
+          const same = reasons.filter(function (r) { return r.reason === why; })[0];
+          if (same) same.labels.push(x[1]); else reasons.push({ reason: why, labels: [x[1]] });
+        }
+        cells.push(h("div", { key: key, className: cx("hd-flow-cell", key === "net" && "hd-flow-net", key === "sell_aggressive_notional" && "hd-flow-cell-wide") },
+          h("span", { className: "hd-flow-label" }, x[1]),
+          h(V, { m: v[key], fmt: FLOW_FMT[key] || usd, compact: true, className: key === "net" && net !== null ? (net >= 0 ? "hd-bid" : "hd-ask") : null })));
+      });
+    });
+    return h(Fragment, null,
+      h("div", { className: "hd-flow-top" }, cells),
+      reasons.length ? h("div", { className: "hd-note hd-flow-why" }, reasons.map(function (r, i) {
+        return h("div", { key: i }, r.labels.join(", ") + ": " + r.reason);
+      })) : null);
+  }
+
   function FlowPanel(props) {
     const m = props.m;
     const fl = g(m, "flow") || {};
     const v = fl.values || {};
     const w = fl.window || {};
     const lp = fl.large_prints || {};
-    const net = valueOf(v.net);
+    // Folded (Kevin, Nov 11): the first row of figures only; the window, the CVD and the large prints need EXPAND.
+    const open = props.open !== false;
     return h(Panel, {
       id: "flow", className: "hd-p-flow", title: "Who is aggressive",
       why: h("p", null, "Aggressive flow: buys minus sells that crossed the spread, by the documented aggressor side, each trade counted once, over the observed window."),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades" }),
-      status: h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" })
+      status: h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
+      open: open, onToggle: props.onToggle
     },
-    h("div", { className: "hd-flow-top" },
-      h("span", { className: "hd-flow-net" },
-        h(V, { m: v.net, fmt: usdSigned, className: net === null ? null : (net >= 0 ? "hd-bid" : "hd-ask") }), " net"),
-      h("span", null, "buy aggressor ", h(V, { m: v.buy_aggressive_notional, fmt: usd })),
-      h("span", null, "sell aggressor ", h(V, { m: v.sell_aggressive_notional, fmt: usd })),
-      h("span", null, "volume ", h(V, { m: v.volume, fmt: usd })),
-      h("span", null, "trades ", h(V, { m: v.trade_count, fmt: intf }))),
-    h("div", { className: "hd-window" },
-      w.reason ? h(Unavailable, { reason: w.reason })
-        : h(Fragment, null, "window (", hmsms(w.start), ", ", hmsms(w.end), "] UTC \u00b7 ",
-          isNum(w.length_s) ? secs(w.length_s) : "length not in snapshot", w.since ? " \u00b7 since " + w.since : "")),
-    h(CvdChart, { cvd: fl.cvd }),
-    h("div", { className: "hd-lp" },
-      h("div", null, h("b", null, "Large prints"), " \u2265 ", isNum(lp.threshold_usd) ? usd(lp.threshold_usd) : "threshold not in snapshot",
-        ": ", isNum(lp.count) ? intf(lp.count) : ("count unavailable" + (lp.reason ? ": " + lp.reason : "")),
-        isNum(lp.count) && (lp.prints || []).length && lp.count > Math.min(8, lp.prints.length)
-          ? h("span", { className: "hd-dim" }, " \u00b7 " + listCount("latest", Math.min(8, lp.prints.length), "listed", lp.count)) : null,
-        lp.note ? h("span", { className: "hd-dim" }, " \u00b7 " + lp.note) : null),
-      (lp.prints || []).length ? h("ul", { className: "hd-lp-list" }, lp.prints.slice(0, 8).map(function (t, i) {
-        return h("li", { key: t.tid || i },
-          h("span", { className: "hd-num" }, hmsms(t.time)), " ",
-          h("b", { className: t.side === "B" ? "hd-bid" : "hd-ask" }, t.side === "B" ? "Buy" : "Sell"), " ",
-          h("span", { className: "hd-num" }, isNum(t.notional_usd) ? usd(t.notional_usd) : missing()), " @ ",
-          h("span", { className: "hd-num" }, isNum(t.px) ? px(t.px) : missing()));
-      })) : null));
+    h(FlowFigures, { v: v, open: open }),
+    open ? h(Fragment, null,
+      h("div", { className: "hd-window" },
+        w.reason ? h(Unavailable, { reason: w.reason })
+          : h(Fragment, null, "window (", hmsms(w.start), ", ", hmsms(w.end), "] UTC \u00b7 ",
+            isNum(w.length_s) ? secs(w.length_s) : "length not in snapshot", w.since ? " \u00b7 since " + w.since : "")),
+      h(CvdChart, { cvd: fl.cvd }),
+      h("div", { className: "hd-lp" },
+        h("div", null, h("b", null, "Large prints"), " \u2265 ", isNum(lp.threshold_usd) ? usd(lp.threshold_usd) : "threshold not in snapshot",
+          ": ", isNum(lp.count) ? intf(lp.count) : ("count unavailable" + (lp.reason ? ": " + lp.reason : "")),
+          isNum(lp.count) && (lp.prints || []).length && lp.count > Math.min(8, lp.prints.length)
+            ? h("span", { className: "hd-dim" }, " \u00b7 " + listCount("latest", Math.min(8, lp.prints.length), "listed", lp.count)) : null,
+          lp.note ? h("span", { className: "hd-dim" }, " \u00b7 " + lp.note) : null),
+        (lp.prints || []).length ? h("ul", { className: "hd-lp-list" }, lp.prints.slice(0, 8).map(function (t, i) {
+          return h("li", { key: t.tid || i },
+            h("span", { className: "hd-num" }, hmsms(t.time)), " ",
+            h("b", { className: t.side === "B" ? "hd-bid" : "hd-ask" }, t.side === "B" ? "Buy" : "Sell"), " ",
+            h("span", { className: "hd-num" }, isNum(t.notional_usd) ? usd(t.notional_usd) : missing()), " @ ",
+            h("span", { className: "hd-num" }, isNum(t.px) ? px(t.px) : missing()));
+        })) : null)) : null);
   }
 
   // ------------------------------------------------------------------ observed depth ("Book pressure")
@@ -3599,19 +3643,22 @@
     const events = [];
     names.forEach(function (n) { (deck[n].events || []).forEach(function (e) { events.push(e); }); });
     events.sort(function (a, b) { return (b.at_ms || 0) - (a.at_ms || 0); });
+    // Folded (Kevin, Nov 11): the newest event only (or the empty line); the counts, the burst rules and the list need EXPAND.
+    const open = props.open !== false;
     return h(Panel, {
       id: "deck", className: "hd-p-deck", title: "Alerts",
       label: "Alerts",
       why: h("p", null, "Each market's regime over a 90 s window, ported from hl_deck; regime changes and burst alerts below. In node mode, burst alerts come from node fills, ranked against Nov 3 to 7, and liquidation alerts are added. The agent can explain any card or event (hl_alerts): a card's ask button copies a ready question and opens the Chat page."),
-      badges: h(Prov, { mode: r.mode, source: g(deck, names[0], "provenance", "source"), what: "trades" })
+      badges: h(Prov, { mode: r.mode, source: g(deck, names[0], "provenance", "source"), what: "trades" }),
+      open: open, onToggle: props.onToggle
     },
     // The other markets' cards are gone (Kevin, Nov 10): the Watch fold covers the other markets; this panel is the events.
     h("div", { className: "hd-events" },
-      h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
+      open ? h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
         (events.length > 40 ? listCount("newest", 40, "events", events.length, "in this snapshot") : intf(events.length) + " events, newest first") +
-        " \u00b7 the snapshot carries up to 20 per market \u00b7 no regime or burst spans a gap \u00b7 UTC")),
-      h("div", { className: "hd-dim hd-small" }, "Burst rule: " + names.map(function (n) { return n + " " + burstRuleText(deck[n].bursts); }).join(" \u00b7 ")),
-      events.length ? h("ul", null, events.slice(0, 40).map(function (e, i) {
+        " \u00b7 the snapshot carries up to 20 per market \u00b7 no regime or burst spans a gap \u00b7 UTC")) : null,
+      open ? h("div", { className: "hd-dim hd-small" }, "Burst rule: " + names.map(function (n) { return n + " " + burstRuleText(deck[n].bursts); }).join(" \u00b7 ")) : null,
+      events.length ? h("ul", null, events.slice(0, open ? 40 : 1).map(function (e, i) {
         return h(EventRow, { key: e.type + ":" + e.market + ":" + e.at_ms + ":" + (e.side || "") + ":" + i, e: e, nodeSrc: nodeSrc });
       })) : h("div", { className: "hd-empty" }, "No events in the current coverage yet.")));
   }
@@ -3718,6 +3765,10 @@
               : (isNum(dd.times_thinner) ? num(dd.times_thinner, 2, 2) + "\u00d7 thinner than the band before, in $ per $1 of price" : "ratio not in snapshot")) });
       });
     }
+    // Folded (Kevin, Nov 11): the newest note only (a state line when there is no event note), or the empty line.
+    const open = props.open !== false;
+    const stateShown = open ? state : (shown.length ? [] : state.slice(0, 1));
+    const noteShown = open ? shown : shown.slice(0, 1);
     return h(Panel, {
       id: "flow-notes", className: "hd-p-notes", title: "Flow notes \u00b7 " + name,
       label: "Flow notes for " + name,
@@ -3729,11 +3780,12 @@
         "none of it is a forecast. 'ask' copies a question about that line for Hermes and opens the chat."),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "deck events + trades" }),
       status: h(Fragment, null, h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
-        notes.length ? h("span", { className: "hd-dim" }, listCount("newest", shown.length, "notes", notes.length, "in this snapshot")) : null)
+        notes.length ? h("span", { className: "hd-dim" }, listCount("newest", noteShown.length, "notes", notes.length, "in this snapshot")) : null),
+      open: open, onToggle: props.onToggle
     },
     state.length || shown.length ? h(Fragment, null,
       h("ul", { className: "hd-notes" },
-        state.map(function (n) {
+        stateShown.map(function (n) {
           return h("li", { key: n.key, className: "hd-note-row hd-note-state" },
             h("span", { className: "hd-num hd-note-t" }, "now"),
             h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
@@ -3741,7 +3793,7 @@
             r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
               " reading: " + n.text + " Use the hyperliquid commentary skill." }) : null);
         }),
-        shown.map(function (n) {
+        noteShown.map(function (n) {
           return h("li", { key: n.key, className: "hd-note-row" },
             h("span", { className: "hd-num hd-note-t" }, hms(n.t) + " UTC"),
             h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
@@ -3749,8 +3801,8 @@
             r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
               " event at " + hms(n.t) + " UTC: " + n.text + " Use the hyperliquid commentary skill." }) : null);
         })),
-      h("div", { className: "hd-note hd-notes-foot" }, "Descriptions, not signals: regimes and bursts are heuristic classifications of window numbers; " +
-        "they establish no cause and predict nothing. The depth and flow lines are the node book and node fills as of this snapshot."))
+      open ? h("div", { className: "hd-note hd-notes-foot" }, "Descriptions, not signals: regimes and bursts are heuristic classifications of window numbers; " +
+        "they establish no cause and predict nothing. The depth and flow lines are the node book and node fills as of this snapshot.") : null)
       : h("div", { className: "hd-empty" }, "No regime change, burst or large print for " + name + " in the current coverage yet" +
         (nl ? "; the node state lines appear once the node book and fills are usable." : ".")));
   }
@@ -4925,6 +4977,30 @@
 
   // ------------------------------------------------------------------ app
 
+  // <pure:foldOpen> Whether a folding card starts open: this browser's stored choice ("open" or "closed") wins;
+  // anything else, including no choice yet, gives the card's own default.
+  function foldOpen(stored, defaultOpen) {
+    return stored === "open" ? true : (stored === "closed" ? false : defaultOpen === true);
+  }
+  // </pure:foldOpen>
+
+  // A card's open/closed choice, kept in this browser's local storage under `key` (guarded: a blocked storage
+  // leaves the default and the toggle still works for the page's life).
+  function useFold(key, defaultOpen) {
+    const [open, setOpen] = useState(function () {
+      let stored = null;
+      try { stored = window.localStorage.getItem(key); } catch (e) { /* storage blocked */ }
+      return foldOpen(stored, defaultOpen);
+    });
+    const toggle = useCallback(function () {
+      setOpen(function (o) {
+        try { window.localStorage.setItem(key, o ? "closed" : "open"); } catch (e) { /* storage blocked */ }
+        return !o;
+      });
+    }, [key]);
+    return [open, toggle];
+  }
+
   function AppInner() {
     const [market, setMarket] = useState(null);
     // Two pages since Nov 10 (Kevin: one long page floods the reader): Desk, the public reading of the market, and
@@ -4940,27 +5016,13 @@
       try { window.history.replaceState(null, "", v === "node" ? "#node" : window.location.pathname + window.location.search); } catch (e) { /* no history */ }
     }, []);
     // "What the node sees" folds to its one-line verdict so the chart below stays in view (Kevin, Nov 10); folded
-    // unless this browser opened it, and the choice is kept here.
-    const [briefOpen, setBriefOpen] = useState(function () {
-      try { return window.localStorage.getItem("hyperliquid-desk.brief") === "open"; } catch (e) { return false; }
-    });
-    const toggleBrief = useCallback(function () {
-      setBriefOpen(function (o) {
-        try { window.localStorage.setItem("hyperliquid-desk.brief", o ? "closed" : "open"); } catch (e) { /* storage blocked */ }
-        return !o;
-      });
-    }, []);
-    // The liquidity heatmap folds to its head and status row (Kevin, Nov 11); open unless this browser folded it,
-    // and the choice is kept here.
-    const [heatOpen, setHeatOpen] = useState(function () {
-      try { return window.localStorage.getItem("hyperliquid-desk.heatmap") !== "closed"; } catch (e) { return true; }
-    });
-    const toggleHeat = useCallback(function () {
-      setHeatOpen(function (o) {
-        try { window.localStorage.setItem("hyperliquid-desk.heatmap", o ? "closed" : "open"); } catch (e) { /* storage blocked */ }
-        return !o;
-      });
-    }, []);
+    // unless this browser opened it. Who is aggressive, Flow notes and Alerts fold the same way (Kevin, Nov 11) and
+    // start open, as does the liquidity heatmap on the Node page. Each choice is kept in this browser's local storage.
+    const [briefOpen, toggleBrief] = useFold("hyperliquid-desk.brief", false);
+    const [flowOpen, toggleFlow] = useFold("hyperliquid-desk.fold.flow", true);
+    const [notesOpen, toggleNotes] = useFold("hyperliquid-desk.fold.notes", true);
+    const [alertsOpen, toggleAlerts] = useFold("hyperliquid-desk.fold.alerts", true);
+    const [heatOpen, toggleHeat] = useFold("hyperliquid-desk.heatmap", true);
     const [resp, setResp] = useState(null);
     const [noSnap, setNoSnap] = useState(null);
     const [gap, setGap] = useState(null);      // the route's "no current snapshot" answer while a snapshot stays on screen
@@ -5169,13 +5231,13 @@
         // and the Flow notes sit under the chart, the public Flow panel ("who is aggressive") under the ladder.
         h("div", { className: "hd-row hd-row-m" },
           h(PriceChart, { m: m, node: non ? nlive : null }), h(Ladder, { m: m, nodeOn: non }),
-          h(HermesPanel, { resp: resp, m: m }), h(FlowPanel, { m: m }),
-          h(FlowNotes, { resp: resp, m: m })),
+          h(HermesPanel, { resp: resp, m: m }), h(FlowPanel, { m: m, open: flowOpen, onToggle: toggleFlow }),
+          h(FlowNotes, { resp: resp, m: m, open: notesOpen, onToggle: toggleNotes })),
         h(WatchStrip, { resp: resp, onMarket: chooseMarket }),
         h(DeckHero, { resp: resp }),
         h(SectionHead, { title: "Alerts", note: non ? "regime changes, bursts and liquidation alerts, newest first" : "regime changes and bursts, newest first; then the public tape" }),
         h("div", { className: "hd-row hd-row-b" },
-          h(DeckPanel, { resp: resp })),
+          h(DeckPanel, { resp: resp, open: alertsOpen, onToggle: toggleAlerts })),
         // The public tape only without a node feed (Kevin, Nov 10): the node tape supersedes it on the Node page.
         !non ? h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })) : null,
         h(SectionHead, { title: "Wallets", note: "the public addresses behind the volume" }),
