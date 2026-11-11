@@ -1322,7 +1322,7 @@
       "side_convention": "the wallet's own side",
       "window": "the wallets panel's window, in node fills",
       "reset_rule": "as node.activity_buckets",
-      "completeness_rule": "a zero denominator gives an unavailable percentage; a missing effect, role or side makes the split unavailable with the unclassified notional"
+      "completeness_rule": "a zero denominator gives no percentage (null, with pct_reason saying nothing was bought or sold in that split to divide; the side's notional is served as 0 and this is not missing data); a missing effect, role or side makes the split unavailable with the unclassified notional"
     },
     "node.liquidation": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",

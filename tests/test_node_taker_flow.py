@@ -114,7 +114,7 @@ def test_recorded_minutes_equal_an_independent_count_and_every_interval_sums_the
         assert cov["end_ms"] == last_bt and cov["coverage_s"] == round((last_bt - first_bt) / 1000, 1) == 119.9
         assert cov["complete"] is False and cov["start_ms"] == min(times)
         kept = FILLS_RETENTION_MS if iv == "15s" else RETENTION_MS
-        kept_from = last_bt - kept
+        kept_from = last_bt - kept if iv == "15s" else (last_bt - kept) // M * M      # the ring's cut is minute-aligned
         assert tf["retention"] == {"kept_from_ms": kept_from, "through_ms": last_bt, "minutes_kept": kept // M,
                                    "note": tf["retention"]["note"]}
         # the holes: the candles asked for before what is kept, then the span before the feed was observed

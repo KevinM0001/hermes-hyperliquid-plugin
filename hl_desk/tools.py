@@ -371,7 +371,7 @@ def account_freshness(state: dict | None, assessed_ms: int | None, bound: tuple)
     if age < -(b + 1.0):
         return out | {"status": "unverified", "reason": "the answer's time is ahead of local time beyond the clock bound"}
     if age - b > ACCOUNT_SOURCE_MAX_AGE_S:
-        return out | {"status": "delayed", "reason": f"the answer's time was {age:.1f} s old when served (limit {ACCOUNT_SOURCE_MAX_AGE_S} s)"}
+        return out | {"status": "delayed", "reason": f"the answer's time was {age:.1f} s old when served (limit {ACCOUNT_SOURCE_MAX_AGE_S:g} s)"}
     if age + b > ACCOUNT_SOURCE_MAX_AGE_S:
         return out | {"status": "unverified", "reason": f"source age {age:.1f} s is within the clock bound of its limit"}
     return out | {"status": "fresh", "reason": None}

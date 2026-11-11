@@ -1300,7 +1300,7 @@
       !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market),
         // A late note: the taker flow block's own "as of" (the plugin's, at the request or the build) when that layer is
         // on, else the node view's for the band layers.
-        late: (flowBars && flowSrc.as_of_note) || ((ov.stops || ov.depth || ov.flow) && node ? (lateNote(node, "book") || lateNote(node, "flow", "fills")) : null),
+        late: ((ov.stops || ov.depth || ov.flow) && node ? (lateNote(node, "book") || lateNote(node, "flow", "fills")) : null) || (flowBars && flowSrc.as_of_note) || null,
         flow: (function () { const k = hover || latest; if (!k || !flowBars) return null; const t = isNum(k._t) ? k._t : k.time; return flowByTime[t] || null; })() }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" },
@@ -1311,7 +1311,7 @@
     // No footnotes under the chart since Nov 10 (Kevin): gaps are marked on the candles themselves and listed in the
     // snapshot; the candle history's count and fetch time live in the data, not on the card.
     // The taker-flow legend (Kevin's question, Nov 11) sits over the attribution while the layer is on.
-    ov.flow && !ovWhy("flow") ? h("div", { className: "hd-chart-legend" }, FLOW_LEGEND) : null,
+    flowBars && flowBars.length > 0 ? h("div", { className: "hd-chart-legend" }, FLOW_LEGEND) : null,
     h("div", { className: "hd-attribution" }, ATTRIBUTION,
       h("a", { href: TV_URL, target: "_blank", rel: "noopener noreferrer" }, TV_URL)));
   }
@@ -2686,20 +2686,16 @@
     const v = props.v;
     const gate = heatGate(v);
     const hs = gate ? null : v.history;
-    // Collapsible (Kevin, Nov 11): folded, the panel keeps its head and status row only. Open unless this browser
-    // folded it; the parent keeps the choice the way it keeps the node brief's.
+    // Collapsible (Kevin, Nov 11): folded, the panel keeps its head and status row only (the Panel frame's own
+    // COLLAPSE / EXPAND chip, as the Desk cards). Open unless this browser folded it; the parent keeps the choice.
     const open = props.open !== false;
     return h(Panel, {
-      id: "heatmap", className: cx("hd-p-heat", !open && "hd-np-folded"), title: "Liquidity heatmap (node book, 15 min)", nodeHook: "heatmap",
+      id: "heatmap", className: "hd-p-heat", title: "Liquidity heatmap (node book, 15 min)", nodeHook: "heatmap",
+      open: open, onToggle: props.onToggle,
       why: h("p", null, "Resting bid and ask notional per " + (hs && hs.bin_width ? dpx(hs.bin_width) : "") + " price bin, sampled from the node's full book every " +
         (hs && isNum(hs.interval_ms) ? secs(hs.interval_ms / 1000) : "5 s") + " within \u00b1" + (hs && isNum(hs.range_pct) ? hs.range_pct : 2) +
         "% of the mid. What rested, not trades; orders can be added or pulled at any moment. Times in UTC."),
-      badges: h(Fragment, null,
-        props.onToggle ? h("button", {
-          type: "button", className: "hd-np-fold", onClick: props.onToggle, "aria-expanded": open,
-          title: open ? "fold the heatmap to its head and status row" : "show the heatmap"
-        }, open ? "COLLAPSE" : "EXPAND") : null,
-        h(NodeProv, { v: v, what: "book history" })),
+      badges: h(NodeProv, { v: v, what: "book history" }),
       status: h(NodeStatus, { v: v, fams: ["book"] })
     },
     open && !gate ? h(FamNotes, { fams: v && v.families, names: ["book"] }) : null,

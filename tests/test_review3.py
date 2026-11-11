@@ -102,7 +102,7 @@ def test_slow_account_requests_count_as_age(monkeypatch):
     assert cur["requested_ms"] == T0 and cur["state_received_ms"] == T0 + 9000 and cur["returned_ms"] == T0 + 18000
     acc = tools.current_account(cur, "", (0.05, "fixed for tests"))["account"]
     assert acc["freshness"]["source_age_s"] == 123.0 and acc["freshness"]["status"] == "delayed"
-    assert acc["freshness"]["source_max_age_s"] == 120.0 and "limit 120.0 s" in acc["freshness"]["reason"]
+    assert acc["freshness"]["source_max_age_s"] == 120.0 and "limit 120 s" in acc["freshness"]["reason"]
     assert acc["margin_summary"]["account_value_usd"]["value"] is None
 
 

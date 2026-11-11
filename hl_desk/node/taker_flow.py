@@ -48,7 +48,7 @@ COVERAGE_NOTE = ("one bar per candle aligned to the clock, from the candle's ope
 RETENTION_NOTE = ("one-minute taker-flow sums are kept for 24 h of block time behind the latest block whose node fills are known, "
                   "and every interval of one minute or more is summed from them, clock-aligned; the 15 s bars come from the "
                   "fills themselves, kept 16 min behind the node's last block, so older 15 s bars aren't served")
-BEFORE_OBSERVED = "before the node fills were observed (connect, session or replay start)"
+BEFORE_OBSERVED = "before the node fills were observed"
 RING_PRUNED = "older than the one-minute sums are kept (24 h behind the node's last block)"
 FILLS_PRUNED = f"node fills older than {flow_mod.RETENTION_MS // MINUTE_MS} min before the node's last block are no longer kept"
 
@@ -110,7 +110,8 @@ class TakerFlowState:
         self.counters = {"fills": 0, "late_dropped": 0}
 
     def cut_ms(self) -> int | None:
-        return None if self.through_ms is None else self.through_ms - RETENTION_MS
+        # minute-aligned, so the oldest minute kept is whole: a bar never claims seconds whose fills were pruned
+        return None if self.through_ms is None else minute_start(self.through_ms - RETENTION_MS)
 
     def observe(self, flow: flow_mod.NodeFlow, block_time_ms) -> None:
         """Coverage: node fills are known over (flow.since_ms, block_time_ms] of the current observed window; called at

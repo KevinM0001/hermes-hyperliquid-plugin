@@ -17322,9 +17322,22 @@
     }
   }
 
+  // A card's fold (Kevin, Nov 11): one toggle for every card that folds, a bordered chip reading COLLAPSE or EXPAND
+  // at the right of the card head beside the provenance badges, rendered by the card frame so every card places it
+  // the same way. The card decides what its folded state shows; the choice is kept per card in this browser's local
+  // storage (useFold).
+  function FoldButton(props) {
+    const open = props.open === true;
+    return h("button", {
+      type: "button", className: "hd-fold-btn", onClick: props.onToggle, "aria-expanded": open,
+      title: open ? "fold this card to its first line" : "show the whole card"
+    }, open ? "COLLAPSE" : "EXPAND");
+  }
+
   function Panel(props) {
+    const folds = typeof props.onToggle === "function";
     return h("section", {
-      className: cx("hd-card", props.className),
+      className: cx("hd-card", props.className, folds && (props.open === true ? "hd-open" : "hd-folded")),
       "aria-label": props.label || props.title,
       "data-panel": props.id,
       "data-node-hook": props.nodeHook
@@ -17334,7 +17347,9 @@
         h("h2", null, props.title),
         props.why ? h(Why, null, props.why) : null,
         props.sub ? h("p", null, props.sub) : null),
-      props.badges ? h("div", { className: "hd-badges" }, props.badges) : null),
+      props.badges || folds ? h("div", { className: "hd-badges" },
+        folds ? h(FoldButton, { open: props.open, onToggle: props.onToggle }) : null,
+        props.badges || null) : null),
     props.status ? h("div", { className: "hd-card-status" }, props.status) : null,
     h("div", { className: cx("hd-card-body", props.flush && "hd-flush") }, h(PanelBoundary, { id: props.id }, props.children)));
   }
@@ -17868,6 +17883,10 @@
   function intervalPollMs(iv) { const sec = intervalSeconds(iv); return sec <= 300 ? 2000 : (sec <= 3600 ? 5000 : 15000); }
   function coinOf(market) { const t = String(market || ""); const i = t.lastIndexOf(":"); return i >= 0 ? t.slice(i + 1) : t; }
 
+  // Seen beside the taker-flow bars (Kevin's question, Nov 11): a green candle over a red bar is not a bug. The readout's
+  // taker-flow cell carries it as its title, and the chart shows it as a legend line while the bars are on.
+  const FLOW_LEGEND = "taker flow bars: the bar's colour is taker direction (buys against sells by the aggressor), the candle's colour is price (close against open); two measures that often disagree, and the disagreement is the point";
+
   // The readout at the chart's top left: the candle under the crosshair, or the latest one when the pointer is away.
   // Every number is the snapshot's own (open, high, low, close, volume_usd, complete); the change is close minus open.
   function ChartReadout(props) {
@@ -17890,7 +17909,7 @@
         (chgPct !== null ? " (" + signOf(chgPct, true) + num(Math.abs(chgPct), 2, 2) + "%)" : "")) : null,
       h("span", { className: "hd-ro-cell" }, "Vol ", h("b", { className: "hd-ro-v" }, vol)),
       props.late ? h("span", { className: "hd-ro-cell hd-dim" }, props.late) : null,
-      props.flow ? h("span", { className: "hd-ro-cell", title: props.flow.reason || "" }, "Taker flow ",
+      props.flow ? h("span", { className: "hd-ro-cell", title: FLOW_LEGEND + (props.flow.reason ? "; " + props.flow.reason : "") }, "Taker flow ",
         h("b", { className: props.flow.net_usd >= 0 ? "hd-ro-v hd-ro-up" : "hd-ro-v hd-ro-down" }, usdSigned(props.flow.net_usd)),
         " (buy " + usd(props.flow.buy_usd) + " / sell " + usd(props.flow.sell_usd) + (props.flow.complete === false ? (props.flow.in_progress ? ", in progress" : ", partial") : "") + ")") : null);
   }
@@ -17974,10 +17993,11 @@
     const m = props.m;
     const node = props.node || null;
     const nodeOn = !!(node && node.available !== false);
-    // Why a layer can't be drawn right now: the node view withheld (a lapsed family) says so in the toggle's title.
+    // Why a band layer can't be drawn right now: the node view withheld (a lapsed family) says so in the toggle's title.
+    // The Taker flow layer's reason is flowWhy below: its block rides with the candles, not with the node view.
     const ovWhy = function (k) {
       if (!nodeOn) return "needs node mode";
-      const part = k === "stops" ? (node.stops && node.stops.available === false ? node.stops : (node.stops && node.stops.map)) : (k === "depth" ? node.thinning : node.flow_map);
+      const part = k === "stops" ? (node.stops && node.stops.available === false ? node.stops : (node.stops && node.stops.map)) : node.thinning;
       if (!part) return "not in this snapshot";
       if (part.available === false) return "withheld: " + (part.reason || "no reason given");
       return null;
@@ -18011,21 +18031,6 @@
       if (sig !== rectSig.current) { rectSig.current = sig; setRects(out); }
     }, []);
     useEffect(function () {
-      const a = api.current;
-      if (a && a.nflow) {
-        const fm = node && node.flow_map;
-        const on = ov.flow && iv === "15m" && fm && fm.available !== false && Array.isArray(fm.buckets);
-        const byT = {};
-        const data = on ? fm.buckets.filter(function (b) { return isNum(b.start_ms) && isNum(b.net_usd) && (b.fills > 0 || b.coverage_s > 0); }).map(function (b) {
-          const t = Math.floor(b.start_ms / 1000);
-          byT[t] = b;
-          const up = b.net_usd >= 0;
-          const faded = b.complete === false && !b.in_progress;
-          return { time: t, value: b.net_usd, color: up ? (faded ? "rgba(24, 229, 137, 0.35)" : "rgba(24, 229, 137, 0.85)") : (faded ? "rgba(255, 69, 77, 0.35)" : "rgba(255, 69, 77, 0.85)") };
-        }) : [];
-        a.flowByTime = byT;
-        try { a.nflow.setData(data); } catch (e) { /* a bucket outside the candles' time range is dropped by the chart */ }
-      }
       bandsRef.current = (ov.stops || ov.depth) ? overlayBands(node, ov) : [];
       syncOverlay();
       if (!ov.stops && !ov.depth) { setBandTip(null); return undefined; }
@@ -18035,6 +18040,23 @@
     const [cd, setCd] = useState(null);   // the /candles route's latest answer for iv (null for 15s)
     const fromRoute = iv !== "15s";
     const routeCandles = fromRoute && cd && cd.state === "ok" && cd.data ? (cd.data.candles || []) : [];
+    // The Taker flow layer's source (Kevin, Nov 11: every interval, not only 15m): the snapshot's chart.taker_flow beside
+    // its 15 s candles, or the route's taker_flow beside the venue's candles (schema 1.3.0 chart.taker_flow). One bar
+    // per candle the node's fills cover, net taker flow (buy minus sell, the taker side only, each fill once), each bar
+    // with its coverage; a candle the plugin has no bar for stays empty. Nothing is computed here.
+    const flowSrc = fromRoute ? (cd && cd.state === "ok" && cd.data ? (cd.data.taker_flow || null) : null) : (chart.taker_flow || null);
+    const flowBars = ov.flow && flowSrc && flowSrc.available !== false && Array.isArray(flowSrc.bars) ? flowSrc.bars : null;
+    const flowByTime = {};
+    (flowBars || []).forEach(function (b) { if (isNum(b.time_ms) && isNum(b.net_usd)) flowByTime[Math.floor(b.time_ms / 1000)] = b; });
+    // Why the layer can't be drawn right now, in the toggle's title: node mode off, the route's candles still loading or
+    // failed (the layer waits with them), the block missing, or withheld (a lapsed family) with the plugin's reason.
+    const flowWhy = function () {
+      if (!nodeOn) return "needs node mode";
+      if (fromRoute && !(cd && cd.state === "ok")) return cd && cd.state === "error" ? "no " + iv + " candles: " + cd.error : null;
+      if (!flowSrc) return fromRoute ? "not in the plugin's candles answer" : "not in this snapshot";
+      if (flowSrc.available === false) return "withheld: " + (flowSrc.reason || "no reason given");
+      return null;
+    };
 
     // Poll the plugin's /candles route for the selected interval only, at a cadence tied to the interval
     // (5 s to 60 s); a "loading" answer is retried in 2 s, an error in 10 s. Nothing is fetched for 15s.
@@ -18078,10 +18100,11 @@
           rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.08, bottom: 0.24 } },
           timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: true },
           crosshair: { mode: LWC.CrosshairMode.Normal },
-          // The wheel scrolls the page (the Nov 9 audit: a reader got stuck zooming); the interval buttons set the range,
-          // dragging still pans and pinching still zooms.
+          // The wheel zooms (Kevin, Nov 11: wanted as a universal chart feature; the Nov 9 audit's wheel-off setting is
+          // gone) and dragging pans; the wheel never pans. Pinch zooms too, the axes drag-scale, a double click on an
+          // axis resets, and the interval buttons still set the range.
           handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-          handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
+          handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
           localization: { locale: "en-US", priceFormatter: function (v) { return axisPrice(v, api.current ? api.current.decimals : null); } }
         });
         const series = c.addSeries(LWC.CandlestickSeries, {
@@ -18095,13 +18118,13 @@
           priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false
         });
         c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-        // The node's taker flow per 15-minute bucket (the order flow map's net_usd), on its own hidden scale above the
-        // volume bars; drawn only on the 15 m interval, where a bucket is one candle wide (Kevin, Nov 10).
+        // The node's net taker flow per candle (the plugin's chart.taker_flow, one bar per candle on every interval:
+        // Kevin, Nov 11), on its own hidden scale above the volume bars.
         const nflow = c.addSeries(LWC.HistogramSeries, {
           priceFormat: { type: "volume" }, priceScaleId: "nflow", priceLineVisible: false, lastValueVisible: false, base: 0
         });
         c.priceScale("nflow").applyOptions({ scaleMargins: { top: 0.6, bottom: 0.21 }, visible: false });
-        api.current = { chart: c, series: series, vol: vol, nflow: nflow, lines: {}, markers: markers, market: null, decimals: null, byTime: {}, flowByTime: {}, hoverT: null };
+        api.current = { chart: c, series: series, vol: vol, nflow: nflow, lines: {}, markers: markers, market: null, decimals: null, byTime: {}, hoverT: null };
         // The readout follows the crosshair: the candle under it, or none (the latest is shown then).
         c.subscribeCrosshairMove(function (param) {
           const a2 = api.current;
@@ -18203,6 +18226,26 @@
       }
     }, [m, iv, cd]);
 
+    // The Taker flow layer: one histogram bar per candle from the plugin's per-candle taker flow (flowByTime above),
+    // under the candles on every interval, green for net buying and red for net selling, faded when the bar is partial
+    // (the node's fills don't cover its whole span). Runs after the candle update above, so a.byTime is current, and a
+    // bar is drawn only where a candle stands.
+    useEffect(function () {
+      const a = api.current;
+      if (!a || !a.nflow) return;
+      const data = [];
+      Object.keys(flowByTime).forEach(function (k) {
+        const t = Number(k);
+        if (!a.byTime[t]) return;                        // no candle at this time: nothing to draw under
+        const b = flowByTime[t];
+        const up = b.net_usd >= 0;
+        const faded = b.complete === false && !b.in_progress;
+        data.push({ time: t, value: b.net_usd, color: up ? (faded ? "rgba(24, 229, 137, 0.35)" : "rgba(24, 229, 137, 0.85)") : (faded ? "rgba(255, 69, 77, 0.35)" : "rgba(255, 69, 77, 0.85)") });
+      });
+      data.sort(function (x, y) { return x.time - y.time; });
+      try { a.nflow.setData(data); } catch (e) { /* a bar the chart can't place is dropped */ }
+    }, [m, iv, cd, ov.flow]);
+
     const gaps = chart.gaps || [];
     const lines = chart.price_lines || [];
     const nCandles = fromRoute ? routeCandles.length : (chart.candles || []).length;
@@ -18227,12 +18270,11 @@
       status: h(Fragment, null, ivBar, routeChip,
         h("div", { className: "hd-toggle hd-ovbar", role: "group", "aria-label": "Liquidity overlay" },
           [["stops", "Stop clusters"], ["depth", "Resting depth"], ["flow", "Taker flow"]].map(function (x) {
-            const flowOff = x[0] === "flow" && iv !== "15m";
-            const why = ovWhy(x[0]);
-            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !flowOff && !why && "hd-btn-on"), disabled: !!why || flowOff,
+            const why = x[0] === "flow" ? flowWhy() : ovWhy(x[0]);
+            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !why && "hd-btn-on"), disabled: !!why,
               title: why ? why : (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node: solid for the stated sizes (lower bounds where orders report none), hatched for the estimate of whole-position orders at their owners\u0027 positions, when the feed carries positions"
                 : x[0] === "depth" ? "resting depth per 0.5% band, from the node's full book"
-                : (flowOff ? "net taker flow per 15-minute bucket from the node's fills: on the 15m interval only" : "net taker flow per 15-minute bucket from the node's fills (the order flow map), under the candles")),
+                : "net taker flow per candle from the node's fills (buy minus sell, the taker side only, each fill once), under the candles on every interval; faded where the fills don't cover the whole candle"),
               "aria-pressed": ov[x[0]] ? "true" : "false", onClick: function () { setOv(Object.assign({}, ov, { [x[0]]: !ov[x[0]] })); } }, x[1]);
           })))
     },
@@ -18260,8 +18302,10 @@
       bandTip ? h("div", { className: "hd-band-tip", style: { left: Math.min(bandTip.x + 14, 420) + "px", top: Math.max(4, bandTip.y - 10) + "px" } },
         bandTip.texts.map(function (t, i) { return h("div", { key: i, className: i === bandTip.texts.length - 1 ? "hd-dim" : undefined }, t); })) : null,
       !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market),
-        late: (ov.stops || ov.depth || ov.flow) && node ? (lateNote(node, "book") || lateNote(node, "flow", "fills")) : null,
-        flow: (function () { const a = api.current; const k = hover || latest; if (!a || !k || !ov.flow || iv !== "15m") return null; const t = isNum(k._t) ? k._t : k.time; return a.flowByTime[t] || null; })() }) : null,
+        // A late note: the taker flow block's own "as of" (the plugin's, at the request or the build) when that layer is
+        // on, else the node view's for the band layers.
+        late: ((ov.stops || ov.depth || ov.flow) && node ? (lateNote(node, "book") || lateNote(node, "flow", "fills")) : null) || (flowBars && flowSrc.as_of_note) || null,
+        flow: (function () { const k = hover || latest; if (!k || !flowBars) return null; const t = isNum(k._t) ? k._t : k.time; return flowByTime[t] || null; })() }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" },
         fromRoute
@@ -18270,6 +18314,8 @@
           : "No candles in this snapshot: no trades in the current coverage segment yet.") : null),
     // No footnotes under the chart since Nov 10 (Kevin): gaps are marked on the candles themselves and listed in the
     // snapshot; the candle history's count and fetch time live in the data, not on the card.
+    // The taker-flow legend (Kevin's question, Nov 11) sits over the attribution while the layer is on.
+    flowBars && flowBars.length > 0 ? h("div", { className: "hd-chart-legend" }, FLOW_LEGEND) : null,
     h("div", { className: "hd-attribution" }, ATTRIBUTION,
       h("a", { href: TV_URL, target: "_blank", rel: "noopener noreferrer" }, TV_URL)));
   }
@@ -18307,7 +18353,13 @@
   const CHANGE_KEYS = ["added", "absorbed", "pulled", "unknown"];
   const REPLAY_SPEEDS = ["0.25", "0.5", "1", "2", "4", "8", "16"];
   const NO_NODE = "needs node mode: no node feed configured (setting node_feed)";
-  const HEAT_RGB = { bid: "24,229,137", ask: "255,69,77" };
+  // The heatmap's own fills (Kevin, Nov 11: the bright red and green were distracting): a deep teal for resting bids
+  // and a dusty brick for resting asks, muted, drawn at a low alpha at the dim end and never fully saturated at the
+  // bright end (alpha = lo + span * log(1 + usd) / log(1 + max)); the mid line is thin and off-white. Only the
+  // heatmap canvas uses these; the legend swatches in the stylesheet match.
+  const HEAT_RGB = { bid: "38,166,154", ask: "196,92,98" };
+  const HEAT_ALPHA = { lo: 0.1, span: 0.62 };
+  const HEAT_MID = "#E0E0E0";
 
   function famTone(s) { return FAMILY_TONE[s] || "dim"; }
   // BEHIND is shown as DELAYED: since Nov 8 it means the node feed's averaged delay is above the delayed limit.
@@ -18492,12 +18544,20 @@
     return null;
   }
 
-  // ---- node status strip (connection, producer, families, configuration)
+  // ---- node status strip (connection and delay)
 
   // The node feed's delay for the market on screen: the age of the latest watermark averaged over the last 5 s, from
   // each snapshot (about once a second), with the state it gives. In the node strip since Nov 9 (Kevin; from Nov 8 it
   // was a row of its own under the summary); the aging and failed-poll notes it carried are on the header's snapshot
   // line now. A delay never blanks the page: the next snapshot replaces the one on screen in place.
+  // Since Kevin's review of Nov 11 the strip shows the figure and its chip only: what the delay is (the watermark's
+  // age, the averaging window, the delayed and stale limits, as served) sits on the chip's hover and, in words, in
+  // the page's bottom legend; nothing is written out on the card.
+  function delayNote(d) {
+    const s = function (ms) { return isNum(ms) ? (ms / 1000) + " s" : "?"; };
+    return "the age of the node feed's latest watermark (the feed's marker that everything through block N at time T has been sent), averaged over " +
+      s(d.window_ms) + "; shown as delayed above " + s(d.delayed_after_ms) + " and stale above " + s(d.stale_after_ms);
+  }
   function DelayBar(props) {
     const d = props.delay;
     const live = props.nodeOn && d && d.available;
@@ -18509,12 +18569,9 @@
     return h("div", { className: "hd-delaybar", role: "status", "aria-live": "off" },
       h("span", { className: "hd-delaybar-k" }, "Node feed delay"),
       h("b", { className: cx("hd-delaybar-v", live && "hd-tone-text-" + famTone(d.state)) }, value),
-      h("span", { className: "hd-delaybar-state" }, live ? h("span", { className: "hd-chip hd-tone-" + famTone(d.state), title: d.reason || "" },
+      h("span", { className: "hd-delaybar-state" }, live ? h("span", { className: "hd-chip hd-tone-" + famTone(d.state), title: [d.reason, delayNote(d)].filter(Boolean).join("\n") },
         h("span", { className: "hd-dot", "aria-hidden": "true" }), label) : null),
-      h("span", { className: "hd-delaybar-sub hd-dim" }, live
-        ? "latest watermark's age, " + (d.window_ms / 1000) + " s average \u00b7 now " + (d.current_ms / 1000).toFixed(1) +
-          " s \u00b7 shown as delayed above " + (d.delayed_after_ms / 1000) + " s"
-        : why),
+      live ? null : h("span", { className: "hd-delaybar-sub hd-dim" }, why),
       h("span", { className: cx("hd-delaybar-note", (props.aged || props.pollNote) && "hd-tone-text-warn"),
         title: [props.pollNote, props.aged].filter(Boolean).join("\n") },
         props.pollNote ? props.pollNote + (props.aged ? " \u00b7 " : "") : "",
@@ -18524,16 +18581,13 @@
   function NodeStrip(props) {
     const ns = props.ns;
     const v = props.v;
-    const cfg = ns ? ns.configured : null;
     const live = ns ? ns.live : null;
     const rep = ns ? ns.replay : null;
     const conn = (live && live.connection) || {};
     const cstate = conn.state || "state not in snapshot";
-    // Never a local path on screen (the Nov 9 audit): the feed setting and the recording are named by kind and file name.
-    const cfgLine = h("span", { className: "hd-prov-item hd-dim" },
-      cfg ? "configured: node_feed " + (cfg.node_feed ? srcLabel(cfg.node_feed) : "not set") + " \u00b7 node_replay_file " +
-        (cfg.node_replay_file ? baseName(cfg.node_replay_file) : "not set") + " \u00b7 key " + (cfg.key || "not stated")
-        : "configured: not in this snapshot");
+    // Kevin's review of Nov 11: the card keeps the connection (state, since, source; never a local path, the Nov 9
+    // audit) and the delay. The configured settings, the producer epoch and the session stay in the data and the
+    // tools; the families' chips and notes are on each node panel, beside its title.
     return h("section", { className: "hd-card hd-nodestrip", "aria-label": "Node feed status", "data-panel": "node-status" },
       h("div", { className: "hd-nodestrip-line" },
         h(Badge, { kind: "node", title: "l4-livefeed v2 node feed: order-level book, waiting triggers and fills" }, "NODE FEED"),
@@ -18543,20 +18597,10 @@
           conn.reason ? h("span", { className: cx("hd-nodestrip-why", "hd-tone-text-" + (CONN_TONE[cstate] || "warn")) }, conn.reason) : null,
           isNum(conn.since_wall_ms) ? h("span", { className: "hd-prov-item" }, "since " + hms(conn.since_wall_ms) + " UTC") : null,
           isNum(conn.retry_in_s) ? h("span", { className: "hd-prov-item" }, "retry in " + conn.retry_in_s + " s") : null,
-          h("span", { className: "hd-prov-item" }, "source " + (live.source ? srcLabel(live.source) : "not in snapshot")),
-          h("span", { className: "hd-prov-item" }, "producer epoch " + (live.epoch !== null && live.epoch !== undefined ? live.epoch : "none yet")),
-          live.session ? h("span", { className: "hd-prov-item", title: live.session }, "session " + shortId(live.session)) : null)
-          : h(Unavailable, { reason: (v && !nodeOn(v) && v.reason) || (ns ? NO_NODE : "needs node mode: the node status isn't in this snapshot") }),
-        h("span", { className: "hd-prov-sep", "aria-hidden": "true" }),
-        cfgLine),
+          h("span", { className: "hd-prov-item" }, "source " + (live.source ? srcLabel(live.source) : "not in snapshot")))
+          : h(Unavailable, { reason: (v && !nodeOn(v) && v.reason) || (ns ? NO_NODE : "needs node mode: the node status isn't in this snapshot") })),
       // The node feed's delay (the latest watermark's age, 5 s average): in this strip since Nov 9, no longer a bar of its own.
       h(DelayBar, { delay: props.delay, nodeOn: true, conn: cstate }),
-      live && nodeOn(v) ? h("div", { className: "hd-nodestrip-line" },
-        h("span", { className: "hd-dim" }, props.market + " families"),
-        h(FamChips, { fams: v.families }),
-        g(v, "book", "valid") === false ? h("span", { className: "hd-chip hd-tone-bad", title: g(v, "book", "reason") }, "book INVALID") : null)
-        : null,
-      live && nodeOn(v) ? h(FamNotes, { fams: v.families }) : null,
       live && v && v.available === false ? h("div", { className: "hd-small" }, h(Unavailable, { reason: props.market + ": " + v.reason })) : null,
       rep ? h("div", { className: "hd-nodestrip-line hd-small" },
         h(ModeBadge, { mode: "REPLAY" }),
@@ -18810,53 +18854,71 @@
 
   // ---- wall watch
 
+  // Both tables share one column grid (Kevin, Nov 11: the columns lined up badly and the headings differed): the same
+  // nine columns in the same order at the same fixed widths, so a current wall and a gone one read down the same
+  // lines. Only the time column holds something different, so only its heading differs: a current wall shows when
+  // its order was placed (and its age at the book time); a gone wall shows the span it was seen as a wall. The
+  // "unknown" size is no longer a column: it is appended to the outcome cell when it is non-zero, with the Labels
+  // line's definition in its title.
+  const WALL_COL_PX = [52, 84, 90, 84, 280, 90, 90, 136, null];     // null: the last column takes what is left, so the numbers stay together
+  function wallCols() {
+    return h("colgroup", null, WALL_COL_PX.map(function (w, i) { return h("col", { key: i, style: w ? { width: w + "px" } : undefined }); }));
+  }
+  function wallHead(t) {
+    return h("thead", null, h("tr", null,
+      h("th", { scope: "col" }, "Side"), h("th", { scope: "col", className: "hd-r" }, "Price"),
+      h("th", { scope: "col", className: "hd-r", title: t.sizeTitle }, "Size"), h("th", { scope: "col", className: "hd-r" }, "Notional"),
+      h("th", { scope: "col" }, "Outcome"),
+      h("th", { scope: "col", className: "hd-r" }, "Absorbed"), h("th", { scope: "col", className: "hd-r" }, "Pulled"),
+      h("th", { scope: "col", title: t.timeTitle }, t.timeLabel), h("th", { scope: "col" }, "Trader")));
+  }
+  function wallUnknown(v, labels) {
+    if (!isNum(v) || v === 0) return null;
+    return h("span", { className: "hd-dim", title: labels || "unknown: no lifecycle record explains the change" }, " \u00b7 " + sz(v) + " unknown");
+  }
+
   function WallsBody(props) {
     const wl = props.wl;
     const bt = props.bookMs;
     const cur = wl.current || [];
     const gone = wl.recently_gone || [];
+    const none = function (text) { return h("tr", null, h("td", { colSpan: 9, className: "hd-dim" }, text)); };
     return h(Fragment, null,
       h("div", { className: "hd-small" }, h("b", null, "Definition: "), wl.definition || "not in snapshot",
         isNum(wl.observed_since_ms) ? h("span", { className: "hd-dim" }, " \u00b7 observed since " + hmsms(wl.observed_since_ms) + " UTC") : null),
       h("div", { className: "hd-subhead" }, "Current walls"),
-      h("div", { className: "hd-scroll" },
-        h("table", { className: "hd-table hd-walls" },
-          h("thead", null, h("tr", null,
-            h("th", { scope: "col" }, "Side"), h("th", { scope: "col", className: "hd-r" }, "Price"),
-            h("th", { scope: "col", className: "hd-r" }, "Size"), h("th", { scope: "col", className: "hd-r" }, "Notional"),
-            h("th", { scope: "col", title: "when the order was placed (UTC), and its age at the book time" }, "Placed"),
-            h("th", { scope: "col", className: "hd-r" }, "Absorbed"), h("th", { scope: "col", className: "hd-r" }, "Pulled"),
-            h("th", { scope: "col", className: "hd-r" }, "Unknown"), h("th", { scope: "col" }, "Trader"))),
+      h("div", { className: "hd-scroll hd-np-walls-scroll" },
+        h("table", { className: "hd-table hd-walls hd-np-walls" }, wallCols(),
+          wallHead({ timeLabel: "Placed (UTC)", timeTitle: "when the order was placed (UTC), and its age at the book time", sizeTitle: "the order's resting size at the book time" }),
           h("tbody", null, cur.length ? cur.map(function (w) {
             return h("tr", { key: w.oid, title: "order " + w.oid + (isNum(w.first_seen_ms) ? "\nfirst seen as a wall " + dateTime(w.first_seen_ms) : "") },
               h("td", { className: w.side === "B" ? "hd-bid" : "hd-ask" }, bookSide(w.side)),
               h("td", { className: "hd-r" }, h(DPx, { v: w.px })),
               h("td", { className: "hd-r" }, isNum(w.sz) ? sz(w.sz) : missing()),
               h("td", { className: "hd-r" }, isNum(w.notional_usd) ? usd(w.notional_usd) : missing()),
-              h("td", { title: isNum(w.placed_ms) ? dateTime(w.placed_ms) : undefined },
+              h("td", { className: "hd-wall-outcome", title: "still resting at the book time" }, "resting", wallUnknown(w.unknown_sz, wl.labels)),
+              h("td", { className: "hd-r" }, zsz(w.absorbed_sz)), h("td", { className: "hd-r" }, zsz(w.pulled_sz)),
+              h("td", { className: "hd-np-time", title: isNum(w.placed_ms) ? dateTime(w.placed_ms) : undefined },
                 whenAt(w.placed_ms, bt), isNum(w.placed_ms) && isNum(bt) ? h("span", { className: "hd-dim" }, " (" + dur(bt - w.placed_ms) + ")") : null),
-              h("td", { className: "hd-r" }, zsz(w.absorbed_sz)), h("td", { className: "hd-r" }, zsz(w.pulled_sz)), h("td", { className: "hd-r" }, zsz(w.unknown_sz)),
               h("td", null, h(Addr, { address: w.user })));
-          }) : h("tr", null, h("td", { colSpan: 9, className: "hd-dim" }, "No order meets the definition right now."))))),
-      h("div", { className: "hd-subhead" }, "Recently gone"),
-      h("div", { className: "hd-scroll hd-walls-gone" },
-        h("table", { className: "hd-table hd-walls" },
-          h("thead", null, h("tr", null,
-            h("th", { scope: "col" }, "Side"), h("th", { scope: "col", className: "hd-r" }, "Price"),
-            h("th", { scope: "col", className: "hd-r" }, "Peak size"), h("th", { scope: "col" }, "Outcome"),
-            h("th", { scope: "col", className: "hd-r" }, "Absorbed"), h("th", { scope: "col", className: "hd-r" }, "Pulled"),
-            h("th", { scope: "col", className: "hd-r" }, "Unknown"), h("th", { scope: "col" }, "Seen (UTC)"), h("th", { scope: "col" }, "Trader"))),
+          }) : none("No order meets the definition right now.")))),
+      h("div", { className: "hd-subhead" }, "Recently gone",
+        h("span", { className: "hd-np-subnote" }, "size: the peak while it was a wall \u00b7 notional: not in the snapshot once a wall has gone")),
+      h("div", { className: "hd-scroll hd-walls-gone hd-np-walls-scroll" },
+        h("table", { className: "hd-table hd-walls hd-np-walls" }, wallCols(),
+          wallHead({ timeLabel: "Seen (UTC)", timeTitle: "first seen as a wall to when it left the list (UTC)", sizeTitle: "the order's peak size while it was a wall" }),
           h("tbody", null, gone.length ? gone.map(function (w, i) {
             const o = w.outcome || {};
             return h("tr", { key: w.oid + ":" + i, title: "order " + w.oid },
               h("td", { className: w.side === "B" ? "hd-bid" : "hd-ask" }, bookSide(w.side)),
               h("td", { className: "hd-r" }, h(DPx, { v: w.px })),
               h("td", { className: "hd-r" }, isNum(w.peak_sz) ? sz(w.peak_sz) : missing()),
-              h("td", { className: "hd-wall-outcome" }, o.label || h(Unavailable, { reason: "outcome not in snapshot", compact: true })),
-              h("td", { className: "hd-r" }, zsz(o.absorbed_sz)), h("td", { className: "hd-r" }, zsz(o.pulled_sz)), h("td", { className: "hd-r" }, zsz(o.unknown_sz)),
-              h("td", null, hms(w.first_seen_ms) + "\u2013" + hms(w.left_ms)),
+              h("td", { className: "hd-r" }, isNum(w.notional_usd) ? usd(w.notional_usd) : null),     // the plugin serves no notional for a gone wall: an empty cell
+              h("td", { className: "hd-wall-outcome" }, o.label || h(Unavailable, { reason: "outcome not in snapshot", compact: true }), wallUnknown(o.unknown_sz, wl.labels)),
+              h("td", { className: "hd-r" }, zsz(o.absorbed_sz)), h("td", { className: "hd-r" }, zsz(o.pulled_sz)),
+              h("td", { className: "hd-np-time" }, hms(w.first_seen_ms) + "\u2013" + hms(w.left_ms)),
               h("td", null, h(Addr, { address: w.user })));
-          }) : h("tr", null, h("td", { colSpan: 9, className: "hd-dim" }, "None has left the list in the observed window."))))),
+          }) : none("None has left the list in the observed window.")))),
       wl.labels ? h("div", { className: "hd-note" }, h("b", null, "Labels: "), wl.labels + ".") : null);
   }
 
@@ -19152,7 +19214,7 @@
       lines.push({ k: "node feed", el: h("span", { className: "hd-dim" }, "nothing to show right now: " + why) });
     }
     // Folded (Kevin, Nov 10): the one line a trader scans, the Watch verdict (else the first line), with the feed's
-    // delay after it; "expand" in the head shows the whole brief.
+    // delay after it; EXPAND in the head shows the whole brief.
     const open = props.open === true;
     let shown = lines;
     if (!open) {
@@ -19168,10 +19230,8 @@
         "wording, the largest single resting orders near the price with who placed them and when (public addresses; the plugin never guesses " +
         "who owns one), and the Watch verdict. Descriptions, not signals, and nothing here is a liquidation level. The full " +
         "panels are on the Node page."),
-      badges: h(Fragment, null,
-        props.onToggle ? h("button", { type: "button", className: "hd-btn hd-btn-xs hd-btn-quiet", onClick: props.onToggle, "aria-expanded": open },
-          open ? "collapse" : "expand") : null,
-        h(NodeProv, { v: v, what: "fills + triggers + book" }))
+      badges: h(NodeProv, { v: v, what: "fills + triggers + book" }),
+      open: open, onToggle: props.onToggle
     },
     h("div", { className: "hd-brief" }, shown.map(function (ln, i) {
       return h("div", { key: i, className: "hd-brief-row" }, h("span", { className: "hd-brief-k" }, ln.k), h("span", { className: "hd-brief-t" }, ln.el || ln.t));
@@ -19521,14 +19581,14 @@
           const hpx = Math.max(1, y1 - y0);
           [[b[1], HEAT_RGB.bid], [b[2], HEAT_RGB.ask]].forEach(function (k) {
             if (!isNum(k[0]) || k[0] <= 0 || lv <= 0) return;
-            const a = 0.1 + 0.85 * Math.log(1 + k[0]) / lv;
+            const a = HEAT_ALPHA.lo + HEAT_ALPHA.span * Math.log(1 + k[0]) / lv;
             ctx.fillStyle = "rgba(" + k[1] + "," + a.toFixed(3) + ")";
             ctx.fillRect(x0, y0, wpx, hpx);
           });
         });
       });
-      ctx.strokeStyle = C.mark;
-      ctx.lineWidth = 1.25;
+      ctx.strokeStyle = HEAT_MID;
+      ctx.lineWidth = 1;
       ctx.beginPath();
       // The mid line joins consecutive samples only: a gap of more than two sample steps (an interval the book
       // wasn't observed, or was invalid) is left open, never drawn as continuous history.
@@ -19630,16 +19690,20 @@
     const v = props.v;
     const gate = heatGate(v);
     const hs = gate ? null : v.history;
+    // Collapsible (Kevin, Nov 11): folded, the panel keeps its head and status row only (the Panel frame's own
+    // COLLAPSE / EXPAND chip, as the Desk cards). Open unless this browser folded it; the parent keeps the choice.
+    const open = props.open !== false;
     return h(Panel, {
       id: "heatmap", className: "hd-p-heat", title: "Liquidity heatmap (node book, 15 min)", nodeHook: "heatmap",
+      open: open, onToggle: props.onToggle,
       why: h("p", null, "Resting bid and ask notional per " + (hs && hs.bin_width ? dpx(hs.bin_width) : "") + " price bin, sampled from the node's full book every " +
         (hs && isNum(hs.interval_ms) ? secs(hs.interval_ms / 1000) : "5 s") + " within \u00b1" + (hs && isNum(hs.range_pct) ? hs.range_pct : 2) +
         "% of the mid. What rested, not trades; orders can be added or pulled at any moment. Times in UTC."),
       badges: h(NodeProv, { v: v, what: "book history" }),
       status: h(NodeStatus, { v: v, fams: ["book"] })
     },
-    gate ? null : h(FamNotes, { fams: v && v.families, names: ["book"] }),
-    gate || h(Fragment, null, h(HeatCanvas, { hist: hs, height: 340 }), h(HeatPartial, { hs: hs })));
+    open && !gate ? h(FamNotes, { fams: v && v.families, names: ["book"] }) : null,
+    open ? (gate || h(Fragment, null, h(HeatCanvas, { hist: hs, height: 340 }), h(HeatPartial, { hs: hs }))) : null);
   }
 
   // ---- node replay (explicit, separate, REPLAY everywhere)
@@ -19858,16 +19922,33 @@
             cells.push(h("td", { key: "na", colSpan: 4 }, h(Unavailable, { reason: sp.reason || "unavailable, and no reason was given" }),
               isNum(sp.unclassified_usd) ? h("span", { className: "hd-dim" }, " \u00b7 unclassified " + usd(sp.unclassified_usd)) : null));
           } else {
-            SPLIT_COLS.forEach(function (c) {
-              const uv = g(sp, "usd", c[0]);
-              const pv = g(sp, "pct", c[0]);
-              const why = g(sp, "pct_reason", c[2]);
-              if (!isNum(pv)) note(why);
-              // A bucket without a percentage shows only the reason (the tab's own rule: never a 0 beside "unavailable").
-              cells.push(h("td", { key: c[0], className: "hd-r" }, isNum(pv)
-                ? h(Fragment, null, isNum(uv) ? usd(uv) : missing(), " ", h("b", { className: "hd-dim" }, pct(pv, 1)))
-                : h(Unavailable, { reason: why || "percentage not in snapshot", compact: true })));
-            });
+            // A side with nothing filled has no percentage: a share of zero notional has no value, and that is not
+            // missing data. Its cells say so in plain words, the plugin's reason in the tooltip and in the notes under
+            // the table (Kevin, Nov 11); both sides at zero say it once across the four cells. "unavailable" stays for
+            // a percentage the snapshot withholds with notional on that side (or without saying why).
+            const noSide = { buying: sp.bought_usd === 0, selling: sp.sold_usd === 0 };
+            const sideWhy = { buying: g(sp, "pct_reason", "buying"), selling: g(sp, "pct_reason", "selling") };
+            const noPct = SPLIT_COLS.every(function (c) { return !isNum(g(sp, "pct", c[0])); });
+            if (noSide.buying && noSide.selling && noPct) {
+              note(sideWhy.buying); note(sideWhy.selling);
+              cells.push(h("td", { key: "none", colSpan: 4, className: "hd-dim", title: [sideWhy.buying, sideWhy.selling].filter(Boolean).join("; ") || undefined },
+                pair[0] === "aggressive" ? "no taker fills" : "no fills"));
+            } else {
+              SPLIT_COLS.forEach(function (c) {
+                const uv = g(sp, "usd", c[0]);
+                const pv = g(sp, "pct", c[0]);
+                const why = sideWhy[c[2]];
+                if (isNum(pv)) {
+                  cells.push(h("td", { key: c[0], className: "hd-r" }, isNum(uv) ? usd(uv) : missing(), " ", h("b", { className: "hd-dim" }, pct(pv, 1))));
+                  return;
+                }
+                note(why);
+                // A bucket without a percentage shows only a word (the tab's own rule: never a 0 beside "unavailable").
+                cells.push(h("td", { key: c[0], className: "hd-r" }, noSide[c[2]]
+                  ? h("span", { className: "hd-dim", title: why || undefined }, c[2] === "buying" ? "no buys" : "no sells")
+                  : h(Unavailable, { reason: why || "percentage not in snapshot", compact: true })));
+              });
+            }
           }
         }
         rows.push(h("tr", { key: a + ":" + pair[0], className: j ? "hd-split-aggr" : undefined },
@@ -20041,44 +20122,75 @@
         (cvd.resets_at_gap ? "; it resets at every gap." : ".")));
   }
 
+  // The figures at the top of "Who is aggressive" (Kevin, Nov 11): two rows that share their columns, net (the
+  // largest, coloured by its sign) with volume and trades beside it, then the buy and sell aggressor notionals.
+  // Folded, the first row only. A withheld figure says "unavailable" in its cell with the reason in its tooltip, and
+  // the reasons are written out once under the grid, each with the figures it covers.
+  const FLOW_ROWS = [
+    [["net", "net"], ["volume", "volume"], ["trade_count", "trades"]],
+    [["buy_aggressive_notional", "buy aggressor"], ["sell_aggressive_notional", "sell aggressor"]]
+  ];
+  const FLOW_FMT = { net: usdSigned, trade_count: intf };
+  function FlowFigures(props) {
+    const v = props.v || {};
+    const net = valueOf(v.net);
+    const cells = [];
+    const reasons = [];
+    (props.open ? FLOW_ROWS : FLOW_ROWS.slice(0, 1)).forEach(function (row) {
+      row.forEach(function (x) {
+        const key = x[0];
+        if (valueOf(v[key]) === null) {
+          const why = reasonOf(v[key]);
+          const same = reasons.filter(function (r) { return r.reason === why; })[0];
+          if (same) same.labels.push(x[1]); else reasons.push({ reason: why, labels: [x[1]] });
+        }
+        cells.push(h("div", { key: key, className: cx("hd-flow-cell", key === "net" && "hd-flow-net", key === "sell_aggressive_notional" && "hd-flow-cell-wide") },
+          h("span", { className: "hd-flow-label" }, x[1]),
+          h(V, { m: v[key], fmt: FLOW_FMT[key] || usd, compact: true, className: key === "net" && net !== null ? (net >= 0 ? "hd-bid" : "hd-ask") : null })));
+      });
+    });
+    return h(Fragment, null,
+      h("div", { className: "hd-flow-top" }, cells),
+      reasons.length ? h("div", { className: "hd-note hd-flow-why" }, reasons.map(function (r, i) {
+        return h("div", { key: i }, r.labels.join(", ") + ": " + r.reason);
+      })) : null);
+  }
+
   function FlowPanel(props) {
     const m = props.m;
     const fl = g(m, "flow") || {};
     const v = fl.values || {};
     const w = fl.window || {};
     const lp = fl.large_prints || {};
-    const net = valueOf(v.net);
+    // Folded (Kevin, Nov 11): the first row of figures only; the window, the CVD and the large prints need EXPAND.
+    const open = props.open !== false;
     return h(Panel, {
       id: "flow", className: "hd-p-flow", title: "Who is aggressive",
       why: h("p", null, "Aggressive flow: buys minus sells that crossed the spread, by the documented aggressor side, each trade counted once, over the observed window."),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "trades" }),
-      status: h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" })
+      status: h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
+      open: open, onToggle: props.onToggle
     },
-    h("div", { className: "hd-flow-top" },
-      h("span", { className: "hd-flow-net" },
-        h(V, { m: v.net, fmt: usdSigned, className: net === null ? null : (net >= 0 ? "hd-bid" : "hd-ask") }), " net"),
-      h("span", null, "buy aggressor ", h(V, { m: v.buy_aggressive_notional, fmt: usd })),
-      h("span", null, "sell aggressor ", h(V, { m: v.sell_aggressive_notional, fmt: usd })),
-      h("span", null, "volume ", h(V, { m: v.volume, fmt: usd })),
-      h("span", null, "trades ", h(V, { m: v.trade_count, fmt: intf }))),
-    h("div", { className: "hd-window" },
-      w.reason ? h(Unavailable, { reason: w.reason })
-        : h(Fragment, null, "window (", hmsms(w.start), ", ", hmsms(w.end), "] UTC \u00b7 ",
-          isNum(w.length_s) ? secs(w.length_s) : "length not in snapshot", w.since ? " \u00b7 since " + w.since : "")),
-    h(CvdChart, { cvd: fl.cvd }),
-    h("div", { className: "hd-lp" },
-      h("div", null, h("b", null, "Large prints"), " \u2265 ", isNum(lp.threshold_usd) ? usd(lp.threshold_usd) : "threshold not in snapshot",
-        ": ", isNum(lp.count) ? intf(lp.count) : ("count unavailable" + (lp.reason ? ": " + lp.reason : "")),
-        isNum(lp.count) && (lp.prints || []).length && lp.count > Math.min(8, lp.prints.length)
-          ? h("span", { className: "hd-dim" }, " \u00b7 " + listCount("latest", Math.min(8, lp.prints.length), "listed", lp.count)) : null,
-        lp.note ? h("span", { className: "hd-dim" }, " \u00b7 " + lp.note) : null),
-      (lp.prints || []).length ? h("ul", { className: "hd-lp-list" }, lp.prints.slice(0, 8).map(function (t, i) {
-        return h("li", { key: t.tid || i },
-          h("span", { className: "hd-num" }, hmsms(t.time)), " ",
-          h("b", { className: t.side === "B" ? "hd-bid" : "hd-ask" }, t.side === "B" ? "Buy" : "Sell"), " ",
-          h("span", { className: "hd-num" }, isNum(t.notional_usd) ? usd(t.notional_usd) : missing()), " @ ",
-          h("span", { className: "hd-num" }, isNum(t.px) ? px(t.px) : missing()));
-      })) : null));
+    h(FlowFigures, { v: v, open: open }),
+    open ? h(Fragment, null,
+      h("div", { className: "hd-window" },
+        w.reason ? h(Unavailable, { reason: w.reason })
+          : h(Fragment, null, "window (", hmsms(w.start), ", ", hmsms(w.end), "] UTC \u00b7 ",
+            isNum(w.length_s) ? secs(w.length_s) : "length not in snapshot", w.since ? " \u00b7 since " + w.since : "")),
+      h(CvdChart, { cvd: fl.cvd }),
+      h("div", { className: "hd-lp" },
+        h("div", null, h("b", null, "Large prints"), " \u2265 ", isNum(lp.threshold_usd) ? usd(lp.threshold_usd) : "threshold not in snapshot",
+          ": ", isNum(lp.count) ? intf(lp.count) : ("count unavailable" + (lp.reason ? ": " + lp.reason : "")),
+          isNum(lp.count) && (lp.prints || []).length && lp.count > Math.min(8, lp.prints.length)
+            ? h("span", { className: "hd-dim" }, " \u00b7 " + listCount("latest", Math.min(8, lp.prints.length), "listed", lp.count)) : null,
+          lp.note ? h("span", { className: "hd-dim" }, " \u00b7 " + lp.note) : null),
+        (lp.prints || []).length ? h("ul", { className: "hd-lp-list" }, lp.prints.slice(0, 8).map(function (t, i) {
+          return h("li", { key: t.tid || i },
+            h("span", { className: "hd-num" }, hmsms(t.time)), " ",
+            h("b", { className: t.side === "B" ? "hd-bid" : "hd-ask" }, t.side === "B" ? "Buy" : "Sell"), " ",
+            h("span", { className: "hd-num" }, isNum(t.notional_usd) ? usd(t.notional_usd) : missing()), " @ ",
+            h("span", { className: "hd-num" }, isNum(t.px) ? px(t.px) : missing()));
+        })) : null)) : null);
   }
 
   // ------------------------------------------------------------------ observed depth ("Book pressure")
@@ -20562,19 +20674,22 @@
     const events = [];
     names.forEach(function (n) { (deck[n].events || []).forEach(function (e) { events.push(e); }); });
     events.sort(function (a, b) { return (b.at_ms || 0) - (a.at_ms || 0); });
+    // Folded (Kevin, Nov 11): the newest event only (or the empty line); the counts, the burst rules and the list need EXPAND.
+    const open = props.open !== false;
     return h(Panel, {
       id: "deck", className: "hd-p-deck", title: "Alerts",
       label: "Alerts",
       why: h("p", null, "Each market's regime over a 90 s window, ported from hl_deck; regime changes and burst alerts below. In node mode, burst alerts come from node fills, ranked against Nov 3 to 7, and liquidation alerts are added. The agent can explain any card or event (hl_alerts): a card's ask button copies a ready question and opens the Chat page."),
-      badges: h(Prov, { mode: r.mode, source: g(deck, names[0], "provenance", "source"), what: "trades" })
+      badges: h(Prov, { mode: r.mode, source: g(deck, names[0], "provenance", "source"), what: "trades" }),
+      open: open, onToggle: props.onToggle
     },
     // The other markets' cards are gone (Kevin, Nov 10): the Watch fold covers the other markets; this panel is the events.
     h("div", { className: "hd-events" },
-      h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
+      open ? h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
         (events.length > 40 ? listCount("newest", 40, "events", events.length, "in this snapshot") : intf(events.length) + " events, newest first") +
-        " \u00b7 the snapshot carries up to 20 per market \u00b7 no regime or burst spans a gap \u00b7 UTC")),
-      h("div", { className: "hd-dim hd-small" }, "Burst rule: " + names.map(function (n) { return n + " " + burstRuleText(deck[n].bursts); }).join(" \u00b7 ")),
-      events.length ? h("ul", null, events.slice(0, 40).map(function (e, i) {
+        " \u00b7 the snapshot carries up to 20 per market \u00b7 no regime or burst spans a gap \u00b7 UTC")) : null,
+      open ? h("div", { className: "hd-dim hd-small" }, "Burst rule: " + names.map(function (n) { return n + " " + burstRuleText(deck[n].bursts); }).join(" \u00b7 ")) : null,
+      events.length ? h("ul", null, events.slice(0, open ? 40 : 1).map(function (e, i) {
         return h(EventRow, { key: e.type + ":" + e.market + ":" + e.at_ms + ":" + (e.side || "") + ":" + i, e: e, nodeSrc: nodeSrc });
       })) : h("div", { className: "hd-empty" }, "No events in the current coverage yet.")));
   }
@@ -20681,6 +20796,10 @@
               : (isNum(dd.times_thinner) ? num(dd.times_thinner, 2, 2) + "\u00d7 thinner than the band before, in $ per $1 of price" : "ratio not in snapshot")) });
       });
     }
+    // Folded (Kevin, Nov 11): the newest note only (a state line when there is no event note), or the empty line.
+    const open = props.open !== false;
+    const stateShown = open ? state : (shown.length ? [] : state.slice(0, 1));
+    const noteShown = open ? shown : shown.slice(0, 1);
     return h(Panel, {
       id: "flow-notes", className: "hd-p-notes", title: "Flow notes \u00b7 " + name,
       label: "Flow notes for " + name,
@@ -20692,11 +20811,12 @@
         "none of it is a forecast. 'ask' copies a question about that line for Hermes and opens the chat."),
       badges: h(Prov, { mode: g(m, "provenance", "mode"), source: g(m, "provenance", "source"), what: "deck events + trades" }),
       status: h(Fragment, null, h(Fresh, { f: g(m, "freshness", "trades"), label: "trades" }),
-        notes.length ? h("span", { className: "hd-dim" }, listCount("newest", shown.length, "notes", notes.length, "in this snapshot")) : null)
+        notes.length ? h("span", { className: "hd-dim" }, listCount("newest", noteShown.length, "notes", notes.length, "in this snapshot")) : null),
+      open: open, onToggle: props.onToggle
     },
     state.length || shown.length ? h(Fragment, null,
       h("ul", { className: "hd-notes" },
-        state.map(function (n) {
+        stateShown.map(function (n) {
           return h("li", { key: n.key, className: "hd-note-row hd-note-state" },
             h("span", { className: "hd-num hd-note-t" }, "now"),
             h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
@@ -20704,7 +20824,7 @@
             r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
               " reading: " + n.text + " Use the hyperliquid commentary skill." }) : null);
         }),
-        shown.map(function (n) {
+        noteShown.map(function (n) {
           return h("li", { key: n.key, className: "hd-note-row" },
             h("span", { className: "hd-num hd-note-t" }, hms(n.t) + " UTC"),
             h("span", { className: "hd-chip hd-tone-" + n.tone }, n.tag),
@@ -20712,8 +20832,8 @@
             r.snapshot_id ? h(AskButton, { small: true, label: "ask", question: "Using snapshot " + r.snapshot_id + ", explain this " + name +
               " event at " + hms(n.t) + " UTC: " + n.text + " Use the hyperliquid commentary skill." }) : null);
         })),
-      h("div", { className: "hd-note hd-notes-foot" }, "Descriptions, not signals: regimes and bursts are heuristic classifications of window numbers; " +
-        "they establish no cause and predict nothing. The depth and flow lines are the node book and node fills as of this snapshot."))
+      open ? h("div", { className: "hd-note hd-notes-foot" }, "Descriptions, not signals: regimes and bursts are heuristic classifications of window numbers; " +
+        "they establish no cause and predict nothing. The depth and flow lines are the node book and node fills as of this snapshot.") : null)
       : h("div", { className: "hd-empty" }, "No regime change, burst or large print for " + name + " in the current coverage yet" +
         (nl ? "; the node state lines appear once the node book and fills are usable." : ".")));
   }
@@ -21597,6 +21717,12 @@
     if (data.market) {
       const m = Object.assign({}, data.market);
       if (m.node && m.node.live) m.node = Object.assign({}, m.node, { live: nodeView(m.node.live) });
+      // The chart's taker flow per candle (chart.taker_flow, the 15 s bars) keeps its bars under lateness; only its
+      // freshness ages, as the flow map's does (serving.py aged_taker_flow).
+      if (m.chart && m.chart.taker_flow) {
+        const tf = fillResult(m.chart.taker_flow);
+        if (tf !== m.chart.taker_flow) m.chart = Object.assign({}, m.chart, { taker_flow: tf });
+      }
       if (m.deck) m.deck = deckNode(m.deck);
       if (m.wallets) {
         const w = {};
@@ -21868,7 +21994,8 @@
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "mode-replay" }, "REPLAY"), "recorded data played back (public replay mode, or the Node replay area); never current"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "mode-synthetic" }, "SYNTHETIC"), "constructed test data, not market data"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "NODE"), "from the node feed (l4-livefeed v2): order-level book, waiting trigger orders and fills; one banner at the top says when no node feed is configured (setting node_feed)"),
-        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "HEATMAP"), "resting bid and ask notional per price bin over 15 min, sampled from the node's full book (node mode)"))),
+        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "HEATMAP"), "resting bid and ask notional per price bin over 15 min, sampled from the node's full book (node mode)"),
+        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "NODE FEED DELAY"), "the age of the node feed's latest watermark (the feed's marker that everything through block N at time T has been sent), averaged over 5 s; shown as delayed above 10 s and stale above 30 s, counting up on screen as the snapshot ages"))),
       h("div", { className: "hd-legend" },
         h("span", { className: "hd-dim" }, "Freshness"),
         FRESHNESS_LEGEND.map(function (x) {
@@ -21887,6 +22014,30 @@
 
   // ------------------------------------------------------------------ app
 
+  // <pure:foldOpen> Whether a folding card starts open: this browser's stored choice ("open" or "closed") wins;
+  // anything else, including no choice yet, gives the card's own default.
+  function foldOpen(stored, defaultOpen) {
+    return stored === "open" ? true : (stored === "closed" ? false : defaultOpen === true);
+  }
+  // </pure:foldOpen>
+
+  // A card's open/closed choice, kept in this browser's local storage under `key` (guarded: a blocked storage
+  // leaves the default and the toggle still works for the page's life).
+  function useFold(key, defaultOpen) {
+    const [open, setOpen] = useState(function () {
+      let stored = null;
+      try { stored = window.localStorage.getItem(key); } catch (e) { /* storage blocked */ }
+      return foldOpen(stored, defaultOpen);
+    });
+    const toggle = useCallback(function () {
+      setOpen(function (o) {
+        try { window.localStorage.setItem(key, o ? "closed" : "open"); } catch (e) { /* storage blocked */ }
+        return !o;
+      });
+    }, [key]);
+    return [open, toggle];
+  }
+
   function AppInner() {
     const [market, setMarket] = useState(null);
     // Two pages since Nov 10 (Kevin: one long page floods the reader): Desk, the public reading of the market, and
@@ -21902,16 +22053,13 @@
       try { window.history.replaceState(null, "", v === "node" ? "#node" : window.location.pathname + window.location.search); } catch (e) { /* no history */ }
     }, []);
     // "What the node sees" folds to its one-line verdict so the chart below stays in view (Kevin, Nov 10); folded
-    // unless this browser opened it, and the choice is kept here.
-    const [briefOpen, setBriefOpen] = useState(function () {
-      try { return window.localStorage.getItem("hyperliquid-desk.brief") === "open"; } catch (e) { return false; }
-    });
-    const toggleBrief = useCallback(function () {
-      setBriefOpen(function (o) {
-        try { window.localStorage.setItem("hyperliquid-desk.brief", o ? "closed" : "open"); } catch (e) { /* storage blocked */ }
-        return !o;
-      });
-    }, []);
+    // unless this browser opened it. Who is aggressive, Flow notes and Alerts fold the same way (Kevin, Nov 11) and
+    // start open, as does the liquidity heatmap on the Node page. Each choice is kept in this browser's local storage.
+    const [briefOpen, toggleBrief] = useFold("hyperliquid-desk.brief", false);
+    const [flowOpen, toggleFlow] = useFold("hyperliquid-desk.fold.flow", true);
+    const [notesOpen, toggleNotes] = useFold("hyperliquid-desk.fold.notes", true);
+    const [alertsOpen, toggleAlerts] = useFold("hyperliquid-desk.fold.alerts", true);
+    const [heatOpen, toggleHeat] = useFold("hyperliquid-desk.heatmap", true);
     const [resp, setResp] = useState(null);
     const [noSnap, setNoSnap] = useState(null);
     const [gap, setGap] = useState(null);      // the route's "no current snapshot" answer while a snapshot stays on screen
@@ -22120,13 +22268,13 @@
         // and the Flow notes sit under the chart, the public Flow panel ("who is aggressive") under the ladder.
         h("div", { className: "hd-row hd-row-m" },
           h(PriceChart, { m: m, node: non ? nlive : null }), h(Ladder, { m: m, nodeOn: non }),
-          h(HermesPanel, { resp: resp, m: m }), h(FlowPanel, { m: m }),
-          h(FlowNotes, { resp: resp, m: m })),
+          h(HermesPanel, { resp: resp, m: m }), h(FlowPanel, { m: m, open: flowOpen, onToggle: toggleFlow }),
+          h(FlowNotes, { resp: resp, m: m, open: notesOpen, onToggle: toggleNotes })),
         h(WatchStrip, { resp: resp, onMarket: chooseMarket }),
         h(DeckHero, { resp: resp }),
         h(SectionHead, { title: "Alerts", note: non ? "regime changes, bursts and liquidation alerts, newest first" : "regime changes and bursts, newest first; then the public tape" }),
         h("div", { className: "hd-row hd-row-b" },
-          h(DeckPanel, { resp: resp })),
+          h(DeckPanel, { resp: resp, open: alertsOpen, onToggle: toggleAlerts })),
         // The public tape only without a node feed (Kevin, Nov 10): the node tape supersedes it on the Node page.
         !non ? h("div", { className: "hd-row hd-row-c" }, h(TapePanel, { m: m, nodeOn: non })) : null,
         h(SectionHead, { title: "Wallets", note: "the public addresses behind the volume" }),
@@ -22146,7 +22294,7 @@
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
         h(SectionHead, { title: "Tape", note: non ? "the node's fills with flags, newest first" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-c" }, h(NodeTapePanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive, open: heatOpen, onToggle: toggleHeat })) : null,
         showReplay ? h(Fragment, null,
           h(SectionHead, { title: "Replay", note: "a recording played on its own clock, never current" }),
           h(ReplayArea, {
