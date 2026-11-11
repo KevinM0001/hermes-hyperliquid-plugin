@@ -61,7 +61,7 @@ config_schema:
     type: bool
     default: false
     label: Node alerts in the background
-    description: With a relay, keep receiving the four markets' executions (about 9 KB/s) while no node panel is on screen, so node-mode burst and liquidation alerts keep running. Off, node data stops 60 s after the last node panel was seen.
+    description: With a relay, keep receiving every followed market's executions (about 9 KB/s for four markets, more with more) while no node panel is on screen, so node-mode burst and liquidation alerts keep running. Off, node data stops 60 s after the last node panel was seen.
   node_key:
     type: secret
     env: HL_DESK_NODE_KEY

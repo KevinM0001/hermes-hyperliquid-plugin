@@ -17,9 +17,9 @@ DEFAULT_MARKETS = ["BTC", "HYPE", "xyz:SP500", "xyz:XYZ100"]
 WS_URL = "wss://api.hyperliquid.xyz/ws"
 INFO_URL = "https://api.hyperliquid.xyz/info"
 # The hosted node-data relay (handoff 1d): the node_feed setting's default ("hosted"). This is the only place its
-# address is written. The DNS name isn't chosen yet: until it is, the .invalid placeholder makes the node panels say
-# the hosted relay isn't set in this version (transport.check_relay_url) instead of trying to connect.
-HOSTED_RELAY_URL = "wss://relay.hyperliquid-desk.invalid/v1/feed"
+# address is written (Kevin's host, Nov 10). A .invalid host here would make the node panels say the hosted relay
+# isn't set in this version (transport.check_relay_url) instead of trying to connect.
+HOSTED_RELAY_URL = "wss://relay.perpdepth.com/v1/feed"
 NODE_FEED_OFF = ("off", "none", "public")
 
 
@@ -37,8 +37,8 @@ class DeskConfig:
     info_url: str = INFO_URL
     node_feed: str = ""                    # a Unix socket path or a ws(s):// relay URL; "" = public mode only
     node_feed_is_hosted_default: bool = False   # node_feed came from the "hosted" default (HOSTED_RELAY_URL)
-    # Keep the four markets' executions from a relay while no node panel is on screen, so node-mode alerts keep
-    # running in the background (about 9 KB/s). Off: node data stops 60 s after the last panel was seen.
+    # Keep every followed market's executions from a relay while no node panel is on screen, so node-mode alerts keep
+    # running in the background. Off: node data stops 60 s after the last panel was seen.
     node_alerts: bool = False
     node_replay_file: str = ""             # a recording, played only when a replay is started explicitly
     # Node mode: a manual burst threshold per market (USD per 60 s); a market not listed (or listed as "auto") uses the

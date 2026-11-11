@@ -16,7 +16,7 @@ readme: true
 platforms: [linux, macos]
 title: Hyperliquid Desk
 known_issues:
-  - Node panels use the plugin author's hosted relay by default (node_feed "hosted"), a third-party network call; its address is set in a release once the relay is live, and until then the node panels say the hosted relay isn't set and public mode works as before. Set node_feed to "off" to turn node data off, or to your own engine socket or relay.
+  - Node panels use the plugin author's hosted relay by default (node_feed "hosted"), a third-party network call to relay.perpdepth.com; when it can't serve, the node panels say why and public mode works as before. Set node_feed to "off" to turn node data off, or to your own engine socket or relay.
   - When the hosted relay is down, full or switched off, the node panels say which and public mode keeps working; a replay is never used in its place.
 capabilities:
   provides_tools: [hl_market, hl_flow, hl_context, hl_status, hl_alerts, hl_wallets, hl_candles, hl_structure, hl_watch, node_status, node_book, node_stops]

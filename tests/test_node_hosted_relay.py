@@ -1,7 +1,7 @@
 """Hosted relay mode (handoff 1d step 7): the relay's views, node data only while it is used, and the relay's
 refusals shown in plain words.
 
-The relay serves each subscriber full data for the market it has open plus the executions of all four markets, or
+The relay serves each subscriber full data for the market it has open plus the executions of every followed market, or
 the executions only (profile hl-relay-2). Filtered-out lines arrive as `filtered` ranges, so a lost line is still a
 jump. These tests feed the client the relay's executions view of a recorded executions stream (the fixture's real
 lines, with the ranges the relay builds between them), and run the transport against a small relay stand-in on
@@ -171,7 +171,9 @@ def test_the_relay_url_is_bound_to_its_tls_origin():
     assert check_relay_url("ws://127.0.0.1:9000/v1/feed") is None
     assert "wss://" in check_relay_url("ws://relay.example.org/v1/feed")
     assert "user name or password" in check_relay_url("wss://u:p@relay.example.org/v1/feed")
-    assert "isn't set in this version" in check_relay_url(HOSTED_RELAY_URL)
+    assert check_relay_url(HOSTED_RELAY_URL) is None                      # the hosted relay's own wss origin
+    assert HOSTED_RELAY_URL.startswith("wss://")
+    assert "isn't set in this version" in check_relay_url("wss://relay.example.invalid/v1/feed")   # a placeholder
     assert check_relay_url("https://relay.example.org/") is not None
 
 
@@ -185,7 +187,7 @@ def test_demand_timeline():
     assert d.status(159.5)["unsubscribes_in_s"] == 0.5
     assert d.want(160.5) is None                       # then nothing: the connection closes
     alerts = Demand(MARKETS, alerts_in_background=True, linger_s=60, grace_s=5)
-    assert alerts.want(0.0) == (None, MARKETS)         # background alerts: the four markets' executions only
+    assert alerts.want(0.0) == (None, MARKETS)         # background alerts: every market's executions only
     alerts.panel("BTC", now=10.0)
     assert alerts.want(11.0) == ("BTC", MARKETS) and alerts.want(71.0) == (None, MARKETS)
 
