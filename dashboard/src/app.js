@@ -4325,8 +4325,12 @@
         // aged_status does at serving time): the replay it described is over by then, so it reads plainly behind.
         if (st.catching_up && ageS > 3) {
           const win = (st.delay_window_ms || 5000) / 1000;
-          const plain = NUM(st.delay_ms) && NUM(st.delayed_after_ms) ? "the node feed's delay is " + (st.delay_ms / 1000).toFixed(1) +
-            " s (" + win + " s average; delayed above " + st.delayed_after_ms / 1000 + " s)" : st.reason;
+          // the plain reason of the family's own state, as client.delay_state words it (stale or delayed)
+          const plain = !NUM(st.delay_ms) ? st.reason :
+            st.state === "STALE" && NUM(st.stale_after_ms) ? "the node feed's delay is " + (st.delay_ms / 1000).toFixed(1) +
+              " s (" + win + " s average; stale above " + st.stale_after_ms / 1000 + " s); heartbeats don't count" :
+            NUM(st.delayed_after_ms) ? "the node feed's delay is " + (st.delay_ms / 1000).toFixed(1) +
+              " s (" + win + " s average; delayed above " + st.delayed_after_ms / 1000 + " s)" : st.reason;
           return Object.assign({}, st, { catching_up: false, reason: plain });
         }
         return st;
@@ -4355,11 +4359,14 @@
       const fams = {};
       let changed = false;
       Object.keys(view.families).forEach(function (k) { fams[k] = nodeState(view.families[k]); if (fams[k] !== view.families[k]) changed = true; });
-      if (!changed) return view;
+      // the market's delay block drops its catching-up claim after 3 s on screen, on the families' rule (serving.py aged_view)
+      const dropDelay = !!(view.delay && view.delay.available && view.delay.catching_up && ageS > 3);
+      if (!changed && !dropDelay) return view;
       const out = Object.assign({}, view, { families: fams });
+      if (dropDelay) out.delay = Object.assign({}, view.delay, { catching_up: false });
       if (view.delay && view.delay.available && view.delay.state === "LIVE") {
         const d = nodeState(Object.assign({}, view.delay, { state: "LIVE", delay_window_ms: view.delay.window_ms }));
-        out.delay = Object.assign({}, view.delay, { delay_ms: d.delay_ms, state: d.state, reason: d.state === "LIVE" ? null : d.reason });
+        out.delay = Object.assign({}, out.delay || view.delay, { delay_ms: d.delay_ms, state: d.state, reason: d.state === "LIVE" ? null : d.reason });
       }
       // Late node data is shown, labelled (Kevin, Nov 10): the families and the delay keep aging on screen so the chips
       // read "delayed" with a count that grows, but no block is withheld for lateness here; the plugin withholds only

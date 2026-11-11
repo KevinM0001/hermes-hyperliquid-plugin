@@ -31,7 +31,7 @@ BUCKET_KEYS = ("new_long", "cover", "new_short", "exit")
 def aged_status(st: dict | None, age_ms: float | None) -> dict | None:
     """A family status as it stands age_ms after it was judged (None: unknown). Only LIVE statuses change state; a
     BEHIND or STALE status judged while catching up loses that claim after 3 s (the replay it described is over or
-    unknown by then) and gets back the plain delay reason."""
+    unknown by then) and gets back the plain delay reason of its own state (delayed or stale)."""
     if not isinstance(st, dict):
         return st
     if st.get("state") != "LIVE":
@@ -70,6 +70,9 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
                   aged_by_ms=round(age_ms))
         state, reason = delay_state(dl["delay_ms"], dl | {"delay_window_ms": dl["window_ms"]})
         dl.update(state=state, reason=reason)
+    if isinstance(dl, dict) and dl.get("catching_up") and (age_ms is None or age_ms > 3_000):
+        # the market's delay block drops the catching-up claim on the same rule as the families (aged_status)
+        dl = dict(dl, catching_up=False)
     if fams == view["families"] and dl is view.get("delay"):
         return view
     out = dict(view, families=fams, delay=dl)
