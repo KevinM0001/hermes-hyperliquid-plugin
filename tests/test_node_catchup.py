@@ -110,6 +110,27 @@ def test_the_live_recording_starts_by_catching_up_then_reads_behind():
         assert note.startswith("as of the node's book at ") and note.endswith(" s behind"), note
 
 
+def test_the_delay_block_carries_the_claim_only_while_behind_or_stale():
+    """The market's delay block (node_status markets[m].delay, the tab's counter) is built from client.delay, which
+    judges the flag on the averaged delay alone: under clock skew the block's state is UNKNOWN and the claim goes with
+    it, as on the families (review of Nov 11); a BEHIND block keeps it."""
+    ms = 1_000_000
+    c = client(cfg=PROD)
+    # a replay: the offset fell 16 s in 2 s of clock; the 5 s average is about 23.9 s, above the delayed limit
+    c._market("X").wm_hist.extend([(0, 28_000), (1_000 * ms, 20_000), (2_000 * ms, 12_000)])
+    behind = panels.node_delay(c, "X", 2_100 * ms)
+    assert behind["available"] is True and behind["state"] == "BEHIND" and behind["catching_up"] is True, behind
+    assert 10_000 < behind["delay_ms"] < 30_000
+    c.skew = dict(c.skew, bad=True, worst_offset_ms=-2_500)
+    unknown = panels.node_delay(c, "X", 2_100 * ms)
+    assert unknown["state"] == "UNKNOWN" and unknown["catching_up"] is False, unknown
+    assert unknown["reason"].startswith("clock skew: ") and unknown["delay_ms"] == behind["delay_ms"]
+    # the same block without the skew reads BEHIND with the claim again; a block with no watermark has no flag at all
+    c.skew = dict(c.skew, bad=False, worst_offset_ms=0)
+    assert panels.node_delay(c, "X", 2_100 * ms) == behind
+    assert "catching_up" not in panels.node_delay(c, "Y", 2_100 * ms)
+
+
 STALE_ST = {"family": "book", "state": "STALE", "catching_up": True, "delay_ms": 41_200, "watermark_block_time_ms": 1_762_000_000_000,
             "delay_window_ms": 5_000, "delayed_after_ms": 10_000, "stale_after_ms": 30_000,
             "reason": "catching up: the feed is replaying what it buffered, so the node's time advances faster than the clock "

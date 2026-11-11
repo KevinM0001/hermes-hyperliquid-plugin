@@ -645,9 +645,11 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
     return {"tool": "node_status", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
             **_served(snap), "source": source, "node": snap.get("node_status"), "markets": markets,
             "states": {"LIVE": "the node feed's delay (5 s average of the latest watermark's age) is within its limit",
-                       "catching_up": "a flag beside a family's state: true while the feed replays what it buffered after a "
-                                      "connection, so the node's time advances faster than the clock; the family is loading, "
-                                      "not lagging, and its note reads 'catching up: ... behind and falling' instead of 'as of ... behind'",
+                       "catching_up": "a flag beside a family's state, and beside the market's delay block: true while the feed "
+                                      "replays what it buffered after a connection, so the node's time advances faster than the "
+                                      "clock; the family is loading, not lagging, and its note reads 'catching up: ... behind and "
+                                      "falling' instead of 'as of ... behind'; it sits only beside a BEHIND or STALE state, never "
+                                      "beside LIVE or UNKNOWN",
                        "BEHIND": "delayed: the node feed's 5 s average delay is above the delayed limit; the data is "
                                  "served with this label and its delay, as of its block time, never as current",
                        "STALE": "the node feed's 5 s average delay is above the stale limit (heartbeats don't count); "

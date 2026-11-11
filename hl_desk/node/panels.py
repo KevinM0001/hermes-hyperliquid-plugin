@@ -326,7 +326,12 @@ def node_delay(client, market: str, now_mono_ns=None) -> dict:
         # As for the families: this machine's clock is behind the producer's, so the delay can't be bounded.
         state, reason = "UNKNOWN", (f"clock skew: this machine's clock is up to {-client.skew['worst_offset_ms']} ms "
                                     "behind the producer's, so the delay can't be bounded")
-    return {"available": d.get("delay_ms") is not None, "state": state, "reason": reason or d.get("reason")} | d
+    out = {"available": d.get("delay_ms") is not None, "state": state, "reason": reason or d.get("reason")} | d
+    if "catching_up" in d:
+        # The claim rides only with a BEHIND or STALE state (as on the families): under clock skew the block reads
+        # UNKNOWN and carries no claim, so node_status never serves {state: UNKNOWN, catching_up: true}.
+        out["catching_up"] = bool(d["catching_up"]) and state in ("BEHIND", "STALE")
+    return out
 
 
 def provenance(client, market: str) -> dict:
