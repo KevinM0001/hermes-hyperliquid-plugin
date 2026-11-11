@@ -322,7 +322,9 @@
 .hd-fold-btn:focus-visible { outline: 1px solid var(--hd-text); outline-offset: 1px; }
 .hd-card.hd-folded > .hd-card-body { padding-top: 8px; padding-bottom: 9px; }
 .hd-card.hd-folded .hd-events { border-top: 0; padding-top: 0; }
-.hd-row-m > .hd-p-flow.hd-folded { align-self: start; }
+/* Who is aggressive keeps the two grid rows it spans when folded (review of Nov 11): the grid stretches its box down
+   to the Watch card, the figures at the top, instead of leaving the column blank; Flow notes folded still sits at
+   the top of its own row. The narrow layout gives every card its own auto row, so neither grows there. */
 .hd-row-m > .hd-p-notes.hd-folded { align-self: start; }
 .hd-toggle { display: inline-flex; gap: 0; padding: 2px; border-radius: 4px; background: var(--hd-track); }
 .hd-toggle .hd-btn-xs { background: transparent; color: var(--hd-muted); border-radius: 3px; min-height: 20px; }
@@ -673,17 +675,37 @@
 .hd-events-head { font-weight: 700; letter-spacing: .05em; margin-bottom: 6px; color: var(--hd-text); }
 .hd-events-head .hd-dim { font-weight: 400; letter-spacing: 0; font-size: 11px; }
 .hd-events ul { list-style: none; margin: 0; padding: 0; max-height: 360px; overflow: auto; }
+/* one event row (review of Nov 11): time | market | type | body | meta, the same five columns for every kind */
 .hd-ev {
-  display: grid; grid-template-columns: 70px 92px minmax(0, 1fr) auto; gap: 4px 10px; align-items: center;
-  padding: 5px 2px; border-bottom: 1px solid var(--hd-row);
+  display: grid; grid-template-columns: 70px 92px 96px minmax(0, 1fr) minmax(92px, auto); gap: 3px 10px; align-items: center;
+  padding: 6px 2px; border-bottom: 1px solid var(--hd-row); line-height: 1.5;
 }
 .hd-ev-time { color: var(--hd-text-2); }
 .hd-ev-mkt { font-weight: 700; overflow: hidden; text-overflow: ellipsis; color: var(--hd-text); }
-.hd-ev-held { color: var(--hd-muted); white-space: nowrap; }
-.hd-ev-wallets { grid-column: 3 / 5; font-size: 11.5px; }
+.hd-ev-body { min-width: 0; overflow-wrap: anywhere; }
+.hd-ev-body .hd-regime { min-width: 112px; box-sizing: border-box; text-align: center; vertical-align: middle; }
+.hd-ev-held { color: var(--hd-muted); white-space: nowrap; justify-self: end; text-align: right; }
+.hd-ev-held .hd-badge { font-size: 9.5px; padding: 3px 5px; }
+.hd-ev-wallets { grid-column: 4 / -1; font-size: 11.5px; color: var(--hd-muted); }
 .hd-ev-wallets ol { list-style: none; margin: 2px 0; padding: 0; display: flex; flex-wrap: wrap; gap: 2px 14px; }
+/* the row's TYPE chip: neutral, filling its column; the liquidation and burst rows carry their alert colours */
+.hd-evtype {
+  display: block; box-sizing: border-box; width: 100%; text-align: center; font: 600 10px/1 var(--hd-mono); letter-spacing: .05em;
+  padding: 4px 6px; border-radius: 3px; border: 1px solid var(--hd-line); background: var(--hd-track); color: var(--hd-text-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hd-evtype-liq { background: var(--hd-bad); border-color: transparent; color: #230406; }
+.hd-evtype-burst { border-color: transparent; color: #000000; }
+.hd-evtype.hd-bg-ask { background: var(--hd-ask); }
+.hd-evtype.hd-bg-bid { background: var(--hd-bid); }
+.hd-ev-rule { margin: -2px 0 6px; }
+.hd-ev-rule b { font-weight: 600; color: var(--hd-text-2); }
 .hd-gaptag { font: 700 11px/1 var(--hd-mono); padding: 3px 6px; border-radius: 3px; border: 1px dashed var(--hd-warn); color: var(--hd-warn); }
-.hd-bursttag { font: 700 10.5px/1 var(--hd-mono); padding: 3px 6px; border-radius: 3px; color: #000000; }
+@media (max-width: 1000px) {
+  .hd-ev { grid-template-columns: 64px 84px 92px minmax(0, 1fr); }
+  .hd-ev-held { grid-column: 4; grid-row: 1; }
+  .hd-ev-body, .hd-ev-wallets { grid-column: 1 / -1; }
+}
 
 /* ---------------------------------------------------------------- wallets */
 .hd-wt-pair { display: flex; flex-wrap: wrap; gap: 14px; }
@@ -727,9 +749,6 @@
   .hd-root { padding: 8px 6px 20px; }
   .hd-badges { max-width: 100%; justify-content: flex-start; }
   .hd-card-head { flex-wrap: wrap; }
-  .hd-ev { grid-template-columns: 64px 80px minmax(0, 1fr); }
-  .hd-ev-held { grid-column: 3; }
-  .hd-ev-wallets { grid-column: 1 / -1; }
   .hd-head-right { margin-left: 0; justify-content: flex-start; }
 }
 
@@ -954,9 +973,16 @@
 .hd-bucket-head .hd-badge { font-size: 9.5px; padding: 3px 5px; }
 .hd-ev-node { margin-top: 3px; font-size: 11.5px; }
 .hd-ev-node .hd-badge { font-size: 9.5px; padding: 3px 5px; }
-.hd-liqtag { font: 700 10.5px/1 var(--hd-mono); padding: 3px 6px; border-radius: 3px; background: var(--hd-bad); color: #230406; }
-.hd-ev-liq .hd-ev-held .hd-badge { font-size: 9.5px; padding: 3px 5px; }
-.hd-wsplit-prov { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin-left: 6px; font-size: 11px; }
+/* The split's header holds two lines whatever the poll brings (review of Nov 11): the title with the flow chip pinned at
+   its right end, then the window sentence followed by the provenance; a line that runs long truncates its text rather
+   than wrapping the chip or the provenance onto another line. */
+.hd-wsplit-head { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.hd-wsplit-line { display: flex; flex-wrap: nowrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.hd-wsplit-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; line-height: 23px; }
+.hd-wsplit-line > .hd-chip { flex: none; }
+.hd-wsplit-sub { font-size: 11px; }
+.hd-wsplit-win { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hd-wsplit-prov { flex: none; white-space: nowrap; }
 
 /* ================================================================ chat:top strip (the Chat page) */
 .hd-strip {

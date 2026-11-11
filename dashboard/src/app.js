@@ -77,16 +77,6 @@
     fresh: "ok", stale: "warn", delayed: "warn", unverified: "info", warming_up: "info",
     disconnected: "bad", stopped: "bad", missing: "dim", expired: "warn"
   };
-  const FRESHNESS_LEGEND = [
-    ["fresh", "the feed is still advancing and its source time is recent under a known clock bound"],
-    ["delayed", "the feed advances but its source time is old: a backlog or a delayed source"],
-    ["stale", "a field that should keep advancing hasn't, within its max age"],
-    ["unverified", "no verified progress signal (bbo always), so silence can't be told from a stall"],
-    ["warming_up", "nothing received yet on this connection, or a window lacks coverage"],
-    ["disconnected", "the data feed has no connection"],
-    ["stopped", "the data feed isn't running"],
-    ["missing", "nothing has ever been received for this field"]
-  ];
 
   // ------------------------------------------------------------------ small helpers
 
@@ -1332,15 +1322,6 @@
 
   const NODE_FAMILIES = ["book", "triggers", "depth", "bands", "flow"];
   const FAMILY_TONE = { LIVE: "ok", REPLAY: "replay", STALE: "dim", BEHIND: "dim", DELAYED: "dim", UNKNOWN: "info", INVALID: "bad" };
-  const FAMILY_LEGEND = [
-    ["LIVE", "the node feed's delay (the latest watermark's age, 5 s average) is within its limit"],
-    ["DELAYED", "the node feed's 5 s average delay is above the delayed limit (state BEHIND in the data)"],
-    ["CATCHING UP", "the feed is replaying what it buffered after a connection, so the node's time advances faster than the clock; the delay is falling"],
-    ["STALE", "the node feed's 5 s average delay is above the stale limit; heartbeats don't count"],
-    ["UNKNOWN", "clock skew: this machine's clock can't bound the ages"],
-    ["INVALID", "not usable (no snapshot yet, a gap, a new producer epoch, a crossed book) until a fresh snapshot"],
-    ["REPLAY", "played back from a recording, never current"]
-  ];
   // A hosted relay adds: idle (node data paused, nothing on screen used it), full (at capacity), stopped (switched
   // off by its operator); each comes with the plugin's plain reason beside the chip.
   const CONN_TONE = { connected: "ok", connecting: "warn", disconnected: "bad", refused: "bad", dropped: "bad",
@@ -2872,17 +2853,38 @@
 
   const SPLIT_COLS = [["new_long", "New long", "buying"], ["cover", "Cover", "buying"], ["new_short", "New short", "selling"], ["exit", "Exit", "selling"]];
 
+  // <pure:splitWindowLabel> The window sentence under the Wallet activity split's title, in one shape every poll
+  // (review of Nov 11): the plugin's own label when the node's window is behind the panel's, otherwise the same
+  // sentence built here from the served window, ending "the panel's own window". Null without a usable window.
+  function splitWindowLabel(s) {
+    if (!s || s.available !== true) return null;
+    if (s.window_label) return s.window_label;
+    const w = s.window || {};
+    if (typeof w.start_exclusive_ms !== "number" || typeof w.end_ms !== "number" || !(w.end_ms >= w.start_exclusive_ms)) return null;
+    const len = w.end_ms - w.start_exclusive_ms;
+    const span = len >= 120000 ? Math.round(len / 60000) + " min" : Math.round(len / 1000) + " s";
+    const clock = function (ms) { return new Date(ms).toISOString().slice(11, 19); };
+    return "these wallets' node split over the node's last " + span + ", " + clock(w.start_exclusive_ms) + " to " + clock(w.end_ms) + " UTC, the panel's own window";
+  }
+  // </pure:splitWindowLabel>
+
   function WalletSplit(props) {
     const p = props.p;
     const s = p.node_activity_split;
     const nv = props.nv;
-    const head = h("div", { className: "hd-wt-title" }, h(Badge, { kind: "node", title: "node fills" }, "NODE"), " ",
-      h("b", null, "Wallet activity split"), h("span", { className: "hd-dim" }, " (new long, cover, new short, exit), from each wallet's own fills"),
-      s && s.available === true && s.window_label
-        ? h("span", { className: "hd-dim", title: s.as_of_note || undefined }, " \u00b7 " + s.window_label) : null,
-      nodeOn(nv) ? h("span", { className: "hd-wsplit-prov" }, " ", h(FamChip, { name: "flow", f: g(nv, "families", "flow") }), " ",
-        h("span", { className: "hd-dim", title: streamLabel(g(nv, "provenance", "stream")) }, (g(nv, "provenance", "mode") || "?") + " \u00b7 " +
-          (g(nv, "provenance", "source") ? srcLabel(nv.provenance.source) : "source not in snapshot") + " \u00b7 epoch " + (isNum(g(nv, "provenance", "epoch")) ? nv.provenance.epoch : "none yet"))) : null);
+    // Two lines whatever the poll brings (review of Nov 11): the title with the flow chip pinned at its right end,
+    // then the window sentence in one shape, behind the panel's window or not, followed by the provenance. Nothing
+    // changes line from one poll to the next.
+    const label = splitWindowLabel(s);
+    const head = h("div", { className: "hd-wt-title hd-wsplit-head" },
+      h("div", { className: "hd-wsplit-line" },
+        h("span", { className: "hd-wsplit-name" }, h(Badge, { kind: "node", title: "node fills" }, "NODE"), " ",
+          h("b", null, "Wallet activity split"), h("span", { className: "hd-dim" }, " (new long, cover, new short, exit), from each wallet's own fills")),
+        nodeOn(nv) ? h(FamChip, { name: "flow", f: g(nv, "families", "flow") }) : null),
+      label || nodeOn(nv) ? h("div", { className: "hd-wsplit-line hd-wsplit-sub" },
+        label ? h("span", { className: "hd-dim hd-wsplit-win", title: s.as_of_note || label }, label) : null,
+        nodeOn(nv) ? h("span", { className: "hd-dim hd-wsplit-prov", title: streamLabel(g(nv, "provenance", "stream")) }, (g(nv, "provenance", "mode") || "?") + " \u00b7 " +
+          (g(nv, "provenance", "source") ? srcLabel(nv.provenance.source) : "source not in snapshot") + " \u00b7 epoch " + (isNum(g(nv, "provenance", "epoch")) ? nv.provenance.epoch : "none yet")) : null) : null);
     if (!s) {
       return h("div", { className: "hd-dim hd-small", "data-node-hook": "wallet-activity-split" },
         "Wallet activity split (new long, cover, new short, exit): needs node mode.");
@@ -3588,35 +3590,51 @@
     return h("article", { className: "hd-deck-card hd-dl", "aria-label": "Flow Deck " + name }, head, nums, split, details);
   }
 
+  // Every event row has the same five columns (review of Nov 11): time | market | TYPE | body | meta, so the chips and
+  // the text line up down the list, and a row's detail lines sit under the body column. The TYPE chip says what the row is.
+  const EVENT_TYPES = {
+    regime_change: ["REGIME", "regime", "regime change: the market's regime over its 90 s window moved to another class"],
+    regime_ended_by_gap: ["GAP", "gap", "the regime ended at a coverage gap; no regime or burst spans a gap"],
+    burst: ["BURST", "burst", "burst: aggressive notional above the market's burst rule within 60 s"],
+    liquidation_burst: ["LIQUIDATION", "liq", "liquidation alert: liquidations in the window at or above the alert's count or notional"]
+  };
+
+  function EventType(props) {
+    const k = EVENT_TYPES[props.type] || [String(props.type || "event").replace(/_/g, " ").toUpperCase(), "other", props.type || "event"];
+    return h("span", { className: cx("hd-evtype", "hd-evtype-" + k[1], props.className), title: props.title || k[2] }, k[0]);
+  }
+
   function EventRow(props) {
     const e = props.e;
     const t = h("span", { className: "hd-ev-time" }, hms(isNum(e.at_ms) ? e.at_ms : e.at));
     const mk = h("span", { className: "hd-ev-mkt" }, e.market);
+    const held = h("span", { className: "hd-ev-held" }, "(held " + (isNum(e.held_s) ? heldS(e.held_s) : "?") + ")");
     if (e.type === "regime_change") {
-      return h("li", { className: "hd-ev", title: e.text }, t, mk,
+      return h("li", { className: "hd-ev hd-ev-regime", title: e.text }, t, mk, h(EventType, { type: e.type }),
         h("span", { className: "hd-ev-body" }, h(RegimeBadge, { regime: e.from }), " -> ", h(RegimeBadge, { regime: e.to })),
-        h("span", { className: "hd-ev-held" }, "(held " + (isNum(e.held_s) ? heldS(e.held_s) : "?") + ")"));
+        held);
     }
     if (e.type === "regime_ended_by_gap") {
-      return h("li", { className: "hd-ev hd-ev-gap", title: e.text }, t, mk,
+      return h("li", { className: "hd-ev hd-ev-gap", title: e.text }, t, mk, h(EventType, { type: e.type }),
         h("span", { className: "hd-ev-body" }, h(RegimeBadge, { regime: e.from }), " -> ", h("span", { className: "hd-gaptag" }, "gap"),
           h("span", { className: "hd-dim" }, " " + (e.reason || ""))),
-        h("span", { className: "hd-ev-held" }, "(held " + (isNum(e.held_s) ? heldS(e.held_s) : "?") + ")"));
+        held);
     }
     if (e.type === "burst") {
       const w = e.wallets || {};
+      const node = e.stream === "node fills";
       return h("li", { className: "hd-ev hd-ev-burst", title: e.text }, t, mk,
+        h(EventType, { type: e.type, className: e.side === "selling" ? "hd-bg-ask" : "hd-bg-bid",
+          title: "burst: aggressive " + e.side + " above the market's burst rule within 60 s" }),
         h("span", { className: "hd-ev-body" },
-          h("span", { className: cx("hd-bursttag", e.side === "selling" ? "hd-bg-ask" : "hd-bg-bid") }, "BURST"),
-          " aggressive " + e.side + " ", h("b", { className: "hd-num" }, isNum(e.aggressive_notional_usd) ? usd(e.aggressive_notional_usd) : "?"),
+          "aggressive " + e.side + " ", h("b", { className: "hd-num" }, isNum(e.aggressive_notional_usd) ? usd(e.aggressive_notional_usd) : "?"),
           " within 60 s \u00b7 threshold " + (isNum(e.threshold_usd) ? usd(e.threshold_usd) : "?") +
           (isNum(e.executions) ? " \u00b7 " + intf(e.executions) + " executions" : ""),
-          e.stream === "node fills" ? h("div", { className: "hd-small" },
-            h(Badge, { kind: "node", title: e.rule || "node fills" }, "NODE \u00b7 node fills"), " ",
-            h("span", { className: "hd-dim" }, (e.threshold && e.threshold.label) || "threshold label not in snapshot"), " \u00b7 ",
+          node ? h("div", { className: "hd-small" },
+            h("span", { className: "hd-dim" }, "node fills \u00b7 " + ((e.threshold && e.threshold.label) || "threshold label not in snapshot")), " \u00b7 ",
             e.rank && e.rank.available ? h("b", { title: e.rank.reference || "" }, e.rank.label)
               : h("span", null, "rank ", h(Unavailable, { reason: (e.rank && e.rank.reason) || "not in snapshot" }))) : null),
-        h("span", { className: "hd-ev-held" }),
+        h("span", { className: "hd-ev-held" }, node ? h(Badge, { kind: "node", title: e.rule || "node fills" }, "NODE") : null),
         h("div", { className: "hd-ev-wallets" },
           (w.listed || []).length ? h("ol", null, w.listed.map(function (x) {
             return h("li", { key: x.address },
@@ -3630,9 +3648,8 @@
     if (e.type === "liquidation_burst") {
       const traders = e.traders || [];
       const th = e.threshold || {};
-      return h("li", { className: "hd-ev hd-ev-liq", title: e.text }, t, mk,
-        h("span", { className: "hd-ev-body" },
-          h("span", { className: "hd-liqtag" }, "LIQUIDATIONS"), " ", e.text || "liquidation burst (no text in snapshot)"),
+      return h("li", { className: "hd-ev hd-ev-liq", title: e.text }, t, mk, h(EventType, { type: e.type }),
+        h("span", { className: "hd-ev-body" }, e.text || "liquidation burst (no text in snapshot)"),
         h("span", { className: "hd-ev-held" }, h(Badge, { kind: "node", title: (e.source || "node fills") + "\n" + nodeSrcText(props.nodeSrc) }, "NODE")),
         h("div", { className: "hd-ev-wallets" },
           h("div", null,
@@ -3646,7 +3663,8 @@
           traders.length ? h("ol", null, traders.map(function (a) { return h("li", { key: a }, h(Addr, { address: a })); })) : null,
           e.counting ? h("div", { className: "hd-dim hd-small" }, "counting: " + e.counting) : null));
     }
-    return h("li", { className: "hd-ev" }, t, mk, h("span", { className: "hd-ev-body" }, e.text || e.type));
+    return h("li", { className: "hd-ev" }, t, mk, h(EventType, { type: e.type }),
+      h("span", { className: "hd-ev-body" }, e.text || e.type), h("span", { className: "hd-ev-held" }));
   }
 
   // Which burst rule a market uses and its threshold: node fills (node mode, automatic from the dated calibration or
@@ -3657,6 +3675,33 @@
     if (b.available === false) return "node fills: unavailable (" + (b.reason || "no reason given") + ")";
     const th = b.threshold || {};
     return "node fills, " + (isNum(th.usd) ? usd(th.usd) : "no threshold") + " (" + (th.label || "?") + ")";
+  }
+
+  // The same rule as one short value for the compact line: the threshold, or why there is none.
+  function burstRuleShort(b) {
+    if (!b) return "rule not in snapshot";
+    if (b.mode === "public") return isNum(b.threshold_usd) ? usd(b.threshold_usd) : "?";
+    if (b.available === false) return "unavailable";
+    const th = b.threshold || {};
+    return isNum(th.usd) ? usd(th.usd) : "no threshold";
+  }
+
+  // The burst rule per market on one line (review of Nov 11): the market and its threshold. The stream, the calibration
+  // text and the setting advice (burstRuleText) stay in the tooltips, the line's and each market's; nothing is dropped.
+  function BurstRuleLine(props) {
+    const names = props.names;
+    const deck = props.deck;
+    const streams = [];
+    names.forEach(function (n) { const s = g(deck[n], "bursts", "stream"); if (s && streams.indexOf(s) < 0) streams.push(s); });
+    const uniform = streams.length <= 1;
+    const full = "Burst rule, per market:\n" + names.map(function (n) { return n + ": " + burstRuleText(deck[n].bursts); }).join("\n");
+    return h("div", { className: "hd-dim hd-small hd-ev-rule", title: full },
+      "Burst rule (" + (uniform && streams.length ? streams[0] + ", " : "") + "per market, within 60 s): ",
+      names.map(function (n, i) {
+        const b = deck[n].bursts;
+        return h(Fragment, { key: n }, i ? " \u00b7 " : "",
+          h("span", { className: "hd-ev-rule-m", title: n + ": " + burstRuleText(b) }, h("b", null, n), " " + (uniform ? burstRuleShort(b) : burstRuleText(b))));
+      }));
   }
 
   function DeckPanel(props) {
@@ -3670,6 +3715,7 @@
     const events = [];
     names.forEach(function (n) { (deck[n].events || []).forEach(function (e) { events.push(e); }); });
     events.sort(function (a, b) { return (b.at_ms || 0) - (a.at_ms || 0); });
+    const nodeBursts = names.some(function (n) { return g(deck[n], "bursts", "mode") === "node"; });
     // Folded (Kevin, Nov 11): the newest event only (or the empty line); the counts, the burst rules and the list need EXPAND.
     const open = props.open !== false;
     return h(Panel, {
@@ -3681,10 +3727,13 @@
     },
     // The other markets' cards are gone (Kevin, Nov 10): the Watch fold covers the other markets; this panel is the events.
     h("div", { className: "hd-events" },
-      open ? h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, " " +
+      // The head line says what an event is (review of Nov 11), then the counts and the caveats.
+      open ? h("div", { className: "hd-events-head" }, "EVENTS", h("span", { className: "hd-dim" }, ": " +
+        (nodeBursts ? "regime changes, bursts (node fills above the market's burst rule) and liquidation alerts"
+          : "regime changes and bursts (public trades above the market's burst rule)") + " \u00b7 " +
         (events.length > 40 ? listCount("newest", 40, "events", events.length, "in this snapshot") : intf(events.length) + " events, newest first") +
-        " \u00b7 the snapshot carries up to 20 per market \u00b7 no regime or burst spans a gap \u00b7 UTC")) : null,
-      open ? h("div", { className: "hd-dim hd-small" }, "Burst rule: " + names.map(function (n) { return n + " " + burstRuleText(deck[n].bursts); }).join(" \u00b7 ")) : null,
+        " \u00b7 up to 20 per market \u00b7 no regime or burst spans a gap \u00b7 UTC")) : null,
+      open ? h(BurstRuleLine, { names: names, deck: deck }) : null,
       events.length ? h("ul", null, events.slice(0, open ? 40 : 1).map(function (e, i) {
         return h(EventRow, { key: e.type + ":" + e.market + ":" + e.at_ms + ":" + (e.side || "") + ":" + i, e: e, nodeSrc: nodeSrc });
       })) : h("div", { className: "hd-empty" }, "No events in the current coverage yet.")));
@@ -4987,25 +5036,10 @@
       h("div", { className: "hd-legend" },
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "api" }, "PUBLIC API"), "Hyperliquid public websocket (l2Book, trades, bbo, activeAssetCtx) and info endpoint (l2Book nSigFigs, clearinghouseState, frontendOpenOrders)"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "mode-live" }, "LIVE"), "collected now"),
-        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "mode-replay" }, "REPLAY"), "recorded data played back (public replay mode, or the Node replay area); never current"),
-        h("span", { className: "hd-legend-item" }, h(Badge, { kind: "mode-synthetic" }, "SYNTHETIC"), "constructed test data, not market data"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "NODE"), "from the node feed (l4-livefeed v2): order-level book, waiting trigger orders and fills; one banner at the top says when no node feed is configured (setting node_feed)"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "HEATMAP"), "resting bid and ask notional per price bin over 15 min, sampled from the node's full book (node mode)"),
         h("span", { className: "hd-legend-item" }, h(Badge, { kind: "node" }, "NODE FEED DELAY"), "the age of the node feed's latest watermark (the feed's marker that everything through block N at time T has been sent), averaged over 5 s; shown as delayed above 10 s and stale above 30 s, counting up on screen as the snapshot ages"))),
-      h("div", { className: "hd-legend" },
-        h("span", { className: "hd-dim" }, "Freshness"),
-        FRESHNESS_LEGEND.map(function (x) {
-          return h("span", { key: x[0], className: "hd-chip hd-tone-" + toneOfStatus(x[0]), title: x[1] },
-            h("span", { className: "hd-dot", "aria-hidden": "true" }), x[0].replace("_", " "));
-        }),
-        h("span", { className: "hd-dim" }, "Unavailable values show their reason, never 0. Descriptive public data, not trade advice.")),
-      props && props.nodeOn ? h("div", { className: "hd-legend" },
-        h("span", { className: "hd-dim" }, "Node families"),
-        FAMILY_LEGEND.map(function (x) {
-          return h("span", { key: x[0], className: "hd-chip hd-tone-" + famTone(x[0]), title: x[1] },
-            h("span", { className: "hd-dot", "aria-hidden": "true" }), x[0]);
-        }),
-        h("span", { className: "hd-dim" }, "A panel built on the node book shows INVALID while the book is invalid or crossed.")) : null);
+      h("div", { className: "hd-legend" }, h("span", { className: "hd-dim" }, "Descriptive public data, not trade advice.")));
   }
 
   // ------------------------------------------------------------------ app

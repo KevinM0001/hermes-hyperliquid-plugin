@@ -98,3 +98,64 @@ def test_folded_notes_and_alerts_keep_one_line():
     deck = _component("DeckPanel")
     assert "events.slice(0, open ? 40 : 1)" in deck
     assert 'open ? h("div", { className: "hd-events-head" }' in deck
+
+
+# ---- the user's second look at the Desk page (review of Nov 11): three small fixes
+
+def test_folded_who_is_aggressive_fills_its_grid_rows():
+    """Folded, Who is aggressive keeps the two grid rows it spans on the wide layout, so its box reaches the Watch
+    card instead of leaving the right column blank; Flow notes folded still sits at the top of its own row."""
+    assert ".hd-row-m > .hd-p-flow { grid-column: 2; grid-row: 2 / 4;" in CSS
+    assert "align-items: stretch" in re.search(r"\.hd-row-m \{([^}]*)\}", CSS).group(1)
+    assert ".hd-p-flow.hd-folded" not in CSS
+    assert ".hd-row-m > .hd-p-notes.hd-folded { align-self: start; }" in CSS
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the tab's pure function")
+def test_wallet_split_window_sentence_has_one_shape_every_poll():
+    """The sentence under the split's title: the plugin's label when the node's window is behind the panel's, else the
+    same sentence built in the tab and ending "the panel's own window"; nothing without a usable window."""
+    fn = re.search(r"// <pure:splitWindowLabel>.*?\n(.*?)  // </pure:splitWindowLabel>", APP, re.S).group(1)
+    t0 = 1794416414730                                   # 2026-11-11T17:00:14.730Z
+    behind = "these wallets' node split over the node's last 5 min, 17:00:14 to 17:05:14 UTC, 3 s behind the panel's window"
+    cases = {"behind": {"available": True, "as_of_note": "x", "window_label": behind,
+                        "window": {"start_exclusive_ms": t0, "end_ms": t0 + 300_000}},
+             "own": {"available": True, "as_of_note": None, "window_label": None,
+                     "window": {"start_exclusive_ms": t0, "end_ms": t0 + 300_000}},
+             "own_short": {"available": True, "window": {"start_exclusive_ms": t0, "end_ms": t0 + 90_000}},
+             "no_window": {"available": True}, "half_window": {"available": True, "window": {"end_ms": t0}},
+             "unavailable": {"available": False, "reason": "r", "window_label": behind}, "absent": None}
+    script = (fn + "\nconst cases = " + json.dumps(cases) + ";\n"
+              "const out = {}; for (const k in cases) out[k] = splitWindowLabel(cases[k]);\n"
+              "process.stdout.write(JSON.stringify(out));\n")
+    r = subprocess.run(["node", "-"], input=script, capture_output=True, text=True, timeout=30, check=True)
+    assert json.loads(r.stdout) == {
+        "behind": behind,
+        "own": "these wallets' node split over the node's last 5 min, 17:00:14 to 17:05:14 UTC, the panel's own window",
+        "own_short": "these wallets' node split over the node's last 90 s, 17:00:14 to 17:01:44 UTC, the panel's own window",
+        "no_window": None, "half_window": None, "unavailable": None, "absent": None}
+
+
+def test_wallet_split_header_keeps_the_chip_and_the_provenance_on_their_lines():
+    """Line 1: NODE, the title and its parenthesis, the flow chip pinned at the right; line 2: the window sentence
+    (always, through splitWindowLabel) then the provenance. Both lines refuse to wrap, so no tile changes line
+    between polls; a long title or sentence truncates with an ellipsis instead."""
+    split = _component("WalletSplit")
+    assert "const label = splitWindowLabel(s);" in split
+    assert 'h("div", { className: "hd-wt-title hd-wsplit-head" },' in split
+    assert 'h("div", { className: "hd-wsplit-line" },' in split and 'h("div", { className: "hd-wsplit-line hd-wsplit-sub" },' in split
+    assert split.count("h(FamChip, {") == 1 and split.index("h(FamChip, {") < split.index("hd-wsplit-sub")
+    assert 'h("span", { className: "hd-dim hd-wsplit-win", title: s.as_of_note || label }, label)' in split
+    assert split.index("hd-wsplit-win") > split.index("hd-wsplit-sub") and split.index("hd-wsplit-prov") > split.index("hd-wsplit-win")
+    assert '" \\u00b7 " + s.window_label' not in split                      # the old trailing clause on line 1 is gone
+    for cls in ("hd-wsplit-line", "hd-wsplit-name", "hd-wsplit-win"):
+        rule = re.search(r"\." + cls + r" \{([^}]*)\}", CSS).group(1)
+        assert "white-space: nowrap" in rule or "flex-wrap: nowrap" in rule, cls
+    assert "text-overflow: ellipsis" in re.search(r"\.hd-wsplit-name \{([^}]*)\}", CSS).group(1)
+    assert "flex: none" in re.search(r"\.hd-wsplit-prov \{([^}]*)\}", CSS).group(1)
+
+
+def test_the_footer_drops_the_two_sentences():
+    assert "Unavailable values show their reason, never 0." not in APP
+    assert "A panel built on the node book shows INVALID while the book is invalid or crossed." not in APP
+    assert 'h("span", { className: "hd-dim" }, "Descriptive public data, not trade advice.")' in APP

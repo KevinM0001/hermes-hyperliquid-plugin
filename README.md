@@ -159,7 +159,7 @@ Each market starts on automatic: the threshold from the shipped calibration (`hl
 hermes config set plugins.entries.hyperliquid-desk.settings.node_burst_min_usd.BTC 25000000
 ```
 
-Then run `/hl restart`, since settings are read when the collector starts. The Flow Deck's burst rule line and `node_status` show "manual: $25,000,000 (setting node_burst_min_usd)". To switch that market back to automatic, remove it and restart:
+Then run `/hl restart`, since settings are read when the collector starts. The Alerts card's burst rule line (in its tooltip) and `node_status` show "manual: $25,000,000 (setting node_burst_min_usd)". To switch that market back to automatic, remove it and restart:
 
 ```bash
 hermes config unset plugins.entries.hyperliquid-desk.settings.node_burst_min_usd.BTC
