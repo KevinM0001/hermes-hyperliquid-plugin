@@ -18760,6 +18760,7 @@
   }
 
   function StopsBody(props) {
+    const px = props.fmt || dpx;      // the Stop map's price rule when given; other panels keep dpx
     const st = props.st;
     const rows = st.rows || [];
     const out = st.outside || {};
@@ -18772,15 +18773,15 @@
     rows.forEach(function (r, i) {
       if (!divided && isFinite(Number(r.hi)) && Number(r.hi) <= ref) {
         divided = true;
-        body.push(h("tr", { key: "ref", className: "hd-ref-row" }, h("td", { colSpan: 7 }, "reference price ", h(DPx, { v: st.ref_px }), " (node book mid)")));
+        body.push(h("tr", { key: "ref", className: "hd-ref-row" }, h("td", { colSpan: 7 }, "reference price ", h(DPx, { v: st.ref_px, fmt: props.fmt }), " (node book mid)")));
       }
       body.push(h("tr", { key: i, className: r.dominated ? "hd-dominated" : undefined },
-        h("td", null, h(DPx, { v: r.lo }), "\u2013", h(DPx, { v: r.hi })),
+        h("td", null, h(DPx, { v: r.lo, fmt: props.fmt }), "\u2013", h(DPx, { v: r.hi, fmt: props.fmt })),
         h("td", null, stopKind(r.kind)),
         h("td", { className: r.side === "B" ? "hd-bid" : "hd-ask" }, orderSide(r.side)),
         stopCells(r)));
     });
-    const outside = [["below", "below " + (dpx(st.lo) || "the range")], ["above", "above " + (dpx(st.hi) || "the range")],
+    const outside = [["below", "below " + (px(st.lo) || "the range")], ["above", "above " + (px(st.hi) || "the range")],
       ["no_reference_price", "no reference price"]];
     const accOk = isNum(acc.waiting_triggers) && acc.waiting_triggers === acc.placed;
     const head = function (first) {
@@ -18795,9 +18796,9 @@
     };
     return h(Fragment, null,
       h("div", { className: "hd-small" },
-        h(KV, { k: "reference" }, st.ref_px ? h(DPx, { v: st.ref_px }) : h(Unavailable, { reason: st.ref_px_reason || "no reference price, and no reason given", compact: true })),
+        h(KV, { k: "reference" }, st.ref_px ? h(DPx, { v: st.ref_px, fmt: props.fmt }) : h(Unavailable, { reason: st.ref_px_reason || "no reference price, and no reason given", compact: true })),
         h(KV, { k: "bands of" }, dpx(st.width) || "?"),
-        h(KV, { k: "rows within" }, isNum(st.range_bps) ? "\u00b1" + num(st.range_bps / 100, 2) + "%" : "?", st.lo && st.hi ? " (" + dpx(st.lo) + "\u2013" + dpx(st.hi) + ")" : "")),
+        h(KV, { k: "rows within" }, isNum(st.range_bps) ? "\u00b1" + num(st.range_bps / 100, 2) + "%" : "?", st.lo && st.hi ? " (" + px(st.lo) + "\u2013" + px(st.hi) + ")" : "")),
       !st.ref_px && st.ref_px_reason ? h(Unavailable, { reason: "reference price: " + st.ref_px_reason, block: true }) : null,
       h("div", { className: flagged ? "hd-sizecheck-sum" : "hd-small hd-dim" },
         flagged ? h(Fragment, null, h("b", null, "Size check: "), intf(flagged) + " of " + intf(rows.length) + " bands are mostly one order (highlighted): most of their stated size is a single order.")
@@ -19081,10 +19082,10 @@
       h("div", { className: "hd-small hd-smap-kvs" },
         censusKv("waiting triggers", isNum(c.triggers_total) ? intf(c.triggers_total) : null, c.triggers_total_reason, isNum(c.triggers_through_seq) ? "through seq " + c.triggers_through_seq : null),
         censusKv("with no stated size", isNum(c.unsized_total) ? intf(c.unsized_total) : null, c.unsized_total_reason),
-        censusKv("within \u00b110% (engine's bands view)", isNum(w10) ? intf(w10) + (isNum(u10) ? ", " + intf(u10) + " unsized" : "") : null, c.within_10pct_reason, bv ? "ref " + dpx(bv.ref_px) + (isNum(bv.block) ? " at block " + bv.block : "") : null),
+        censusKv("within \u00b110% (engine's bands view)", isNum(w10) ? intf(w10) + (isNum(u10) ? ", " + intf(u10) + " unsized" : "") : null, c.within_10pct_reason, bv ? "ref " + (props.fmt || dpx)(bv.ref_px) + (isNum(bv.block) ? " at block " + bv.block : "") : null),
         censusKv("outside \u00b110%", isNum(out) ? intf(out) : null, c.outside_reason, bv && bv.outside ? intf(countOf(bv.outside.below)) + " below, " + intf(countOf(bv.outside.above)) + " above" : null),
         censusKv("executable orders now", isNum(c.executable_orders_total) ? intf(c.executable_orders_total) : null, c.executable_orders_total_reason),
-        censusKv("executable within \u00b110%", ew && isNum(ew.orders) ? intf(ew.orders) : null, c.executable_within_10pct_reason, ew ? "ref " + dpx(ew.ref_px) + " (" + (ew.ref_px_source || "") + ")" : null),
+        censusKv("executable within \u00b110%", ew && isNum(ew.orders) ? intf(ew.orders) : null, c.executable_within_10pct_reason, ew ? "ref " + (props.fmt || dpx)(ew.ref_px) + " (" + (ew.ref_px_source || "") + ")" : null),
         censusKv("executable per trigger, now", isNum(c.executable_to_trigger_ratio) ? num(c.executable_to_trigger_ratio, 2, 2) : null, c.executable_to_trigger_ratio_reason),
         censusKv("snapshot totals", st ? intf(g(st, "book", "total_orders")) + " orders / " + intf(g(st, "triggers", "total_triggers")) + " triggers = " + (isNum(st.executable_to_trigger_ratio) ? num(st.executable_to_trigger_ratio, 2, 2) : "?") : null, c.snapshot_totals_reason, st ? (isNum(g(st, "book", "block")) ? "book snapshot at block " + g(st, "book", "block") : "") + (st.note ? "\n" + st.note : "") : null)),
       c.note ? h("div", { className: "hd-small hd-dim" }, c.note) : null);
@@ -19177,13 +19178,13 @@
           h("b", null, "Accounted: "), intf(acc.waiting_triggers) + " waiting triggers = " + intf(acc.in_bands) + " in the bands + " + intf(acc.excluded_here) + " left out" + (acc.complete === false ? " (they differ)" : "")) : null;
       })(),
       h("div", { className: "hd-smap-folds" },
-        st.exclusions || st.census ? h(Why, { className: "hd-smap-fold", label: "exclusions and census" }, h(Exclusions, { ex: st.exclusions }), h(Census, { c: st.census })) : null,
+        st.exclusions || st.census ? h(Why, { className: "hd-smap-fold", label: "exclusions and census" }, h(Exclusions, { ex: st.exclusions }), h(Census, { c: st.census, fmt: pxCard })) : null,
         th && th.available !== false ? h(Why, { className: "hd-smap-fold", label: "resting depth per band, $ per $1 of price" },
           h("div", { className: "hd-thin-pair" },
             h(ThinSide, { s: th.bids_below, side: "bid", maxV: thinMax(th) }),
             h(ThinSide, { s: th.asks_above, side: "ask", maxV: thinMax(th) }))) : null,
         // The waiting stops rows (the former panel), behind a fold (Kevin, Nov 10): the map supersedes them.
-        st.rows ? h(Why, { className: "hd-smap-fold", label: "waiting stops by band" }, h(StopsBody, { st: st })) : null),
+        st.rows ? h(Why, { className: "hd-smap-fold", label: "waiting stops by band" }, h(StopsBody, { st: st, fmt: pxCard })) : null),
       mp && mp.venue_check ? h("div", { className: "hd-small hd-venue-check" }, mp.venue_check) : null));
   }
 
