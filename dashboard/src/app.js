@@ -1303,7 +1303,13 @@
   const CHANGE_KEYS = ["added", "absorbed", "pulled", "unknown"];
   const REPLAY_SPEEDS = ["0.25", "0.5", "1", "2", "4", "8", "16"];
   const NO_NODE = "needs node mode: no node feed configured (setting node_feed)";
-  const HEAT_RGB = { bid: "24,229,137", ask: "255,69,77" };
+  // The heatmap's own fills (Kevin, Nov 11: the bright red and green were distracting): a deep teal for resting bids
+  // and a dusty brick for resting asks, muted, drawn at a low alpha at the dim end and never fully saturated at the
+  // bright end (alpha = lo + span * log(1 + usd) / log(1 + max)); the mid line is thin and off-white. Only the
+  // heatmap canvas uses these; the legend swatches in the stylesheet match.
+  const HEAT_RGB = { bid: "38,166,154", ask: "196,92,98" };
+  const HEAT_ALPHA = { lo: 0.1, span: 0.62 };
+  const HEAT_MID = "#E0E0E0";
 
   function famTone(s) { return FAMILY_TONE[s] || "dim"; }
   // BEHIND is shown as DELAYED: since Nov 8 it means the node feed's averaged delay is above the delayed limit.
@@ -1798,53 +1804,71 @@
 
   // ---- wall watch
 
+  // Both tables share one column grid (Kevin, Nov 11: the columns lined up badly and the headings differed): the same
+  // nine columns in the same order at the same fixed widths, so a current wall and a gone one read down the same
+  // lines. Only the time column holds something different, so only its heading differs: a current wall shows when
+  // its order was placed (and its age at the book time); a gone wall shows the span it was seen as a wall. The
+  // "unknown" size is no longer a column: it is appended to the outcome cell when it is non-zero, with the Labels
+  // line's definition in its title.
+  const WALL_COL_PX = [52, 84, 90, 84, 280, 90, 90, 136, null];     // null: the last column takes what is left, so the numbers stay together
+  function wallCols() {
+    return h("colgroup", null, WALL_COL_PX.map(function (w, i) { return h("col", { key: i, style: w ? { width: w + "px" } : undefined }); }));
+  }
+  function wallHead(t) {
+    return h("thead", null, h("tr", null,
+      h("th", { scope: "col" }, "Side"), h("th", { scope: "col", className: "hd-r" }, "Price"),
+      h("th", { scope: "col", className: "hd-r", title: t.sizeTitle }, "Size"), h("th", { scope: "col", className: "hd-r" }, "Notional"),
+      h("th", { scope: "col" }, "Outcome"),
+      h("th", { scope: "col", className: "hd-r" }, "Absorbed"), h("th", { scope: "col", className: "hd-r" }, "Pulled"),
+      h("th", { scope: "col", title: t.timeTitle }, t.timeLabel), h("th", { scope: "col" }, "Trader")));
+  }
+  function wallUnknown(v, labels) {
+    if (!isNum(v) || v === 0) return null;
+    return h("span", { className: "hd-dim", title: labels || "unknown: no lifecycle record explains the change" }, " \u00b7 " + sz(v) + " unknown");
+  }
+
   function WallsBody(props) {
     const wl = props.wl;
     const bt = props.bookMs;
     const cur = wl.current || [];
     const gone = wl.recently_gone || [];
+    const none = function (text) { return h("tr", null, h("td", { colSpan: 9, className: "hd-dim" }, text)); };
     return h(Fragment, null,
       h("div", { className: "hd-small" }, h("b", null, "Definition: "), wl.definition || "not in snapshot",
         isNum(wl.observed_since_ms) ? h("span", { className: "hd-dim" }, " \u00b7 observed since " + hmsms(wl.observed_since_ms) + " UTC") : null),
       h("div", { className: "hd-subhead" }, "Current walls"),
-      h("div", { className: "hd-scroll" },
-        h("table", { className: "hd-table hd-walls" },
-          h("thead", null, h("tr", null,
-            h("th", { scope: "col" }, "Side"), h("th", { scope: "col", className: "hd-r" }, "Price"),
-            h("th", { scope: "col", className: "hd-r" }, "Size"), h("th", { scope: "col", className: "hd-r" }, "Notional"),
-            h("th", { scope: "col", title: "when the order was placed (UTC), and its age at the book time" }, "Placed"),
-            h("th", { scope: "col", className: "hd-r" }, "Absorbed"), h("th", { scope: "col", className: "hd-r" }, "Pulled"),
-            h("th", { scope: "col", className: "hd-r" }, "Unknown"), h("th", { scope: "col" }, "Trader"))),
+      h("div", { className: "hd-scroll hd-np-walls-scroll" },
+        h("table", { className: "hd-table hd-walls hd-np-walls" }, wallCols(),
+          wallHead({ timeLabel: "Placed (UTC)", timeTitle: "when the order was placed (UTC), and its age at the book time", sizeTitle: "the order's resting size at the book time" }),
           h("tbody", null, cur.length ? cur.map(function (w) {
             return h("tr", { key: w.oid, title: "order " + w.oid + (isNum(w.first_seen_ms) ? "\nfirst seen as a wall " + dateTime(w.first_seen_ms) : "") },
               h("td", { className: w.side === "B" ? "hd-bid" : "hd-ask" }, bookSide(w.side)),
               h("td", { className: "hd-r" }, h(DPx, { v: w.px })),
               h("td", { className: "hd-r" }, isNum(w.sz) ? sz(w.sz) : missing()),
               h("td", { className: "hd-r" }, isNum(w.notional_usd) ? usd(w.notional_usd) : missing()),
-              h("td", { title: isNum(w.placed_ms) ? dateTime(w.placed_ms) : undefined },
+              h("td", { className: "hd-wall-outcome", title: "still resting at the book time" }, "resting", wallUnknown(w.unknown_sz, wl.labels)),
+              h("td", { className: "hd-r" }, zsz(w.absorbed_sz)), h("td", { className: "hd-r" }, zsz(w.pulled_sz)),
+              h("td", { className: "hd-np-time", title: isNum(w.placed_ms) ? dateTime(w.placed_ms) : undefined },
                 whenAt(w.placed_ms, bt), isNum(w.placed_ms) && isNum(bt) ? h("span", { className: "hd-dim" }, " (" + dur(bt - w.placed_ms) + ")") : null),
-              h("td", { className: "hd-r" }, zsz(w.absorbed_sz)), h("td", { className: "hd-r" }, zsz(w.pulled_sz)), h("td", { className: "hd-r" }, zsz(w.unknown_sz)),
               h("td", null, h(Addr, { address: w.user })));
-          }) : h("tr", null, h("td", { colSpan: 9, className: "hd-dim" }, "No order meets the definition right now."))))),
-      h("div", { className: "hd-subhead" }, "Recently gone"),
-      h("div", { className: "hd-scroll hd-walls-gone" },
-        h("table", { className: "hd-table hd-walls" },
-          h("thead", null, h("tr", null,
-            h("th", { scope: "col" }, "Side"), h("th", { scope: "col", className: "hd-r" }, "Price"),
-            h("th", { scope: "col", className: "hd-r" }, "Peak size"), h("th", { scope: "col" }, "Outcome"),
-            h("th", { scope: "col", className: "hd-r" }, "Absorbed"), h("th", { scope: "col", className: "hd-r" }, "Pulled"),
-            h("th", { scope: "col", className: "hd-r" }, "Unknown"), h("th", { scope: "col" }, "Seen (UTC)"), h("th", { scope: "col" }, "Trader"))),
+          }) : none("No order meets the definition right now.")))),
+      h("div", { className: "hd-subhead" }, "Recently gone",
+        h("span", { className: "hd-np-subnote" }, "size: the peak while it was a wall \u00b7 notional: not in the snapshot once a wall has gone")),
+      h("div", { className: "hd-scroll hd-walls-gone hd-np-walls-scroll" },
+        h("table", { className: "hd-table hd-walls hd-np-walls" }, wallCols(),
+          wallHead({ timeLabel: "Seen (UTC)", timeTitle: "first seen as a wall to when it left the list (UTC)", sizeTitle: "the order's peak size while it was a wall" }),
           h("tbody", null, gone.length ? gone.map(function (w, i) {
             const o = w.outcome || {};
             return h("tr", { key: w.oid + ":" + i, title: "order " + w.oid },
               h("td", { className: w.side === "B" ? "hd-bid" : "hd-ask" }, bookSide(w.side)),
               h("td", { className: "hd-r" }, h(DPx, { v: w.px })),
               h("td", { className: "hd-r" }, isNum(w.peak_sz) ? sz(w.peak_sz) : missing()),
-              h("td", { className: "hd-wall-outcome" }, o.label || h(Unavailable, { reason: "outcome not in snapshot", compact: true })),
-              h("td", { className: "hd-r" }, zsz(o.absorbed_sz)), h("td", { className: "hd-r" }, zsz(o.pulled_sz)), h("td", { className: "hd-r" }, zsz(o.unknown_sz)),
-              h("td", null, hms(w.first_seen_ms) + "\u2013" + hms(w.left_ms)),
+              h("td", { className: "hd-r" }, isNum(w.notional_usd) ? usd(w.notional_usd) : null),     // the plugin serves no notional for a gone wall: an empty cell
+              h("td", { className: "hd-wall-outcome" }, o.label || h(Unavailable, { reason: "outcome not in snapshot", compact: true }), wallUnknown(o.unknown_sz, wl.labels)),
+              h("td", { className: "hd-r" }, zsz(o.absorbed_sz)), h("td", { className: "hd-r" }, zsz(o.pulled_sz)),
+              h("td", { className: "hd-np-time" }, hms(w.first_seen_ms) + "\u2013" + hms(w.left_ms)),
               h("td", null, h(Addr, { address: w.user })));
-          }) : h("tr", null, h("td", { colSpan: 9, className: "hd-dim" }, "None has left the list in the observed window."))))),
+          }) : none("None has left the list in the observed window.")))),
       wl.labels ? h("div", { className: "hd-note" }, h("b", null, "Labels: "), wl.labels + ".") : null);
   }
 
@@ -2509,14 +2533,14 @@
           const hpx = Math.max(1, y1 - y0);
           [[b[1], HEAT_RGB.bid], [b[2], HEAT_RGB.ask]].forEach(function (k) {
             if (!isNum(k[0]) || k[0] <= 0 || lv <= 0) return;
-            const a = 0.1 + 0.85 * Math.log(1 + k[0]) / lv;
+            const a = HEAT_ALPHA.lo + HEAT_ALPHA.span * Math.log(1 + k[0]) / lv;
             ctx.fillStyle = "rgba(" + k[1] + "," + a.toFixed(3) + ")";
             ctx.fillRect(x0, y0, wpx, hpx);
           });
         });
       });
-      ctx.strokeStyle = C.mark;
-      ctx.lineWidth = 1.25;
+      ctx.strokeStyle = HEAT_MID;
+      ctx.lineWidth = 1;
       ctx.beginPath();
       // The mid line joins consecutive samples only: a gap of more than two sample steps (an interval the book
       // wasn't observed, or was invalid) is left open, never drawn as continuous history.
@@ -2618,16 +2642,24 @@
     const v = props.v;
     const gate = heatGate(v);
     const hs = gate ? null : v.history;
+    // Collapsible (Kevin, Nov 11): folded, the panel keeps its head and status row only. Open unless this browser
+    // folded it; the parent keeps the choice the way it keeps the node brief's.
+    const open = props.open !== false;
     return h(Panel, {
-      id: "heatmap", className: "hd-p-heat", title: "Liquidity heatmap (node book, 15 min)", nodeHook: "heatmap",
+      id: "heatmap", className: cx("hd-p-heat", !open && "hd-np-folded"), title: "Liquidity heatmap (node book, 15 min)", nodeHook: "heatmap",
       why: h("p", null, "Resting bid and ask notional per " + (hs && hs.bin_width ? dpx(hs.bin_width) : "") + " price bin, sampled from the node's full book every " +
         (hs && isNum(hs.interval_ms) ? secs(hs.interval_ms / 1000) : "5 s") + " within \u00b1" + (hs && isNum(hs.range_pct) ? hs.range_pct : 2) +
         "% of the mid. What rested, not trades; orders can be added or pulled at any moment. Times in UTC."),
-      badges: h(NodeProv, { v: v, what: "book history" }),
+      badges: h(Fragment, null,
+        props.onToggle ? h("button", {
+          type: "button", className: "hd-np-fold", onClick: props.onToggle, "aria-expanded": open,
+          title: open ? "fold the heatmap to its head and status row" : "show the heatmap"
+        }, open ? "COLLAPSE" : "EXPAND") : null,
+        h(NodeProv, { v: v, what: "book history" })),
       status: h(NodeStatus, { v: v, fams: ["book"] })
     },
-    gate ? null : h(FamNotes, { fams: v && v.families, names: ["book"] }),
-    gate || h(Fragment, null, h(HeatCanvas, { hist: hs, height: 340 }), h(HeatPartial, { hs: hs })));
+    open && !gate ? h(FamNotes, { fams: v && v.families, names: ["book"] }) : null,
+    open ? (gate || h(Fragment, null, h(HeatCanvas, { hist: hs, height: 340 }), h(HeatPartial, { hs: hs }))) : null);
   }
 
   // ---- node replay (explicit, separate, REPLAY everywhere)
@@ -4901,6 +4933,17 @@
         return !o;
       });
     }, []);
+    // The liquidity heatmap folds to its head and status row (Kevin, Nov 11); open unless this browser folded it,
+    // and the choice is kept here.
+    const [heatOpen, setHeatOpen] = useState(function () {
+      try { return window.localStorage.getItem("hyperliquid-desk.heatmap") !== "closed"; } catch (e) { return true; }
+    });
+    const toggleHeat = useCallback(function () {
+      setHeatOpen(function (o) {
+        try { window.localStorage.setItem("hyperliquid-desk.heatmap", o ? "closed" : "open"); } catch (e) { /* storage blocked */ }
+        return !o;
+      });
+    }, []);
     const [resp, setResp] = useState(null);
     const [noSnap, setNoSnap] = useState(null);
     const [gap, setGap] = useState(null);      // the route's "no current snapshot" answer while a snapshot stays on screen
@@ -5135,7 +5178,7 @@
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,
         h(SectionHead, { title: "Tape", note: non ? "the node's fills with flags, newest first" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-c" }, h(NodeTapePanel, { v: nlive })) : null,
-        non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n" }, h(HeatmapPanel, { v: nlive, open: heatOpen, onToggle: toggleHeat })) : null,
         showReplay ? h(Fragment, null,
           h(SectionHead, { title: "Replay", note: "a recording played on its own clock, never current" }),
           h(ReplayArea, {

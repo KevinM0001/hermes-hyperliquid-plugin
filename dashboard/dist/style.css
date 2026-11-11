@@ -893,9 +893,9 @@
 .hd-heat-canvas { display: block; width: 100%; border-radius: 4px; background: var(--hd-card); cursor: crosshair; }
 .hd-heat-tip { font-family: var(--hd-mono); color: var(--hd-text-2); min-height: 16px; }
 .hd-heat-sw { display: inline-block; width: 14px; height: 10px; border-radius: 2px; }
-.hd-heat-sw-bid { background: rgba(24,229,137,0.85); }
-.hd-heat-sw-ask { background: rgba(255,69,77,0.85); }
-.hd-ll-swatch.hd-heat-mid { border-top: 2px solid var(--hd-text); }
+.hd-heat-sw-bid { background: rgba(38,166,154,0.72); }
+.hd-heat-sw-ask { background: rgba(196,92,98,0.72); }
+.hd-ll-swatch.hd-heat-mid { border-top: 1px solid var(--hd-text-2); }
 
 /* node replay: its own area, never mixed with live panels */
 .hd-replay { border: 1px dashed rgba(242,193,78,0.6); }
@@ -958,3 +958,16 @@
 .hd-smap-byest { list-style: none; padding-left: 0; margin: 2px 0 4px; font-size: 11.5px; }
 /* the stop overlay's estimate (Kevin, Nov 10): the whole-position orders at their owners' positions, hatched beyond the stated bar */
 .hd-band-stops-est { background: repeating-linear-gradient(45deg, rgba(179, 157, 255, .34) 0 4px, rgba(179, 157, 255, .06) 4px 8px); border-right: 2px dashed rgba(179, 157, 255, .9); }
+
+/* Node page panels (Kevin, Nov 11): the Wall watch tables on one fixed column grid; the heatmap's fold chip */
+.hd-np-walls { table-layout: fixed; min-width: 1000px; }    /* narrower than the grid, both tables scroll sideways together rather than squeeze */
+.hd-np-walls td.hd-np-time { white-space: normal; }    /* a dated time (an order placed over 20 h ago) wraps rather than spills */
+.hd-np-walls-scroll { scrollbar-gutter: stable; }       /* both tables keep the same width whether or not the gone list scrolls */
+.hd-np-subnote { margin-left: 8px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.hd-np-fold {
+  font: 600 10px/1 var(--hd-mono); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
+  min-height: 22px; padding: 0 8px; border-radius: 3px; cursor: pointer;
+  border: 1px solid var(--hd-line); background: transparent; color: var(--hd-muted);
+}
+.hd-np-fold:hover { color: var(--hd-text); border-color: var(--hd-knob); }
+.hd-np-folded > .hd-card-body { display: none; }
