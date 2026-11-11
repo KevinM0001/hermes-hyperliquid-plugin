@@ -36,6 +36,29 @@ def delay_state(delay_ms, limits: dict) -> tuple[str, str | None]:
                           f"{limits['delayed_after_ms'] / 1000:g} s)")
     return "LIVE", None
 
+CATCHUP_WINDOW_MS = 3_000      # the catch-up test looks at the watermarks of the last 3 s
+CATCHUP_QUIET_MS = 2_000       # and ends once no timed watermark has arrived for 2 s
+
+
+def catching_up(hist, now_mono_ns: int, delayed_after_ms: float) -> bool:
+    """Whether the feed is catching up rather than lagging (Kevin, Nov 11): over the last CATCHUP_WINDOW_MS the node's
+    block time advanced at more than twice the clock's pace, which only a replay of buffered lines does (a feed that is
+    merely behind advances at the clock's pace), the latest watermark arrived within CATCHUP_QUIET_MS, and the delay is
+    still above the delayed limit (below it the family reads LIVE anyway). hist holds (receipt mono ns, receipt wall ms
+    minus block time ms); a falling offset is block time outrunning the clock."""
+    if len(hist) < 2 or now_mono_ns - hist[-1][0] > CATCHUP_QUIET_MS * 1_000_000:
+        return False
+    lo = now_mono_ns - CATCHUP_WINDOW_MS * 1_000_000
+    recent = [h for h in hist if h[0] >= lo] or hist[-2:]
+    first, last = recent[0], recent[-1]
+    if last is first:
+        first = hist[-2]
+    wall_ms = (last[0] - first[0]) / 1e6
+    gained_ms = first[1] - last[1]           # how much the offset fell: block time gained on the clock
+    cur = last[1] + (now_mono_ns - last[0]) / 1e6
+    return wall_ms > 0 and gained_ms > wall_ms and cur > delayed_after_ms
+
+
 # Clock skew is judged on the worst offset (receipt wall time minus publication time) among the lines accepted in
 # the last SKEW_WINDOW_MS: a delayed line, whose offset is large, never clears a skew seen moments before it.
 SKEW_WINDOW_MS = 10_000
@@ -1149,6 +1172,10 @@ class FeedClient:
         d = self.delay(market, now_mono_ns, hist=mf.opos.wm_hist if fam == "owner_pos" else None)
         out["delay_ms"] = d["delay_ms"]
         state, reason = delay_state(d["delay_ms"], self.cfg)
+        out["catching_up"] = bool(d.get("catching_up"))
+        if out["catching_up"] and state != "LIVE":
+            reason = (f"catching up: the feed is replaying what it buffered, so the node's time advances faster than the "
+                      f"clock (the delay is {d['current_ms'] / 1000:.1f} s now and falling)")
         return out | {"state": state, "reason": reason}
 
     def delay(self, market: str, now_mono_ns: int | None = None, hist=None) -> dict:
@@ -1181,4 +1208,5 @@ class FeedClient:
             covered += span
         cur = hist[-1][1] + (now_mono_ns - hist[-1][0]) / 1e6
         avg = total / covered if covered > 0 else cur
-        return base | {"delay_ms": round(avg), "current_ms": round(cur), "covered_ms": round(covered)}
+        return base | {"delay_ms": round(avg), "current_ms": round(cur), "covered_ms": round(covered),
+                       "catching_up": catching_up(hist, now_mono_ns, self.cfg["delayed_after_ms"])}

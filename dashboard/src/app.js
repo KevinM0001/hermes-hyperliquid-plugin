@@ -1289,6 +1289,7 @@
   const FAMILY_LEGEND = [
     ["LIVE", "the node feed's delay (the latest watermark's age, 5 s average) is within its limit"],
     ["DELAYED", "the node feed's 5 s average delay is above the delayed limit (state BEHIND in the data)"],
+    ["CATCHING UP", "the feed is replaying what it buffered after a connection, so the node's time advances faster than the clock; the delay is falling"],
     ["STALE", "the node feed's 5 s average delay is above the stale limit; heartbeats don't count"],
     ["UNKNOWN", "clock skew: this machine's clock can't bound the ages"],
     ["INVALID", "not usable (no snapshot yet, a gap, a new producer epoch, a crossed book) until a fresh snapshot"],
@@ -1315,14 +1316,17 @@
     if (!f || (f.state !== "BEHIND" && f.state !== "STALE")) return null;
     const conn = g(v, "connection", "state");
     const at = isNum(f.watermark_block_time_ms) ? hms(f.watermark_block_time_ms) + "Z" : "its last block";
-    const behind = isNum(f.delay_ms) ? (f.delay_ms >= 60000 ? dur(f.delay_ms) : (f.delay_ms / 1000).toFixed(0) + " s") + " behind" : "behind";
+    const left = isNum(f.delay_ms) ? (f.delay_ms >= 60000 ? dur(f.delay_ms) : (f.delay_ms / 1000).toFixed(0) + " s") : null;
+    // A feed replaying what it buffered (a fresh connection, a reconnect) is loading, not lagging (Kevin, Nov 11).
+    if (f.catching_up && left) return "catching up: the node's " + (what || "book") + " at " + at + ", " + left + " still to replay";
+    const behind = left ? left + " behind" : "behind";
     return "as of the node's " + (what || "book") + " at " + at + ", " + behind + (conn && conn !== "connected" ? " (feed " + conn + ")" : "");
   }
   function LateLine(props) {
     const t = lateNote(props.v, props.fam || "book", props.what);
     return t ? h("span", { className: "hd-dim hd-late", title: "the node feed ran behind the chain; the numbers are the node's at that block, not now" }, t) : null;
   }
-  function famLabel(s) { return s === "BEHIND" || s === "STALE" ? "delayed" : (s || "?"); }
+  function famLabel(s, f) { return f && f.catching_up && (s === "BEHIND" || s === "STALE") ? "catching up" : (s === "BEHIND" || s === "STALE" ? "delayed" : (s || "?")); }
   function famDelay(f) { return f && (f.state === "BEHIND" || f.state === "STALE") && isNum(f.delay_ms) ? " \u00b7 " + (f.delay_ms >= 60000 ? dur(f.delay_ms) : (f.delay_ms / 1000).toFixed(0) + " s") : ""; }
   function famOk(f) { return !!f && (f.state === "LIVE" || f.state === "REPLAY"); }
   // A view from a configured node source always names its provenance; the "no node feed" placeholder doesn't.
@@ -1405,7 +1409,7 @@
     const f = props.f;
     if (!f) return h("span", { className: "hd-chip hd-tone-dim" }, props.name + ": not in snapshot");
     return h("span", { className: "hd-chip hd-tone-" + famTone(f.state), title: famTitle(props.name, f) },
-      h("span", { className: "hd-dot", "aria-hidden": "true" }), props.name + " \u00b7 " + famLabel(f.state) + famDelay(f));
+      h("span", { className: "hd-dot", "aria-hidden": "true" }), props.name + " \u00b7 " + famLabel(f.state, f) + famDelay(f));
   }
 
   function FamChips(props) {
@@ -1431,7 +1435,7 @@
     });
     return h("div", { className: cx("hd-fresh-notes", props.pad && "hd-pad hd-pad-tight") }, groups.map(function (gr) {
       return h("div", { key: gr.key, className: "hd-tone-text-" + famTone(gr.state) },
-        h("b", null, gr.names.join(", ") + " " + famLabel(gr.state) + famDelay(fams[gr.names[0]]) + ": "), gr.reason);
+        h("b", null, gr.names.join(", ") + " " + famLabel(gr.state, fams[gr.names[0]]) + famDelay(fams[gr.names[0]]) + ": "), gr.reason);
     }));
   }
 
@@ -1461,7 +1465,7 @@
     if (!b) return h(Unavailable, { reason: "the node book's validity isn't in this snapshot", block: true });
     if (b.valid === true) return null;
     const st = g(v, "families", "book", "state");
-    const tag = b.crossed || !st || st === "LIVE" || st === "REPLAY" ? "INVALID" : famLabel(st);
+    const tag = b.crossed || !st || st === "LIVE" || st === "REPLAY" ? "INVALID" : famLabel(st, g(v, "families", "book"));
     return h("div", { className: "hd-invalid", role: "status" },
       h("span", { className: "hd-invalid-tag" }, tag), " ",
       b.reason || "the node book isn't valid, and no reason was given",
@@ -1494,7 +1498,7 @@
     const d = props.delay;
     const live = props.nodeOn && d && d.available;
     const down = props.conn && props.conn !== "connected" && props.conn !== "state not in snapshot";
-    const label = live ? (down ? "disconnected \u00b7 last data " + (d.delay_ms >= 60000 ? dur(d.delay_ms) : (d.delay_ms / 1000).toFixed(0) + " s") + " ago" : famLabel(d.state)) : null;
+    const label = live ? (down ? "disconnected \u00b7 last data " + (d.delay_ms >= 60000 ? dur(d.delay_ms) : (d.delay_ms / 1000).toFixed(0) + " s") + " ago" : famLabel(d.state, d)) : null;
     const value = live ? (d.delay_ms / 1000).toFixed(1) + " s" : "\u2013";
     const why = !props.nodeOn ? "no node feed configured" : !d ? "the node delay isn't in this snapshot" :
       d.available ? null : (d.reason || "not available");

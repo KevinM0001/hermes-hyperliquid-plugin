@@ -40,6 +40,8 @@ def aged_status(st: dict | None, age_ms: float | None) -> dict | None:
         return out | {"state": "STALE", "reason": "its delay or limit isn't known, so it can't be shown as current"}
     for k in ("watermark_age_ms", "source_age_ms", "delay_ms"):
         out[k] = round(st[k] + age_ms)
+    if age_ms > 3_000:
+        out["catching_up"] = False      # a catch-up judged seconds ago says nothing about now
     state, reason = delay_state(out["delay_ms"], st)
     if state != "LIVE":
         return out | {"state": state, "reason": f"{reason}, by the time this was served"}
