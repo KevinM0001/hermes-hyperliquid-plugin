@@ -347,6 +347,20 @@ EST_RULE = ("whole-position TP/SL orders have no stated size; each is estimated 
             "test, the exclusions or the census ratios; a flat or wrong-side owner leaves the size unknown with the reason")
 
 
+def data_as_of(wm_block, wm_time, data_block, data_time) -> tuple:
+    """A family's as-of for the estimate: the block its state is known complete through, with that block's time and
+    whether its watermark has reached it. The state is complete through its last applied snapshot or delta's block
+    (one per block) and through the last consistent watermark's block, whichever is later; an applied change beyond the
+    watermark is `confirmed: False` until the watermark reaches it. Freshness (LIVE, DELAYED, STALE) stays the
+    watermark's alone."""
+    ints = lambda x: isinstance(x, int) and not isinstance(x, bool)
+    if ints(data_block) and (not ints(wm_block) or data_block > wm_block):
+        return data_block, data_time, False
+    if ints(wm_block):
+        return wm_block, wm_time, True
+    return None, None, False
+
+
 def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
     """The whole-position orders' estimates (triggers.estimates) and what the stops block says about them (Kevin,
     Nov 10): available only when the triggers and owner_pos families are both usable and the stream holds positions;
@@ -360,9 +374,11 @@ def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
     if not usable(ost) or ps.positions is None or mf.triggers is None:
         return None, base | {"reason": f"owner positions {ost['state']}: {ost.get('reason')}"}
     tf = mf.fam["triggers"]
-    # The as-of is what the two families' last consistent watermarks vouch for (the same source as the late-data
-    # note), not the latest line's envelope, which can name a block not fully applied yet.
-    tb, pb, tbt, pbt = tf.wm_block, ps.fam.wm_block, tf.wm_block_time_ms, ps.fam.wm_block_time_ms
+    # The as-of is the time the data used is from: each family's data version (its last applied snapshot or delta, or
+    # its last consistent watermark when that is later), never a watermark the data has already moved past. A change
+    # applied before its watermark arrives is counted at its own block and marked not yet confirmed.
+    tb, tbt, t_ok = data_as_of(tf.wm_block, tf.wm_block_time_ms, mf.trig_data_block, mf.trig_data_block_time_ms)
+    pb, pbt, p_ok = data_as_of(ps.fam.wm_block, ps.fam.wm_block_time_ms, ps.data_block, ps.data_block_time_ms)
     same = tb == pb
     # An owner missing from the stream is a feed defect only when both families stand at the same block; between a
     # market's line and its stream's line of the same block it is the expected moment before the set arrives.
@@ -373,7 +389,8 @@ def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
         # isn't shown then either).
         return None, base | {"reason": "no valid book mid, so orders already true at the price can't be set aside"}
     bf = mf.fam["book"]
-    key = (tf.last_change_seq, tf.since_seq, ps.fam.last_change_seq, ps.fam.since_seq, same, bf.last_change_seq, ref)
+    key = (tf.last_change_seq, tf.since_seq, mf.trig_data_block, ps.fam.last_change_seq, ps.fam.since_seq, ps.data_block,
+           same, bf.last_change_seq, ref)
     cache = getattr(mf, "_est_cache", None)
     if cache is None or cache[0] != key:
         cache = mf._est_cache = (key, estimates(mf.triggers.orders, ps.positions, missing, ref))
@@ -387,10 +404,16 @@ def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
     basis = f"owners' positions at block {pb}" + (f" ({ps.basis})" if ps.basis else "") + f"; waiting triggers at block {tb}"
     if not same:
         basis += "; the two families stand at different blocks, so the estimate is as of the older"
+    pending = [n for n, ok in (("owners' positions", p_ok), ("waiting triggers", t_ok)) if not ok]
+    confirm_note = (f"{' and '.join(pending)} applied a block before its watermark arrived (not yet confirmed)"
+                    if pending else None)
+    if confirm_note:
+        basis += "; " + confirm_note
     meta = base | {"available": True, "reason": None, "as_of_ms": older,
                    "as_of_note": (f"if triggered now, from the owners' positions at {iso_ms(older)}" if older is not None
                                   else "if triggered now, from the owners' positions (block time unknown)"),
                    "positions_block": pb, "triggers_block": tb, "same_block": same, "basis": basis,
+                   "positions_confirmed": p_ok, "triggers_confirmed": t_ok, "confirm_note": confirm_note,
                    "owners": len(ps.positions), "whole_position_orders": len(est),
                    "estimated": sum(1 for e in est.values() if e["sz"] is not None and e["reason"] != EST_COUNTED_NEARER),
                    "counted_at_nearer": sum(1 for e in est.values() if e["reason"] == EST_COUNTED_NEARER),
@@ -678,6 +701,9 @@ def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal,
             "notional_usd": usd(e_not) if e_n else None, "sz": num(b["est_sz"]) if e_n else None, "orders": e_n,
             "upper_bound_orders": b["est_upper"], "counted_at_nearer": b["est_nearer"], "unknown_orders": unk,
             "unknown_reasons": dict(b["est_unknown"]), "owners": len(b["est_users"]), "as_of_ms": est_meta.get("as_of_ms"),
+            "positions_block": est_meta.get("positions_block"), "triggers_block": est_meta.get("triggers_block"),
+            "positions_confirmed": est_meta.get("positions_confirmed"),
+            "triggers_confirmed": est_meta.get("triggers_confirmed"), "confirm_note": est_meta.get("confirm_note"),
             # the flag names no owner and no size (a per-account position never leaves the plugin): only the notional
             "outsized": ({"notional_usd": usd(lg_e[0]),
                           "note": "one owner's estimated size is worth more than everything resting at and beyond this band; "

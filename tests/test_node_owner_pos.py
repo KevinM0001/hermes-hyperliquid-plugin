@@ -516,3 +516,49 @@ def test_an_inconsistent_stream_watermark_never_advances_the_familys_freshness()
         c.on_line(m, rx, (i + 1) * 10 ** 9)
     now = (msgs[nxt][0] + 100, (nxt + 2) * 10 ** 9)
     assert c.family_status(M, "owner_pos", *now)["state"] == "LIVE" and ps.counters["watermarks_inconsistent"] == 1
+
+
+def test_the_estimate_is_labelled_with_the_data_it_uses_between_a_delta_and_its_watermark():
+    """The estimate's stated basis is the data versions it is computed from (each family's last applied snapshot or
+    delta, or its last consistent watermark when later), never a watermark its data has already moved past. On the live
+    recording, between the stream's position change at seq 1168 (block 1216674293) and that block's watermark: the
+    band-10 estimate already includes the change, and its basis says block 1216674293, not yet confirmed; after the
+    watermark the same figure is confirmed. Freshness stays the watermarks' alone."""
+    h, msgs = read_recording(LIVE)
+    c = client(cfg=NO_AGE)
+    c.on_line(hello_from(h), msgs[0][0] - 1, 0)
+    k = next(i for i, (_, m) in enumerate(msgs) if m.get("market") == "HYPE.owner_pos" and m.get("seq") == 1168)
+    delta = msgs[k][1]
+    assert delta["kind"] == "opos_delta" and delta["block"] == 1216674293
+
+    def read(upto):
+        rx = msgs[upto - 1][0] + 1                              # just after the last line read, on its receipt clock
+        v = panels.market_view(c, "HYPE", OPTS, rx, rx * 10 ** 6)
+        band = next(r for r in v["stops"]["map"]["sides"]["rise"]["bands"] if r["k"] == 10)
+        return v["stops"]["estimate"], band["estimate"]
+
+    for rx, m in msgs[:k]:                                      # every line on its recorded receipt time
+        c.on_line(m, rx, rx * 10 ** 6)
+    before, b10 = read(k)
+    assert b10["notional_usd"] == 269493.24
+    assert before["positions_block"] == 1216674292 and before.get("positions_confirmed") is not False
+    c.on_line(delta, msgs[k][0], msgs[k][0] * 10 ** 6)
+    after, a10 = read(k + 1)
+    assert a10["notional_usd"] == 269703.76                          # the number includes block 1216674293's change...
+    assert after["positions_block"] == 1216674293                       # ...and says so (it used to say ...92)
+    assert after["positions_confirmed"] is False
+    assert after["confirm_note"] and "not yet confirmed" in after["basis"]
+    assert after["same_block"] == (after["positions_block"] == after["triggers_block"])
+    t_as_of = after["triggers_block"]
+    assert t_as_of is not None and after["as_of_ms"] == min(
+        x for x in (delta["block_time_ms"], c.markets["HYPE"].fam["triggers"].wm_block_time_ms
+                    if t_as_of == c.markets["HYPE"].fam["triggers"].wm_block else c.markets["HYPE"].trig_data_block_time_ms)
+        if isinstance(x, int))
+    assert a10["positions_block"] == 1216674293 and a10["positions_confirmed"] is False    # the band carries it too
+    # The stream's watermark for that block: the same figure, now confirmed.
+    w = next(i for i in range(k + 1, len(msgs)) if msgs[i][1].get("market") == "HYPE.owner_pos"
+             and msgs[i][1].get("kind") == "watermark")
+    for i in range(k + 1, w + 1):
+        c.on_line(msgs[i][1], msgs[i][0], msgs[i][0] * 10 ** 6)
+    done, d10 = read(w + 1)
+    assert d10["notional_usd"] == 269703.76 and done["positions_confirmed"] and done["positions_block"] >= 1216674293

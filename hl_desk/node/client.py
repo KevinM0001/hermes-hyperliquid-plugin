@@ -95,6 +95,10 @@ class MarketFeed:
         self.fam["flow"].reason = "no watermark yet"
         self.last_seq: int | None = None        # last market seq processed
         self.run_start: int | None = None       # first seq of the current contiguous run (the gap boundary)
+        # The triggers' data version: the block of the last applied trigger snapshot or delta (complete through it: one
+        # trig_delta per block), apart from the freshness watermark, which may not have reached it yet.
+        self.trig_data_block: int | None = None
+        self.trig_data_block_time_ms: int | None = None
         self.expected_start: int | None = None  # from hello.markets[m].start_seq
         self.book: NodeBook | None = None
         self.wm_hist: deque = deque()                # (receipt mono ns, receipt wall ms - block time ms) per timed watermark
@@ -146,6 +150,10 @@ class PosStream:
         self.basis: str | None = None
         self.block: int | None = None
         self.block_time_ms: int | None = None
+        # The positions' data version: the block of the last applied snapshot or delta (the state is complete through
+        # it: one delta per block). Separate from the freshness watermark, which may not have reached it yet.
+        self.data_block: int | None = None
+        self.data_block_time_ms: int | None = None
         self.wm_hist: deque = deque()             # the stream's own timed watermarks: (receipt mono ns, receipt wall - block time)
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_applied": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0, "deltas_unapplied": 0,
@@ -155,6 +163,7 @@ class PosStream:
         self.fam.invalidate(reason)
         self.positions = None
         self.assembly = None
+        self.data_block = self.data_block_time_ms = None
         self.wm_hist.clear()                      # the stream's delay restarts at its next timed watermark
 
 
@@ -758,6 +767,7 @@ class FeedClient:
             ps.counters["snapshot_mismatches"] += 1
             mf.note("owner positions snapshot differs from the tracked set", owners=len(positions))
         ps.positions = positions
+        ps.data_block, ps.data_block_time_ms = a.block, a.block_time_ms
         ps.basis = (a.coverage or {}).get("basis")
         ps.unavailable = None
         ps.counters["snapshots_applied"] += 1
@@ -792,6 +802,7 @@ class FeedClient:
             mf.note("owner position delta error", error=str(exc))
             return
         f.last_change_seq = seq
+        ps.data_block, ps.data_block_time_ms = ps.block, ps.block_time_ms     # this delta's block (its envelope)
 
     def _discard_stream_assembly(self, ps: PosStream, reason: str) -> None:
         if ps.assembly is None:
@@ -863,6 +874,8 @@ class FeedClient:
             mf.note("delta error", family=fam, error=str(exc))
             return
         f.last_change_seq = seq
+        if fam == "triggers":
+            mf.trig_data_block, mf.trig_data_block_time_ms = mf.block, mf.block_time_ms     # this delta's block
 
     def _check_crossed(self, mf: MarketFeed, seq: int, from_snapshot: bool) -> None:
         if mf.book is None:
@@ -941,6 +954,7 @@ class FeedClient:
             self._reset_book_panels(mf)
         else:
             mf.triggers = None
+            mf.trig_data_block = mf.trig_data_block_time_ms = None
 
     @staticmethod
     def _reset_book_panels(mf: MarketFeed) -> None:
@@ -1014,6 +1028,8 @@ class FeedClient:
                 mf.counters["snapshot_mismatches"] += 1
                 mf.note("snapshot differed from the applied state", family=fam, through=through)
             self._swap(mf, fam, state, through)
+            if fam == "triggers":   # nothing changed after its boundary: the state stands at the snapshot's block
+                mf.trig_data_block, mf.trig_data_block_time_ms = state.snapshot_block, state.snapshot_block_time_ms
             return "swapped"
         # Invalid family: every message of the market from through+1 on must be held.
         if mf.run_start is None or mf.run_start > through + 1:
@@ -1025,6 +1041,7 @@ class FeedClient:
         # Catch up off to the side through every later message of the family, then swap. The state then stands
         # at the last of those messages, not at the snapshot's boundary: an older snapshot can never replace it.
         applied = through
+        data_block, data_bt = getattr(state, "snapshot_block", None), getattr(state, "snapshot_block_time_ms", None)
         try:
             for seq, kind, body, block, bt in later:
                 if KIND_FAMILY.get(kind) != fam or kind in SNAPSHOT_KINDS:
@@ -1034,11 +1051,14 @@ class FeedClient:
                 else:
                     state.apply_delta(body.get("changes") or [], body.get("excluded"))
                 applied = seq
+                data_block, data_bt = block, bt
         except (BookError, TriggerError, KeyError, TypeError, ValueError) as exc:
             mf.counters["snapshots_rejected"] += 1
             mf.note("snapshot catch-up failed", family=fam, error=str(exc))
             return "rejected"
         self._swap(mf, fam, state, through, last_change=applied)
+        if fam == "triggers":       # the state stands at the last caught-up delta's block, else the snapshot's
+            mf.trig_data_block, mf.trig_data_block_time_ms = data_block, data_bt
         return "swapped"
 
     def _swap(self, mf: MarketFeed, fam: str, state, through: int, last_change: int | None = None) -> None:
