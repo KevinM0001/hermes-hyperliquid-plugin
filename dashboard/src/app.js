@@ -4319,7 +4319,18 @@
     // --- node (as hl_desk/node/serving.py): a LIVE family whose delay bound has passed a limit
     const USABLE = { LIVE: true, REPLAY: true };
     function nodeState(st) {
-      if (!st || st.state !== "LIVE") return st;
+      if (!st) return st;
+      if (st.state !== "LIVE") {
+        // A BEHIND or STALE family judged while catching up loses that claim after 3 s on screen (as serving.py's
+        // aged_status does at serving time): the replay it described is over by then, so it reads plainly behind.
+        if (st.catching_up && ageS > 3) {
+          const win = (st.delay_window_ms || 5000) / 1000;
+          const plain = NUM(st.delay_ms) && NUM(st.delayed_after_ms) ? "the node feed's delay is " + (st.delay_ms / 1000).toFixed(1) +
+            " s (" + win + " s average; delayed above " + st.delayed_after_ms / 1000 + " s)" : st.reason;
+          return Object.assign({}, st, { catching_up: false, reason: plain });
+        }
+        return st;
+      }
       const out = Object.assign({}, st, { aged_by_ms: Math.round(ageS * 1000) });
       if (!NUM(st.delay_ms) || !NUM(st.delayed_after_ms) || !NUM(st.stale_after_ms)) {
         return screenLag ? Object.assign(out, { state: "STALE", reason: "its delay or limit isn't known, so it can't be shown as current" }) : out;

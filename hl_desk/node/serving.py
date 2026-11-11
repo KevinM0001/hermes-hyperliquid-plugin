@@ -29,8 +29,15 @@ BUCKET_KEYS = ("new_long", "cover", "new_short", "exit")
 
 
 def aged_status(st: dict | None, age_ms: float | None) -> dict | None:
-    """A family status as it stands age_ms after it was judged (None: unknown). Only LIVE statuses change."""
-    if not isinstance(st, dict) or st.get("state") != "LIVE":
+    """A family status as it stands age_ms after it was judged (None: unknown). Only LIVE statuses change state; a
+    BEHIND or STALE status judged while catching up loses that claim after 3 s (the replay it described is over or
+    unknown by then) and gets back the plain delay reason."""
+    if not isinstance(st, dict):
+        return st
+    if st.get("state") != "LIVE":
+        if st.get("catching_up") and (age_ms is None or age_ms > 3_000):
+            plain = delay_state(st.get("delay_ms"), st)[1] if isinstance(st.get("delay_ms"), (int, float)) else st.get("reason")
+            return dict(st, catching_up=False, reason=plain)
         return st
     if age_ms is None:
         return dict(st, state="STALE", reason="the snapshot's age when served isn't known, so it can't be shown as current")
@@ -40,8 +47,6 @@ def aged_status(st: dict | None, age_ms: float | None) -> dict | None:
         return out | {"state": "STALE", "reason": "its delay or limit isn't known, so it can't be shown as current"}
     for k in ("watermark_age_ms", "source_age_ms", "delay_ms"):
         out[k] = round(st[k] + age_ms)
-    if age_ms > 3_000:
-        out["catching_up"] = False      # a catch-up judged seconds ago says nothing about now
     state, reason = delay_state(out["delay_ms"], st)
     if state != "LIVE":
         return out | {"state": state, "reason": f"{reason}, by the time this was served"}

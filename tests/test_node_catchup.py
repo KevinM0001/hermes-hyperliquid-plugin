@@ -55,8 +55,14 @@ def test_the_live_recording_starts_by_catching_up_then_reads_behind():
     el, st, note = seen_behind
     assert st["catching_up"] is False and st["state"] in ("BEHIND", "STALE"), (el, st)
     assert note.startswith("as of the node's book at ") and " s behind" in note, note
-    # a served copy of the catching-up status ages out of the claim after 3 s
+    # a served copy of the catching-up status (BEHIND) keeps the claim for 3 s, then reads plainly behind again
     _, st_c, _ = seen_catching
-    live_like = dict(st_c, state="LIVE")                      # aged_status only ages LIVE statuses
-    assert aged_status(live_like, 1_000)["catching_up"] is True
-    assert aged_status(live_like, 4_000)["catching_up"] is False
+    young = aged_status(st_c, 1_000)
+    assert young["catching_up"] is True and "replaying what it buffered" in young["reason"]
+    assert panels.as_of_note("book", young).startswith("catching up: ")
+    for age in (3_500, None):
+        old = aged_status(st_c, age)
+        assert old["catching_up"] is False and old["state"] == st_c["state"], old
+        assert "catching up" not in old["reason"] and "delayed above" in old["reason"], old["reason"]
+        note = panels.as_of_note("book", old)
+        assert note.startswith("as of the node's book at ") and note.endswith(" s behind"), note
