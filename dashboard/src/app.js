@@ -989,10 +989,11 @@
     const m = props.m;
     const node = props.node || null;
     const nodeOn = !!(node && node.available !== false);
-    // Why a layer can't be drawn right now: the node view withheld (a lapsed family) says so in the toggle's title.
+    // Why a band layer can't be drawn right now: the node view withheld (a lapsed family) says so in the toggle's title.
+    // The Taker flow layer's reason is flowWhy below: its block rides with the candles, not with the node view.
     const ovWhy = function (k) {
       if (!nodeOn) return "needs node mode";
-      const part = k === "stops" ? (node.stops && node.stops.available === false ? node.stops : (node.stops && node.stops.map)) : (k === "depth" ? node.thinning : node.flow_map);
+      const part = k === "stops" ? (node.stops && node.stops.available === false ? node.stops : (node.stops && node.stops.map)) : node.thinning;
       if (!part) return "not in this snapshot";
       if (part.available === false) return "withheld: " + (part.reason || "no reason given");
       return null;
@@ -1026,21 +1027,6 @@
       if (sig !== rectSig.current) { rectSig.current = sig; setRects(out); }
     }, []);
     useEffect(function () {
-      const a = api.current;
-      if (a && a.nflow) {
-        const fm = node && node.flow_map;
-        const on = ov.flow && iv === "15m" && fm && fm.available !== false && Array.isArray(fm.buckets);
-        const byT = {};
-        const data = on ? fm.buckets.filter(function (b) { return isNum(b.start_ms) && isNum(b.net_usd) && (b.fills > 0 || b.coverage_s > 0); }).map(function (b) {
-          const t = Math.floor(b.start_ms / 1000);
-          byT[t] = b;
-          const up = b.net_usd >= 0;
-          const faded = b.complete === false && !b.in_progress;
-          return { time: t, value: b.net_usd, color: up ? (faded ? "rgba(24, 229, 137, 0.35)" : "rgba(24, 229, 137, 0.85)") : (faded ? "rgba(255, 69, 77, 0.35)" : "rgba(255, 69, 77, 0.85)") };
-        }) : [];
-        a.flowByTime = byT;
-        try { a.nflow.setData(data); } catch (e) { /* a bucket outside the candles' time range is dropped by the chart */ }
-      }
       bandsRef.current = (ov.stops || ov.depth) ? overlayBands(node, ov) : [];
       syncOverlay();
       if (!ov.stops && !ov.depth) { setBandTip(null); return undefined; }
@@ -1050,6 +1036,23 @@
     const [cd, setCd] = useState(null);   // the /candles route's latest answer for iv (null for 15s)
     const fromRoute = iv !== "15s";
     const routeCandles = fromRoute && cd && cd.state === "ok" && cd.data ? (cd.data.candles || []) : [];
+    // The Taker flow layer's source (Kevin, Nov 11: every interval, not only 15m): the snapshot's chart.taker_flow beside
+    // its 15 s candles, or the route's taker_flow beside the venue's candles (schema 1.3.0 chart.taker_flow). One bar
+    // per candle the node's fills cover, net taker flow (buy minus sell, the taker side only, each fill once), each bar
+    // with its coverage; a candle the plugin has no bar for stays empty. Nothing is computed here.
+    const flowSrc = fromRoute ? (cd && cd.state === "ok" && cd.data ? (cd.data.taker_flow || null) : null) : (chart.taker_flow || null);
+    const flowBars = ov.flow && flowSrc && flowSrc.available !== false && Array.isArray(flowSrc.bars) ? flowSrc.bars : null;
+    const flowByTime = {};
+    (flowBars || []).forEach(function (b) { if (isNum(b.time_ms) && isNum(b.net_usd)) flowByTime[Math.floor(b.time_ms / 1000)] = b; });
+    // Why the layer can't be drawn right now, in the toggle's title: node mode off, the route's candles still loading or
+    // failed (the layer waits with them), the block missing, or withheld (a lapsed family) with the plugin's reason.
+    const flowWhy = function () {
+      if (!nodeOn) return "needs node mode";
+      if (fromRoute && !(cd && cd.state === "ok")) return cd && cd.state === "error" ? "no " + iv + " candles: " + cd.error : null;
+      if (!flowSrc) return fromRoute ? "not in the plugin's candles answer" : "not in this snapshot";
+      if (flowSrc.available === false) return "withheld: " + (flowSrc.reason || "no reason given");
+      return null;
+    };
 
     // Poll the plugin's /candles route for the selected interval only, at a cadence tied to the interval
     // (5 s to 60 s); a "loading" answer is retried in 2 s, an error in 10 s. Nothing is fetched for 15s.
@@ -1111,13 +1114,13 @@
           priceFormat: { type: "volume" }, priceScaleId: "vol", priceLineVisible: false, lastValueVisible: false
         });
         c.priceScale("vol").applyOptions({ scaleMargins: { top: 0.8, bottom: 0 }, visible: false });
-        // The node's taker flow per 15-minute bucket (the order flow map's net_usd), on its own hidden scale above the
-        // volume bars; drawn only on the 15 m interval, where a bucket is one candle wide (Kevin, Nov 10).
+        // The node's net taker flow per candle (the plugin's chart.taker_flow, one bar per candle on every interval:
+        // Kevin, Nov 11), on its own hidden scale above the volume bars.
         const nflow = c.addSeries(LWC.HistogramSeries, {
           priceFormat: { type: "volume" }, priceScaleId: "nflow", priceLineVisible: false, lastValueVisible: false, base: 0
         });
         c.priceScale("nflow").applyOptions({ scaleMargins: { top: 0.6, bottom: 0.21 }, visible: false });
-        api.current = { chart: c, series: series, vol: vol, nflow: nflow, lines: {}, markers: markers, market: null, decimals: null, byTime: {}, flowByTime: {}, hoverT: null };
+        api.current = { chart: c, series: series, vol: vol, nflow: nflow, lines: {}, markers: markers, market: null, decimals: null, byTime: {}, hoverT: null };
         // The readout follows the crosshair: the candle under it, or none (the latest is shown then).
         c.subscribeCrosshairMove(function (param) {
           const a2 = api.current;
@@ -1219,6 +1222,26 @@
       }
     }, [m, iv, cd]);
 
+    // The Taker flow layer: one histogram bar per candle from the plugin's per-candle taker flow (flowByTime above),
+    // under the candles on every interval, green for net buying and red for net selling, faded when the bar is partial
+    // (the node's fills don't cover its whole span). Runs after the candle update above, so a.byTime is current, and a
+    // bar is drawn only where a candle stands.
+    useEffect(function () {
+      const a = api.current;
+      if (!a || !a.nflow) return;
+      const data = [];
+      Object.keys(flowByTime).forEach(function (k) {
+        const t = Number(k);
+        if (!a.byTime[t]) return;                        // no candle at this time: nothing to draw under
+        const b = flowByTime[t];
+        const up = b.net_usd >= 0;
+        const faded = b.complete === false && !b.in_progress;
+        data.push({ time: t, value: b.net_usd, color: up ? (faded ? "rgba(24, 229, 137, 0.35)" : "rgba(24, 229, 137, 0.85)") : (faded ? "rgba(255, 69, 77, 0.35)" : "rgba(255, 69, 77, 0.85)") });
+      });
+      data.sort(function (x, y) { return x.time - y.time; });
+      try { a.nflow.setData(data); } catch (e) { /* a bar the chart can't place is dropped */ }
+    }, [m, iv, cd, ov.flow]);
+
     const gaps = chart.gaps || [];
     const lines = chart.price_lines || [];
     const nCandles = fromRoute ? routeCandles.length : (chart.candles || []).length;
@@ -1243,12 +1266,11 @@
       status: h(Fragment, null, ivBar, routeChip,
         h("div", { className: "hd-toggle hd-ovbar", role: "group", "aria-label": "Liquidity overlay" },
           [["stops", "Stop clusters"], ["depth", "Resting depth"], ["flow", "Taker flow"]].map(function (x) {
-            const flowOff = x[0] === "flow" && iv !== "15m";
-            const why = ovWhy(x[0]);
-            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !flowOff && !why && "hd-btn-on"), disabled: !!why || flowOff,
+            const why = x[0] === "flow" ? flowWhy() : ovWhy(x[0]);
+            return h("button", { key: x[0], type: "button", className: cx("hd-btn hd-btn-xs", ov[x[0]] && !why && "hd-btn-on"), disabled: !!why,
               title: why ? why : (x[0] === "stops" ? "waiting stop and take-profit orders per 0.5% band, from the node: solid for the stated sizes (lower bounds where orders report none), hatched for the estimate of whole-position orders at their owners\u0027 positions, when the feed carries positions"
                 : x[0] === "depth" ? "resting depth per 0.5% band, from the node's full book"
-                : (flowOff ? "net taker flow per 15-minute bucket from the node's fills: on the 15m interval only" : "net taker flow per 15-minute bucket from the node's fills (the order flow map), under the candles")),
+                : "net taker flow per candle from the node's fills (buy minus sell, the taker side only, each fill once), under the candles on every interval; faded where the fills don't cover the whole candle"),
               "aria-pressed": ov[x[0]] ? "true" : "false", onClick: function () { setOv(Object.assign({}, ov, { [x[0]]: !ov[x[0]] })); } }, x[1]);
           })))
     },
@@ -1276,8 +1298,10 @@
       bandTip ? h("div", { className: "hd-band-tip", style: { left: Math.min(bandTip.x + 14, 420) + "px", top: Math.max(4, bandTip.y - 10) + "px" } },
         bandTip.texts.map(function (t, i) { return h("div", { key: i, className: i === bandTip.texts.length - 1 ? "hd-dim" : undefined }, t); })) : null,
       !failure ? h(ChartReadout, { k: hover || latest, hovering: !!hover, unit: coinOf(m.market),
-        late: (ov.stops || ov.depth || ov.flow) && node ? (lateNote(node, "book") || lateNote(node, "flow", "fills")) : null,
-        flow: (function () { const a = api.current; const k = hover || latest; if (!a || !k || !ov.flow || iv !== "15m") return null; const t = isNum(k._t) ? k._t : k.time; return a.flowByTime[t] || null; })() }) : null,
+        // A late note: the taker flow block's own "as of" (the plugin's, at the request or the build) when that layer is
+        // on, else the node view's for the band layers.
+        late: (flowBars && flowSrc.as_of_note) || ((ov.stops || ov.depth || ov.flow) && node ? (lateNote(node, "book") || lateNote(node, "flow", "fills")) : null),
+        flow: (function () { const k = hover || latest; if (!k || !flowBars) return null; const t = isNum(k._t) ? k._t : k.time; return flowByTime[t] || null; })() }) : null,
       failure ? h("div", { className: "hd-chart-overlay" }, h(Unavailable, { reason: failure })) : null,
       !failure && nCandles === 0 ? h("div", { className: "hd-chart-overlay" },
         fromRoute
@@ -4693,6 +4717,12 @@
     if (data.market) {
       const m = Object.assign({}, data.market);
       if (m.node && m.node.live) m.node = Object.assign({}, m.node, { live: nodeView(m.node.live) });
+      // The chart's taker flow per candle (chart.taker_flow, the 15 s bars) keeps its bars under lateness; only its
+      // freshness ages, as the flow map's does (serving.py aged_taker_flow).
+      if (m.chart && m.chart.taker_flow) {
+        const tf = fillResult(m.chart.taker_flow);
+        if (tf !== m.chart.taker_flow) m.chart = Object.assign({}, m.chart, { taker_flow: tf });
+      }
       if (m.deck) m.deck = deckNode(m.deck);
       if (m.wallets) {
         const w = {};
