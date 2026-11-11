@@ -378,5 +378,5 @@ def test_hl_structure_is_registered_everywhere_hl_candles_is():
     assert st.CANDLES_USED == {"1d": 30, "4h": 42, "1h": 48, "30m": 48, "15m": 48, "5m": 60, "1m": 60}
     for rel in ("plugin.yaml", "catalog/hyperliquid-desk.yaml", "README.md", "docs/SNAPSHOT.md"):
         assert "hl_structure" in (ROOT / rel).read_text(), rel
-    assert "Nine agent tools" in (ROOT / "README.md").read_text()
+    assert "Twelve agent tools" in (ROOT / "README.md").read_text()     # nine for the market, three for the node data
     assert (tools.STRUCTURE_WAIT_S, tools.STRUCTURE_POLL_S) == (3.0, 0.25)
