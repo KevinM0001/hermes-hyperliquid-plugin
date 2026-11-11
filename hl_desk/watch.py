@@ -25,12 +25,12 @@ RANGE_7D_FALLBACK = ("4h", 42)
 START_INTERVALS = ("1h", "1d")            # requested for every followed market when the collector starts
 TRADES_PARTS = ("flow", "wave", "taker_per_hour", "top_wallet_1h")
 VERDICT_RULE = ("MIDDLE when the 24h position is 35 to 65%; else LOW below 35 or HIGH above 65, + FADING when the 4h wave "
-                "delta < -0.05, + BUILDING when it is > 0.05, otherwise flat; with no wave, the edge alone. Kevin's own rule: "
+                "delta < -0.05, + BUILDING when it is > 0.05, otherwise flat; with no wave, the edge alone. The rule: "
                 "a description, not a signal")
 WAVE_RULE = ("the covered minutes of the 4h window split into halves by count (the second half holds the extra minute); "
              "delta = |imbalance(second half)| - |imbalance(first half)|; decelerating below -0.05, accelerating above "
              "0.05, else flat; each half needs more than 10 covered minutes")
-NOTES = ("Not a forecast: these are descriptions by Kevin's own rule, not signals",
+NOTES = ("Not a forecast: these are descriptions by a fixed rule, not signals",
          "Range position is where the price sits between the 24h low and high; the hatched band is the middle 30%, the "
          "condition you identified as your loss-maker",
          "Flow is (taker buys - taker sells) / total, so +1 is all buying",
@@ -210,7 +210,7 @@ def taker_per_hour(mins4h: list[dict]) -> tuple[dict | None, str | None]:
     return {"per_hour_usd": rnd((buy + sell) / hours, 2), "notional_usd": rnd(buy + sell, 2),
             "minutes_covered": len(cov), "hours_covered": rnd(hours, 4),
             "method": "taker notional over the covered minutes of the 4h window divided by the covered hours "
-                      "(Kevin's page divides the 4h total by 4)"}, None
+                      "(the 4h total divided by 4)"}, None
 
 
 def top_wallet_1h(mins1h: list[dict]) -> tuple[dict | None, str | None]:
@@ -337,7 +337,7 @@ def verdict(position_pct: float, wave_delta: float | None) -> tuple[str, str, st
     """The page's verdict(): (label, tone, text) from the 24h position and the 4h wave delta."""
     lo, hi = MIDDLE_PCT
     if lo <= position_pct <= hi:
-        return "MIDDLE", "warning", "mid-range: the condition you said costs you money"
+        return "MIDDLE", "warning", "mid-range: neither the low nor the high of the range"
     edge = "low" if position_pct < lo else "high"
     big = edge.upper()
     if wave_delta is None:
@@ -365,7 +365,7 @@ def _with_verdict(w: dict) -> dict:
     label, tone, text = verdict(pos, delta)
     out = {"label": label, "tone": tone, "text": text, "position_pct": pos, "wave_delta": delta,
            "wave_state": wv.get("state") if isinstance(wv, dict) else None, "rule": VERDICT_RULE,
-           "kind": "a description by Kevin's own rule, not a signal or a forecast"}
+           "kind": "a description by a fixed rule, not a signal or a forecast"}
     if delta is None:
         out["wave_reason"] = w.get("wave_reason") or "no wave"
     w["verdict"] = out

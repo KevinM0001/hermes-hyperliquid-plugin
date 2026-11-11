@@ -145,7 +145,8 @@ def test_unix_socket_transport_reads_the_real_stream(tmp_path, monkeypatch):
         return c
 
     c = asyncio.run(main())
-    assert got["handshake"] == {"v": 2, "markets": [XY], "start": "snapshot"}
+    # the handshake names the market and its owner position stream (PROTOCOL.md 4.8, opt-in; Kevin, Nov 10)
+    assert got["handshake"] == {"v": 2, "markets": [XY, XY + ".owner_pos"], "start": "snapshot"}
     assert c.markets[XY].book is not None and c.epoch == lines[0]["epoch"]
 
 
@@ -285,15 +286,18 @@ def test_the_tab_withholds_node_values_once_their_freshness_lapses(harness):
     assert fam["book"]["state"] == "LIVE" and fam["book"]["delay_ms"] < 1_000 and fam["book"]["delayed_after_ms"] == 2_000
     payload["served"] = dict(payload["served"], latest=True, age_s=0.0)   # as served the moment it was built
     assert _tab_validity(payload, 100)["ok"] is True
-    late = _tab_validity(payload, 2_100)
-    assert late["ok"] is False and "node book was LIVE when the snapshot was built" in late["reason"]
-    assert "delayed above 2 s" in late["reason"]
+    # Within the screen's allowance (30 s, Kevin, Nov 10) the snapshot stays current whatever the 2 s delay bound
+    # says: a verdict within seconds was the page's refresh cadence, not a lag. Past it, the tab's own gate re-judges.
+    assert _tab_validity(payload, 2_100)["ok"] is True
+    late = _tab_validity(payload, 32_100)
+    assert late["ok"] is False and "shown as current" in late["reason"]
     now = c.family_status(XY, "book", rx + 2_100, (rx + 2_100) * 10 ** 6)
     assert now["delay_ms"] <= fam["book"]["delay_ms"] + 2_100                # the tab's bound covers the client
     no_delay = json.loads(json.dumps(payload))                            # review 6, B1: LIVE without its delay
     no_delay["market"]["node"]["live"]["families"]["book"].pop("delay_ms")
-    gone = _tab_validity(no_delay, 100)
-    assert gone["ok"] is False and "delay or limit isn't in the snapshot" in gone["reason"]
+    assert _tab_validity(no_delay, 100)["ok"] is True                        # within the allowance: shown as served
+    gone = _tab_validity(no_delay, 32_100)
+    assert gone["ok"] is False and "shown as current" in gone["reason"]
     for state in ("REPLAY", "BEHIND"):
         other = json.loads(json.dumps(payload))
         for f in other["market"]["node"]["live"]["families"].values():
@@ -321,10 +325,12 @@ def test_latest_node_tool_reads_are_judged_at_serving_time(surfaces, monkeypatch
     """Review 7, B1, with Kevin's Nov 8 delay rule (delayed above 2 s, stale above 4 s here). A snapshot whose node
     book is LIVE when built (1.9 s after the last line, or at once), read as the latest snapshot 1.5, 3 or 4.5 s
     later: its delay bound (the 5 s average when built plus the time since) passes a limit, so node_book,
-    node_status and node_stops don't call it LIVE and withhold every number built on it. The bound is never below
-    what the client itself reads then. Within the limit it stays LIVE with its delay and ages advanced; a
-    historical read (by snapshot_id) stays as of its build time."""
+    node_status and node_stops don't call it LIVE. Changed by Kevin, Nov 10: every number built on it is served as
+    built, with the state, the delay and an "as of" note, not withheld. The bound is never below what the client
+    itself reads then. Within the limit it stays LIVE with its delay and ages advanced; a historical read (by
+    snapshot_id) stays as of its build time."""
     from hl_desk.node.client import delay_state
+    from hl_desk.util import iso_ms
     plugin = surfaces([XY])
     plugin.desk.collector = {"state": "connected", "note": "offline recorded feed"}
     c = plugin.attach(FeedClient("unix:/run/feed.sock", "LIVE", {"delayed_after_ms": 2_000, "stale_after_ms": 4_000}))
@@ -349,14 +355,24 @@ def test_latest_node_tool_reads_are_judged_at_serving_time(surfaces, monkeypatch
     assert book["ok"] and book["served"]["latest"] is True
     fb = book["families"]["book"]
     assert fb["state"] == want and fb["delay_ms"] == bound and "by the time this was served" in fb["reason"]
-    for k in ("ladder", "walls", "thinning"):
-        assert book[k]["available"] is False and f"book {want}" in book[k]["reason"], k
-    assert book["tape"]["available"] is False
+    note = f"as of the node's book at {iso_ms(fb['watermark_block_time_ms'])}, {bound / 1000:.1f} s behind"
+    for k in ("ladder", "walls", "thinning"):           # served as built, labelled with the state and the note
+        assert book[k].get("available") is not False and book[k]["freshness"] == want, k
+        assert book[k]["as_of_note"] == note and "withheld" not in json.dumps(book[k]), k
+        assert {x: book[k][x] for x in book[k] if x not in ("freshness", "as_of_note")} == \
+            {x: jsonable(view[k][x]) for x in view[k] if x not in ("freshness", "as_of_note")}, k
+    assert book["ladder"]["bids"] and book["thinning"]["note"] == panels.THIN_NOTE
+    assert book["tape"].get("available") is not False and book["tape"]["freshness"] == want
+    assert book["tape"]["rows"] == jsonable(view["tape"]["rows"])
+    assert book["tape"]["as_of_note"] == f"as of the node's fills at {iso_ms(fb['watermark_block_time_ms'])}, {bound / 1000:.1f} s behind"
     status = _latest(plugin, monkeypatch, "node_status", XY, read_at)
     assert all(f["state"] != "LIVE" for f in status["markets"][XY]["families"].values())
     assert status["markets"][XY]["delay"]["delay_ms"] == bound and status["markets"][XY]["delay"]["state"] == want
     stops = _latest(plugin, monkeypatch, "node_stops", XY, read_at)
-    assert stops["stops"]["available"] is False and f"triggers {want}" in stops["stops"]["reason"]
+    assert stops["stops"].get("available") is not False and stops["stops"]["freshness"] == want
+    assert stops["stops"]["rows"] == jsonable(view["stops"]["rows"])
+    assert stops["stops"]["as_of_note"].startswith("as of the node's waiting stops at ") and \
+        stops["stops"]["as_of_note"].endswith(f"{bound / 1000:.1f} s behind")
     # within the limit: still LIVE, its delay and ages advanced by the time since it was built
     if publish_after == 0:
         ok = _latest(plugin, monkeypatch, "node_book", XY, built + 500)
@@ -373,9 +389,10 @@ def test_latest_node_tool_reads_are_judged_at_serving_time(surfaces, monkeypatch
 def test_latest_reads_age_on_the_monotonic_clock_not_the_wall_clock(surfaces, monkeypatch):
     """Review 8, finding 1. A snapshot LIVE when built is read 2.5 s later on the monotonic clock, while the wall
     clock was corrected back by 2.4 s (wall time says 0.1 s). The served age is the monotonic 2.5 s: node_book's
-    delay bound passes the 2 s delayed limit, so it reads BEHIND (delayed) with its numbers withheld, and the
-    tab's own gate says the latest snapshot isn't current; the bound is never below what the client reads. A
-    snapshot whose age can't be established on the monotonic clock isn't served as latest."""
+    delay bound passes the 2 s delayed limit, so it reads BEHIND (delayed) with its numbers served under that
+    label and the delay (changed by Kevin, Nov 10), and the tab's own gate says the latest snapshot isn't current;
+    the bound is never below what the client reads. A snapshot whose age can't be established on the monotonic
+    clock isn't served as latest."""
     plugin = surfaces([XY])
     plugin.desk.collector = {"state": "connected", "note": "offline recorded feed"}
     c = plugin.attach(FeedClient("unix:/run/feed.sock", "LIVE", {"delayed_after_ms": 2_000, "stale_after_ms": 4_000}))
@@ -396,11 +413,14 @@ def test_latest_reads_age_on_the_monotonic_clock_not_the_wall_clock(surfaces, mo
     assert book["served"]["latest"] is True and abs(book["served"]["age_s"] - 2.5) < 1e-6
     fb = book["families"]["book"]
     assert fb["state"] == "BEHIND" and fb["aged_by_ms"] == 2_500 and fb["delay_ms"] == d0 + 2_500
-    assert book["ladder"]["available"] is False
+    lad = book["ladder"]
+    assert lad.get("available") is not False and lad["bids"] and lad["freshness"] == "BEHIND"
+    assert lad["as_of_note"].endswith(f", {(d0 + 2_500) / 1000:.1f} s behind")
     tab = plugin.http.get("/api/plugins/hyperliquid-desk/snapshot", params={"market": XY}).json()
     assert tab["ok"] and abs(tab["served"]["age_s"] - 2.5) < 1e-6
-    gate = _tab_validity(tab, 0)
-    assert gate["ok"] is False and "node book was LIVE" in gate["reason"]
+    assert _tab_validity(tab, 0)["ok"] is True                   # 2.5 s: within the screen's allowance (Kevin, Nov 10)
+    gate = _tab_validity(tab, 30_000)                            # 32.5 s on the same monotonic basis: not current
+    assert gate["ok"] is False and "shown as current" in gate["reason"]
     # a monotonic stamp from another clock (ahead of now): the age can't be established, so no latest answer
     refused = _latest(plugin, monkeypatch, "node_book", XY, wall_at, now - 1)
     assert refused["ok"] is False and "can't be established" in refused["error"]

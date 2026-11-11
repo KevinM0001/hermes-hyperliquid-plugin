@@ -392,14 +392,14 @@ class MarketState:
                 "stream": "node fills", "available": False, "reason": why} | flow_meta(client, self.market, *now)
         # The card's window is [start, end]; node fills are counted over the same block-time span.
         b = deck_buckets(client, self.market, card["window_start_ms"] - 1, card["window_end_ms"], *now)
-        return _bucket_metrics(b, "the card's 90 s window") | {"hook": base.get("hook")}
+        return _bucket_metrics(b, b.get("window_label") or "the card's 90 s window") | {"hook": base.get("hook")}
 
     def _node_events(self, events: list, client, live_view: dict | None, now=(None, None)) -> list:
         """The Flow Deck's events. In node mode, bursts come only from node fills (the burst calibration's rule,
         once per node block; hl_desk/node/bursts.py) and public-trades bursts aren't shown; in public mode, bursts
         are the public-trades rule's, with node buckets marked as needing node mode. Published events are shared with
         earlier snapshots, so they're never edited: each is copied."""
-        from .node.panels import _jsonable, flow_meta
+        from .node.panels import _jsonable, flow_meta, usable
         node_mode = getattr(self, "node_bursts", False)
         out = []
         for ev in events:
@@ -412,12 +412,14 @@ class MarketState:
         rule = mf.flow.bursts if mf is not None else None
         if rule is not None:
             # Each burst's own-side buckets, from exactly its window's node fills, with the node fills' freshness as
-            # of this build; withheld with the reason while the node fills aren't usable.
+            # of this build (state, reason, delay_ms: a burst fires on block time, so under delay it appears late and
+            # says so); withheld with the reason only while the node fills are INVALID or UNKNOWN. A late family
+            # (BEHIND, STALE) labels, it doesn't withhold (Kevin, Nov 10).
             meta = flow_meta(client, self.market, *now)
             fresh = meta["freshness"]
-            usable = fresh.get("state") in ("LIVE", "REPLAY")
+            ok = usable(fresh)
             for ev in rule.events:
-                if usable:
+                if ok:
                     # A node burst fires only on a complete window of valid executions, so its buckets are exact.
                     b = {"available": True, "stream": "node fills",
                          "window": {"start_ms": ev["window_start_ms_exclusive"], "end_ms": ev["window_end_ms"]},
@@ -571,7 +573,7 @@ def _bucket_metrics(b: dict, window_label: str, only: str | None = None) -> dict
     own side's aggressive notional from the same node fills (one population)."""
     keys = {"buying": ("new_long", "cover"), "selling": ("new_short", "exit")}
     out = {"stream": "node fills", "window_label": window_label, "provenance": b.get("provenance"),
-           "freshness": b.get("freshness"), "coverage": b.get("coverage")}
+           "freshness": b.get("freshness"), "coverage": b.get("coverage"), "as_of_note": b.get("as_of_note")}
     if not b.get("available"):
         reason = b.get("reason") or "node fills unavailable"
         for side, ks in keys.items():

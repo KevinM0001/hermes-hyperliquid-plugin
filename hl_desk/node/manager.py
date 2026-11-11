@@ -18,7 +18,7 @@ from .bursts import NodeBurstRule
 from .client import FeedClient
 from .demand import Demand
 from .replay import Recording, ReplayPlayer
-from .transport import FixedDemand, parse_source, run_feed, run_relay
+from .transport import FixedDemand, parse_source, run_feed, run_relay, source_label
 
 DEADLINE_CHECK_S = 0.25
 LEASE_MAX_S = 60.0          # a tool call waits at most 20 s for data: no lease outlives this
@@ -256,7 +256,7 @@ class NodeManager:
 
     def status(self) -> dict:
         return {"live": None if self.live is None else {
-                    "source": self.live.source, "connection": dict(self.live.connection),
+                    "source": source_label(self.live.source), "connection": dict(self.live.connection),
                     "epoch": self.live.epoch, "session": self.live.session,
                     "counters": dict(self.live.counters), "skew": dict(self.live.skew),
                     "relay": self.relay_status()},

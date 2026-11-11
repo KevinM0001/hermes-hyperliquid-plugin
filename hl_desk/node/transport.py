@@ -20,6 +20,8 @@ import random
 import time
 import urllib.parse
 
+from .proto import OWNER_POS_SUFFIX
+
 LINE_LIMIT = 64 * 1024 * 1024
 LOOPBACK_HOSTS = ("127.0.0.1", "::1", "localhost")
 # A relay accepts at most 30 view switches a minute per connection (profile hl-relay-2): switches are spaced so a
@@ -53,10 +55,32 @@ def parse_source(spec: str) -> tuple[str, str] | None:
     return None
 
 
+def source_label(spec) -> str:
+    """The feed source as it is served and shown: never a local path, so no screenshot, video or chat answer carries
+    the machine's user name or folder layout (the Nov 9 compliance audit). A Unix socket reads "local socket
+    (<file name>)", a relay URL "relay <host>"; anything else (a test label) is given back as it is."""
+    src = parse_source(str(spec)) if isinstance(spec, str) else None
+    if src is None:
+        return str(spec)
+    if src[0] == "unix":
+        return f"local socket ({os.path.basename(src[1]) or 'socket'})"
+    from urllib.parse import urlparse
+    host = urlparse(src[1]).hostname
+    return f"relay {host}" if host else "relay"
+
+
 def handshake(client, markets: list[str]) -> dict:
-    hs = {"v": 2, "markets": list(markets), "start": "snapshot"}
+    names = list(markets)
+    if client.cfg.get("owner_positions", True):
+        # The owner position streams (PROTOCOL.md 4.8): named here, or the feed serves none; a producer without them
+        # lists the names back as unknown and the plugin says the feed carries no positions.
+        names += [m + OWNER_POS_SUFFIX for m in markets]
+    hs = {"v": 2, "markets": names, "start": "snapshot"}
     if client.epoch is not None:
         nxt = {m: mf.last_seq + 1 for m, mf in client.markets.items() if mf.last_seq is not None and m in markets}
+        for m, mf in client.markets.items():
+            if m in markets and mf.opos.offered and mf.opos.last_seq is not None and m + OWNER_POS_SUFFIX in names:
+                nxt[m + OWNER_POS_SUFFIX] = mf.opos.last_seq + 1
         if nxt:
             hs["resume"] = {"epoch": client.epoch, "next": nxt}
     return hs
@@ -181,10 +205,14 @@ def relay_handshake(client, full: str | None, execs: list[str]) -> dict:
     only if it was received in full with a valid book (progress made through filtered ranges never stands in for
     full data, so without a resume the relay starts it from a snapshot); an executions market wherever its sequence
     is known (the relay honours it only if it still holds everything since)."""
-    hs = {"v": 2, "markets": [full] if full else [], "execs": list(execs), "start": "snapshot"}
+    streams = streams_on(client)
+    hs = {"v": 2, "markets": full_names(full, streams), "execs": list(execs), "start": "snapshot"}
     if client.epoch is not None:
         nxt = {}
         for m, mf in client.markets.items():
+            if m == full and streams and client.views.get(m + OWNER_POS_SUFFIX) == "full" \
+                    and mf.opos.offered and mf.opos.last_seq is not None:
+                nxt[m + OWNER_POS_SUFFIX] = mf.opos.last_seq + 1       # the stream resumes on its own sequence
             if mf.last_seq is None:
                 continue
             if m == full:
@@ -197,8 +225,22 @@ def relay_handshake(client, full: str | None, execs: list[str]) -> dict:
     return hs
 
 
-def switch_message(full: str | None, execs: list[str]) -> dict:
-    return {"v": 2, "switch": {"markets": [full] if full else [], "execs": list(execs)}}
+def streams_on(client) -> bool:
+    """Whether to ask a relay for the open market's position stream (PROTOCOL.md 4.8): the owner_positions setting
+    (on by default), as for a local socket."""
+    return bool(client.cfg.get("owner_positions", True))
+
+
+def full_names(full: str | None, streams: bool) -> list[str]:
+    """The `markets` of a relay handshake or switch: the open market and, with streams, its position stream (which
+    the relay serves only with its market's full data, counted with it as one full market)."""
+    if not full:
+        return []
+    return [full, full + OWNER_POS_SUFFIX] if streams else [full]
+
+
+def switch_message(full: str | None, execs: list[str], streams: bool = False) -> dict:
+    return {"v": 2, "switch": {"markets": full_names(full, streams), "execs": list(execs)}}
 
 
 class RelayEnded(Exception):
@@ -376,7 +418,7 @@ async def _relay_session(client, url, demand, stop, key, want, clock) -> str:
                 client.connection = {"state": "idle", "since_wall_ms": int(time.time() * 1000), "reason": IDLE_REASON}
                 return "idle"
             if want != current and clock() - last_switch >= MIN_SWITCH_INTERVAL_S:
-                await conn.send(json.dumps(switch_message(*want)))
+                await conn.send(json.dumps(switch_message(*want, streams=streams_on(client))))
                 current, last_switch = want, clock()
     finally:
         if reader is not None and not reader.done():

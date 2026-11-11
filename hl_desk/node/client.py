@@ -18,7 +18,8 @@ from dataclasses import dataclass, field
 
 from .book import BookError, NodeBook
 from .flow import NodeFlow
-from .proto import CLIENT_DEFAULTS, FAMILIES, KIND_FAMILY, SNAPSHOT_KINDS, STATE_FAMILIES, VERSION, VIEW_FAMILIES
+from .proto import (CLIENT_DEFAULTS, FAMILIES, KIND_FAMILY, OWNER_POS_SUFFIX, SNAPSHOT_KINDS, STATE_FAMILIES, VERSION,
+                    VIEW_FAMILIES, dec)
 from .triggers import NodeTriggers, TriggerError
 
 
@@ -117,11 +118,44 @@ class MarketFeed:
         self.flow_seen_through_seq: int | None = None
         self.counters = {"duplicates": 0, "gaps": 0, "snapshots_swapped": 0, "snapshots_rejected": 0,
                          "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0,
-                         "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0}
+                         "deltas_unapplied": 0, "delta_errors": 0, "held_snapshots": 0, "watermarks_without_time": 0,
+                         "watermarks_inconsistent": 0}
         self.events: deque[dict] = deque(maxlen=50)   # invalidations, swaps, rejections (for status)
+        self.opos = PosStream()                       # the owner position stream (4.8), joined by name and block
 
     def note(self, what: str, **kw) -> None:
         self.events.appendleft({"what": what, "seq": self.last_seq, **kw})
+
+
+class PosStream:
+    """The market's owner position stream ("<market>.owner_pos", PROTOCOL.md 4.8, revision 2.3): its own sequence,
+    assembly and watermarks under the v2 rules, joined to the market by name and by block. It holds the signed
+    position of every owner of a waiting whole-position TP/SL in the market, as the node's state has it; nothing here
+    is an estimate, and nothing here ever leaves the plugin per account."""
+
+    def __init__(self) -> None:
+        self.fam = Family("owner_pos")
+        self.fam.reason = "no owner position stream yet"
+        self.offered = False                    # the hello listed the stream
+        self.unavailable: str | None = None     # the feed has no positions for this market (hello or the producer said)
+        self.last_seq: int | None = None
+        self.run_start: int | None = None
+        self.expected_start: int | None = None
+        self.assembly: Assembly | None = None
+        self.positions: dict | None = None      # address -> signed Decimal position
+        self.basis: str | None = None
+        self.block: int | None = None
+        self.block_time_ms: int | None = None
+        self.wm_hist: deque = deque()             # the stream's own timed watermarks: (receipt mono ns, receipt wall - block time)
+        self.counters = {"duplicates": 0, "gaps": 0, "snapshots_applied": 0, "snapshots_rejected": 0,
+                         "snapshots_discarded": 0, "snapshot_mismatches": 0, "orphan_parts": 0, "deltas_unapplied": 0,
+                         "unknown_kinds": 0, "sets": 0, "drops": 0, "watermarks_inconsistent": 0}
+
+    def invalidate(self, reason: str) -> None:
+        self.fam.invalidate(reason)
+        self.positions = None
+        self.assembly = None
+        self.wm_hist.clear()                      # the stream's delay restarts at its next timed watermark
 
 
 class FeedClient:
@@ -157,7 +191,8 @@ class FeedClient:
 
     # --- partition -------------------------------------------------------------
     def stream_label(self) -> str:
-        parts = [self.source, self.mode, f"epoch {self.epoch}", f"session {self.session}"]
+        from .transport import source_label                      # the label, never a local path
+        parts = [source_label(self.source), self.mode, f"epoch {self.epoch}", f"session {self.session}"]
         if self.mode == "REPLAY":
             parts.append(f"replay {self.replay_session}")
         return " · ".join(str(p) for p in parts)
@@ -202,6 +237,7 @@ class FeedClient:
         self.connection = {"state": "disconnected", "since_wall_ms": wall_ms, "reason": reason}
         for mf in self.markets.values():
             self._discard_assembly(mf, f"connection closed ({reason})")
+            self._discard_stream_assembly(mf.opos, f"connection closed ({reason})")
 
     # --- lines ---------------------------------------------------------------------
     def on_line(self, obj: dict, wall_ms: int, mono_ns: int) -> None:
@@ -295,14 +331,23 @@ class FeedClient:
             if relay_views:
                 # A relay's hello names each market's view on this connection. A market it no longer announces is
                 # dropped; full-data state kept from an earlier connection is invalid at once where the new view
-                # doesn't deliver it, before any watermark could refresh it (Codex review 2 of the relay, B2).
+                # doesn't deliver it, before any watermark could refresh it (Codex review 2 of the relay, B2). The
+                # same for a position stream (it rides only with its market's full data): one not announced here
+                # stops, and its positions are dropped.
                 for m in list(self.markets):
                     if m not in announced:
                         self.views.pop(m, None)
                         self._invalidate_market(self.markets[m], "view: not subscribed on this connection")
                         self.markets[m].last_seq = None
                         self.markets[m].expected_start = None
+                    if m + OWNER_POS_SUFFIX not in announced:
+                        self._stream_view(m, "none", {})
             for m, info in announced.items():
+                if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX):
+                    if relay_views:
+                        self.views[m] = "full"
+                    self._hello_stream(m[:-len(OWNER_POS_SUFFIX)], info)
+                    continue
                 mf = self._market(m)
                 if not isinstance(info, dict):
                     continue
@@ -319,13 +364,28 @@ class FeedClient:
                 mf.expected_start = start
                 mf.last_seq = (start - 1) if isinstance(start, int) else None
                 mf.run_start = start
+            for m in (obj.get("unknown_markets") or []):
+                # A producer without position streams lists the name as unknown: this feed carries no positions.
+                if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX) and m[:-len(OWNER_POS_SUFFIX)] in self.markets:
+                    ps = self.markets[m[:-len(OWNER_POS_SUFFIX)]].opos
+                    ps.unavailable = (f"this feed carries no owner positions (allowlist "
+                                      f"{obj.get('allowlist_version') or 'unknown'}; {m!r} is unknown to the producer)")
+                    ps.offered = False
+                    ps.invalidate(ps.unavailable)
         elif c == "replay_unavailable":
             m = obj.get("market")
-            mf = self.markets.get(m) if isinstance(m, str) else None
+            start = obj.get("start_seq")
             self.counters["replay_unavailable"] += 1
+            if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX):
+                mf = self.markets.get(m[:-len(OWNER_POS_SUFFIX)])
+                if mf is not None:
+                    mf.opos.invalidate("replay unavailable: the stream's resume could not be honoured")
+                    mf.opos.last_seq = (start - 1) if isinstance(start, int) else None
+                    mf.opos.run_start = start
+                return
+            mf = self.markets.get(m) if isinstance(m, str) else None
             if mf is not None:
                 self._invalidate_market(mf, "replay unavailable: the resume could not be honoured")
-                start = obj.get("start_seq")
                 mf.last_seq = (start - 1) if isinstance(start, int) else None
                 mf.run_start = start
         elif c == "heartbeat":
@@ -338,12 +398,14 @@ class FeedClient:
                 if self.replay.get("state") == "ended":
                     for mf in self.markets.values():
                         self._discard_assembly(mf, "the replay ended inside a snapshot")
+                        self._discard_stream_assembly(mf.opos, "the replay ended inside a snapshot")
         elif c == "dropped":
             self.counters["dropped"] += 1
             self.connection = {"state": "dropped", "since_wall_ms": wall_ms,
                                "reason": f"dropped by the producer ({obj.get('reason')})"}
             for mf in self.markets.values():
                 self._discard_assembly(mf, "dropped as a slow subscriber")
+                self._discard_stream_assembly(mf.opos, "dropped as a slow subscriber")
         elif c == "error":
             self.counters["errors"] += 1
             self.connection = {"state": "refused", "since_wall_ms": wall_ms, "reason": str(obj.get("reason"))}
@@ -405,6 +467,14 @@ class FeedClient:
                     f.applied_through = b
 
     def _view(self, obj: dict) -> None:
+        name = obj.get("market")
+        if isinstance(name, str) and name.endswith(OWNER_POS_SUFFIX):
+            # A position stream's view (it moves with its market's full data): full restarts it at start_seq from
+            # its latest snapshot, none stops it. Never a MarketFeed of its own.
+            if self._session_ok(obj.get("epoch"), obj.get("session")):
+                self.counters["view_changes"] = self.counters.get("view_changes", 0) + 1
+                self._stream_view(name[:-len(OWNER_POS_SUFFIX)], obj.get("view"), obj)
+            return
         mf = self._relay_market(obj)
         if mf is None:
             return
@@ -428,6 +498,31 @@ class FeedClient:
             self.views.pop(mf.market, None)
             self._invalidate_market(mf, "view: not subscribed")
             mf.last_seq = mf.expected_start = mf.run_start = None
+
+    def _stream_view(self, market: str, view, info: dict) -> None:
+        """A relay's view of a market's position stream on this connection (hello or view line)."""
+        name = market + OWNER_POS_SUFFIX
+        mf = self.markets.get(market)
+        if view == "full":
+            mf = self._market(market)
+            ps = mf.opos
+            self.views[name] = "full"
+            ps.offered, ps.unavailable = True, None
+            if ps.last_seq is not None:
+                ps.invalidate("switched to its market's full data: restarting from a snapshot")
+            start = info.get("start_seq")
+            if isinstance(start, int) and not isinstance(start, bool) and start >= 1:
+                ps.expected_start, ps.last_seq, ps.run_start = start, start - 1, start
+            else:
+                ps.expected_start = ps.last_seq = ps.run_start = None
+            return
+        self.views.pop(name, None)
+        if mf is None:
+            return
+        ps = mf.opos
+        if ps.last_seq is not None or ps.fam.valid or ps.positions is not None:
+            ps.invalidate("not subscribed: positions ride only with the open market's full data")
+        ps.last_seq = ps.expected_start = ps.run_start = None
 
     def _full_data_lost(self, mf: MarketFeed, reason: str) -> None:
         """The full-data families stop being delivered: each becomes invalid with the reason (flow stays)."""
@@ -470,6 +565,9 @@ class FeedClient:
         if not self._session_ok(obj.get("epoch"), obj.get("session")):
             return
         m, seq, kind = obj.get("market"), obj.get("seq"), obj.get("kind")
+        if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX) and isinstance(seq, int):
+            self._stream_line(m[:-len(OWNER_POS_SUFFIX)], obj, seq, kind, wall_ms, mono_ns)
+            return
         if not isinstance(m, str) or not isinstance(seq, int) or kind not in KIND_FAMILY:
             self.unreadable_line("a feed line that can't be assigned to a market")
             return
@@ -528,6 +626,180 @@ class FeedClient:
             self._watermark(mf, seq, body, block, bt, wall_ms, mono_ns)
         self._release_held(mf)
 
+    # --- the owner position stream (4.8) ---------------------------------------------
+    def _hello_stream(self, market: str, info) -> None:
+        ps = self._market(market).opos
+        ps.offered, ps.unavailable = True, None
+        if not isinstance(info, dict):
+            return
+        start = info.get("start_seq")
+        if info.get("snapshot") == "resumed" and ps.last_seq is not None and start == ps.last_seq + 1:
+            return
+        if ps.last_seq is not None:
+            ps.invalidate(f"reconnected without a resume ({info.get('snapshot')})")
+        ps.expected_start = start
+        ps.last_seq = (start - 1) if isinstance(start, int) else None
+        ps.run_start = start
+
+    def _stream_line(self, market: str, obj: dict, seq: int, kind, wall_ms: int, mono_ns: int) -> None:
+        """A line of "<market>.owner_pos": the market's sequencing rules on the stream's own sequence; a gap or a bad
+        start invalidates the owner_pos family alone, never the market's families."""
+        mf = self._market(market)
+        ps = mf.opos
+        if ps.last_seq is not None and seq <= ps.last_seq:
+            ps.counters["duplicates"] += 1
+            return
+        if ps.last_seq is not None and seq > ps.last_seq + 1:
+            ps.counters["gaps"] += 1
+            ps.invalidate(f"owner position stream gap: expected {ps.last_seq + 1}, got {seq}")
+            ps.run_start = seq
+        elif ps.last_seq is None:
+            if ps.expected_start is not None and seq != ps.expected_start:
+                ps.invalidate(f"owner position stream started at {seq}, not {ps.expected_start}")
+            ps.run_start = seq
+        ps.last_seq = seq
+        self._accepted = True
+        body = obj.get("body") if isinstance(obj.get("body"), dict) else {}
+        block, bt = obj.get("block"), obj.get("block_time_ms")
+        if isinstance(block, int):
+            ps.block, ps.block_time_ms = block, bt
+        if ps.assembly is not None and kind != "opos_snapshot":
+            self._discard_stream_assembly(ps, f"interrupted by {kind} at seq {seq}")
+        if kind == "opos_snapshot":
+            self._stream_snapshot_part(mf, ps, seq, body, block, bt, mono_ns)
+        elif kind == "opos_delta":
+            self._stream_delta(mf, ps, seq, body)
+        elif kind != "watermark":
+            ps.counters["unknown_kinds"] += 1      # a kind this client doesn't know: the sequence still advances
+        f = ps.fam
+        if f.valid:
+            f.applied_through = seq
+        if kind == "watermark" and body.get("through_seq") != seq - 1:
+            # The market's rule (review B1) on the stream's own sequence: an inconsistent watermark is counted and
+            # ignored, advancing neither the stream's delay history nor its family's freshness.
+            ps.counters["watermarks_inconsistent"] += 1
+            mf.note("owner position stream watermark through_seq inconsistent: ignored", through=body.get("through_seq"), seq=seq)
+        elif kind == "watermark" and isinstance(bt, int) and not isinstance(bt, bool):
+            # The stream's own delay history: its freshness is judged by its watermarks, not the market's.
+            ps.wm_hist.append((mono_ns, wall_ms - bt))
+            keep_ns = (self.cfg["delay_window_ms"] + 60_000) * 1_000_000
+            while len(ps.wm_hist) > 2 and ps.wm_hist[1][0] < mono_ns - keep_ns:
+                ps.wm_hist.popleft()
+            if f.valid:
+                f.wm_block, f.wm_block_time_ms = block, bt
+                f.wm_recv_wall_ms, f.wm_recv_mono_ns = wall_ms, mono_ns
+
+    def _stream_snapshot_part(self, mf: MarketFeed, ps: PosStream, seq, body, block, bt, mono_ns) -> None:
+        if isinstance(body.get("unavailable"), str):
+            # The producer can't keep positions exact in this session (or couldn't from its start): unavailable with
+            # its reason, never approximate; said in every snapshot of the session, with or without parts.
+            self._discard_stream_assembly(ps, "the producer declared positions unavailable")
+            ps.unavailable = f"owner positions unavailable from the producer: {body['unavailable']}"
+            ps.invalidate(ps.unavailable)
+            return
+        part, parts, through = body.get("part"), body.get("parts"), body.get("through_seq")
+        sid = body.get("snapshot_id")
+        if not all(isinstance(x, int) for x in (part, parts, through)) or not isinstance(sid, str):
+            self._discard_stream_assembly(ps, "malformed snapshot part")
+            ps.invalidate("malformed owner position snapshot part")
+            return
+        rows = body.get("positions") or []
+        a = ps.assembly
+        if part == 1:
+            if a is not None:
+                self._discard_stream_assembly(ps, f"a new snapshot started at seq {seq}")
+            if seq != through + 1:
+                ps.invalidate("owner position snapshot part 1 out of place")
+                return
+            ps.assembly = a = Assembly("owner_pos", "opos_snapshot", sid, parts, through, 1, mono_ns, body.get("coverage"),
+                                       block=block, block_time_ms=bt)
+        else:
+            if a is None:
+                ps.counters["orphan_parts"] += 1
+                return
+            if a.snapshot_id != sid or a.parts != parts or part != a.next_part or seq != a.through_seq + part:
+                self._discard_stream_assembly(ps, "snapshot parts out of order")
+                return
+        if not isinstance(rows, list):
+            self._discard_stream_assembly(ps, "a snapshot part without a positions list")
+            return
+        a.rows.extend(rows)
+        a.bytes += len(str(rows))
+        a.next_part = part + 1
+        if isinstance(body.get("total_owners"), int):
+            a.total = body["total_owners"]
+        a.block, a.block_time_ms = block, bt
+        limit_chunks = self.limits.get("snapshot_max_chunks", 4096)
+        if a.bytes > self.cfg["max_snapshot_bytes"] or parts > limit_chunks:
+            self._discard_stream_assembly(ps, "snapshot exceeds the client's byte or chunk bound")
+            return
+        if part == parts:
+            ps.assembly = None
+            self._complete_stream_snapshot(mf, ps, a, seq)
+
+    def _complete_stream_snapshot(self, mf: MarketFeed, ps: PosStream, a: Assembly, seq: int) -> None:
+        names = (a.coverage or {}).get("fields")
+        iu, ip = (names.index("user"), names.index("pos")) if (isinstance(names, list) and "user" in names and "pos" in names) else (0, 1)
+        positions = {}
+        for r in a.rows:
+            u = r[iu] if isinstance(r, (list, tuple)) and len(r) > max(iu, ip) else None
+            p = dec(r[ip]) if u is not None else None
+            if not isinstance(u, str) or p is None:
+                ps.counters["snapshots_rejected"] += 1
+                ps.invalidate("owner position snapshot unusable (an unreadable row)")
+                return
+            positions[u] = p
+        if a.total is not None and len(positions) != a.total:
+            ps.counters["snapshots_rejected"] += 1
+            ps.invalidate(f"owner position snapshot holds {len(positions)} owners, total says {a.total}")
+            return
+        if ps.positions is not None and ps.fam.valid and positions != ps.positions:
+            # A periodic snapshot replacing a tracked set that differs from it: counted, the snapshot taken (6.4).
+            ps.counters["snapshot_mismatches"] += 1
+            mf.note("owner positions snapshot differs from the tracked set", owners=len(positions))
+        ps.positions = positions
+        ps.basis = (a.coverage or {}).get("basis")
+        ps.unavailable = None
+        ps.counters["snapshots_applied"] += 1
+        f = ps.fam
+        f.valid, f.reason, f.since_seq, f.applied_through, f.last_change_seq = True, None, seq, seq, seq
+        mf.note("owner positions snapshot applied", owners=len(positions), block=a.block)
+
+    def _stream_delta(self, mf: MarketFeed, ps: PosStream, seq: int, body: dict) -> None:
+        if isinstance(body.get("unavailable"), str):
+            ps.unavailable = f"owner positions unavailable from the producer: {body['unavailable']}"
+            ps.invalidate(ps.unavailable)
+            mf.note("owner positions unavailable", reason=body["unavailable"])
+            return
+        f = ps.fam
+        if not f.valid or f.applied_through != seq - 1 or ps.positions is None:
+            ps.counters["deltas_unapplied"] += 1
+            return
+        try:
+            for r in body.get("set") or []:
+                u, p = r[0], dec(r[1])
+                if not isinstance(u, str) or p is None:
+                    raise ValueError("unreadable set row")
+                ps.positions[u] = p
+                ps.counters["sets"] += 1
+            for u in body.get("drop") or []:
+                if not isinstance(u, str):
+                    raise ValueError("unreadable drop")
+                ps.positions.pop(u, None)
+                ps.counters["drops"] += 1
+        except (ValueError, TypeError, IndexError, KeyError) as exc:
+            ps.invalidate(f"an owner position delta didn't fit ({exc}); waiting for a snapshot")
+            mf.note("owner position delta error", error=str(exc))
+            return
+        f.last_change_seq = seq
+
+    def _discard_stream_assembly(self, ps: PosStream, reason: str) -> None:
+        if ps.assembly is None:
+            return
+        ps.assembly = None
+        ps.counters["snapshots_discarded"] += 1
+        ps.invalidate(f"incomplete owner position snapshot discarded: {reason}")
+
     def _buffer(self, mf: MarketFeed, seq, kind, body, block, bt) -> None:
         """Keep the book and trigger deltas since the gap boundary, for catching a later snapshot up (6.4).
         Within a contiguous run every other message was seen too; trimming moves the boundary forward."""
@@ -541,7 +813,12 @@ class FeedClient:
     def _watermark(self, mf: MarketFeed, seq, body, block, bt, wall_ms, mono_ns) -> None:
         through = body.get("through_seq")
         if through != seq - 1:
-            mf.note("watermark through_seq mismatch", through=through)
+            # An inconsistent watermark (through_seq ahead of, behind or absent from its own sequence) vouches for
+            # nothing this client applied: counted and ignored, it advances neither freshness nor the flow window; the
+            # next consistent one does (review of Nov 10, B1: the producer never sends one, so this is fault handling).
+            mf.counters["watermarks_inconsistent"] += 1
+            mf.note("watermark through_seq inconsistent: ignored", through=through, seq=seq)
+            return
         if not isinstance(bt, int) or isinstance(bt, bool):
             # A watermark without a source time (the node record had no parseable time, PROTOCOL.md 2.1) can't bound
             # the source's age: it advances neither freshness nor the flow window. The next timed one does.
@@ -681,6 +958,9 @@ class FeedClient:
             a = mf.assembly
             if a is not None and mono_ns - a.started_mono_ns > limit:
                 self._discard_assembly(mf, f"not complete within {self.cfg['snapshot_timeout_ms']} ms")
+            sa = mf.opos.assembly
+            if sa is not None and mono_ns - sa.started_mono_ns > limit:
+                self._discard_stream_assembly(mf.opos, f"not complete within {self.cfg['snapshot_timeout_ms']} ms")
 
     def _build(self, a_family: str, rows: list, coverage: dict | None, excluded: dict | None):
         names = (coverage or {}).get("fields")
@@ -819,7 +1099,7 @@ class FeedClient:
         mf = self.markets.get(market)
         if mf is None:
             return {"state": "INVALID", "reason": "no data for this market from this source yet"}
-        f = mf.fam[fam]
+        f = mf.opos.fam if fam == "owner_pos" else mf.fam[fam]
         out = {"family": fam, "watermark_block": f.wm_block, "watermark_block_time_ms": f.wm_block_time_ms,
                "applied_through": f.applied_through,
                # the limits the state was judged by, so a reader holding this status can keep aging it
@@ -846,12 +1126,12 @@ class FeedClient:
         since_ms = (now_mono_ns - f.wm_recv_mono_ns) / 1e6
         out["watermark_age_ms"] = round(since_ms)
         out["source_age_ms"] = round((f.wm_recv_wall_ms - f.wm_block_time_ms) + since_ms)
-        d = self.delay(market, now_mono_ns)
+        d = self.delay(market, now_mono_ns, hist=mf.opos.wm_hist if fam == "owner_pos" else None)
         out["delay_ms"] = d["delay_ms"]
         state, reason = delay_state(d["delay_ms"], self.cfg)
         return out | {"state": state, "reason": reason}
 
-    def delay(self, market: str, now_mono_ns: int | None = None) -> dict:
+    def delay(self, market: str, now_mono_ns: int | None = None, hist=None) -> dict:
         """The node feed's delay for a market: the age of its latest watermark (receipt wall time minus block time,
         plus the time since receipt), averaged exactly over the last delay_window_ms (or since the first watermark,
         if that is shorter), and its current value. Heartbeats don't count: a silent feed's delay keeps growing."""
@@ -860,7 +1140,7 @@ class FeedClient:
         win = self.cfg["delay_window_ms"]
         base = {"window_ms": win, "delayed_after_ms": self.cfg["delayed_after_ms"],
                 "stale_after_ms": self.cfg["stale_after_ms"]}
-        allh = list(mf.wm_hist) if mf is not None else []
+        allh = list(hist) if hist is not None else (list(mf.wm_hist) if mf is not None else [])
         if not allh:
             return base | {"delay_ms": None, "current_ms": None,
                            "reason": "no timed watermark from this source yet (since the start or the last gap)"}

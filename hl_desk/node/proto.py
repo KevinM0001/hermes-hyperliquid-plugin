@@ -6,8 +6,15 @@ import re
 from decimal import Decimal, InvalidOperation
 
 VERSION = 2
-DOC_REVISION = "2.2"
-ALLOWLIST_VERSION = "livefeed-v2.0"
+DOC_REVISION = "2.3"
+ALLOWLIST_VERSION = "livefeed-v2.0"          # the plugin's own fixtures' allowlist
+ALLOWLIST_VERSIONS = ("livefeed-v2.0", "livefeed-v2.1")   # v2.1 adds the position streams (revision 2.3)
+# The per-market owner position stream (PROTOCOL.md 4.8, revision 2.3, opt-in): named "<market>.owner_pos", a market
+# for every sequencing rule, carrying one family, the signed position of every owner of a waiting whole-position
+# TP/SL. The feed serves positions, never size estimates.
+OWNER_POS_SUFFIX = ".owner_pos"
+OWNER_POS_FAMILY = "owner_pos"
+OPOS_KINDS = ("opos_snapshot", "opos_delta", "watermark")
 
 FAMILIES = ("book", "triggers", "depth", "bands", "flow")
 KIND_FAMILY = {
@@ -33,6 +40,7 @@ CLIENT_DEFAULTS = {
     "delayed_after_ms": 10_000,
     "stale_after_ms": 30_000,
     "skew_tolerance_ms": 1_000,
+    "owner_positions": True,         # name the position streams in the handshake (PROTOCOL.md 4.8)
     "buffer_messages": 50_000,       # book/trigger deltas kept since the last gap, for snapshot catch-up
 }
 
@@ -59,6 +67,8 @@ BODY_FIELDS = {
     "bands": {"label", "width", "range_bps", "ref_px", "lo", "hi", "fields", "rows", "outside", "excluded"},
     "execs": {"execs", "fills_known"},
     "watermark": {"through_seq"},
+    "opos_snapshot": {"snapshot_id", "part", "parts", "through_seq", "coverage", "positions", "total_owners", "unavailable"},
+    "opos_delta": {"set", "drop", "unavailable"},
 }
 BOOK_CHANGE_FIELDS = {"op", "oid", "side", "px", "sz", "user", "time_ms", "prev_sz", "maker_filled", "status"}
 TRIG_CHANGE_FIELDS = {"op", "oid", "side", "kind", "trigger_px", "sz", "position_tpsl", "user", "time_ms", "status"}
@@ -67,7 +77,8 @@ EXEC_FIELDS = {"tid", "px", "sz", "time_ms", "aggressor", "complete", "participa
 PARTICIPANT_FIELDS = {"user", "side", "role", "oid", "effect", "effect_unavailable", "twap_id", "liquidated"}
 EFFECT_FIELDS = {"cover", "new_long", "exit", "new_short"}
 LIQUIDATION_FIELDS = {"liquidated_user", "mark_px", "method"}
-COVERAGE_FIELDS = {"family", "scope", "fields"}
+COVERAGE_FIELDS = {"family", "scope", "fields", "basis"}
+POSITION_ROW_FIELDS = {"user", "pos"}
 EXCLUDED_FIELDS = {"trailing", "unclassified"}
 ORDER_ROW_FIELDS = {"oid", "side", "px", "sz", "user", "time_ms"}
 TRIGGER_ROW_FIELDS = {"oid", "side", "kind", "trigger_px", "sz", "position_tpsl", "user", "time_ms"}
@@ -128,7 +139,7 @@ def fixture_violations(line: dict) -> list[str]:
     if allowed is None:
         return out + [f"kind:{kind}"]
     out += [f"{kind}.{k}" for k in body if k not in allowed]
-    if kind in ("book_snapshot", "trig_snapshot") and isinstance(body.get("coverage"), dict):
+    if kind in ("book_snapshot", "trig_snapshot", "opos_snapshot") and isinstance(body.get("coverage"), dict):
         out += [f"{kind}.coverage.{k}" for k in body["coverage"] if k not in COVERAGE_FIELDS]
     for key in ("excluded",):
         if isinstance(body.get(key), dict):
@@ -136,6 +147,7 @@ def fixture_violations(line: dict) -> list[str]:
     # Snapshot, depth and bands rows are positional: their column names (the coverage's or body's `fields`) must be
     # listed, and every row must have exactly that many columns.
     tables = {"book_snapshot": (("orders",), ORDER_ROW_FIELDS), "trig_snapshot": (("triggers",), TRIGGER_ROW_FIELDS),
+              "opos_snapshot": (("positions",), POSITION_ROW_FIELDS),
               "depth": (("bids", "asks"), DEPTH_ROW_FIELDS), "bands": (("rows",), BAND_ROW_FIELDS)}
     if kind in tables:
         keys, allowed_cols = tables[kind]
@@ -162,6 +174,14 @@ def fixture_violations(line: dict) -> list[str]:
     if kind == "trig_delta":
         for c in body.get("changes") or []:
             out += [f"trig_delta.change.{k}" for k in c if k not in TRIG_CHANGE_FIELDS]
+    if kind == "opos_delta":
+        for key in ("set",):
+            for r in body.get(key) or []:
+                if not isinstance(r, list) or len(r) != len(POSITION_ROW_FIELDS):
+                    out.append(f"opos_delta.{key}: a row that isn't {len(POSITION_ROW_FIELDS)} columns")
+                    break
+        if any(not isinstance(u, str) for u in body.get("drop") or []):
+            out.append("opos_delta.drop: not a list of addresses")
     if kind == "execs":
         for e in body.get("execs") or []:
             out += [f"execs.exec.{k}" for k in e if k not in EXEC_FIELDS]

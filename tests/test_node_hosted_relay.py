@@ -142,7 +142,12 @@ def test_every_hello_reconciles_the_views():
 def test_the_handshake_names_the_view_and_resumes_only_what_can_continue():
     header, msgs = recorded()
     c = client("relay")
-    assert relay_handshake(c, "BTC", MARKETS) == {"v": 2, "markets": ["BTC"], "execs": MARKETS, "start": "snapshot"}
+    # The open market and its position stream (owner_positions, on by default: PROTOCOL.md 4.8), which the relay
+    # counts with the market as one full market; executions for every market.
+    assert relay_handshake(c, "BTC", MARKETS) == {"v": 2, "markets": ["BTC", "BTC.owner_pos"], "execs": MARKETS,
+                                                  "start": "snapshot"}
+    off = client("relay", cfg={"owner_positions": False})
+    assert relay_handshake(off, "BTC", MARKETS)["markets"] == ["BTC"]
     feed(c, [(msgs[0][0], relay_hello(header, msgs, {m: "execs" for m in MARKETS}))] + execs_view(msgs)[:300])
     hs = relay_handshake(c, "BTC", MARKETS)
     # BTC is wanted in full but was received through filtered ranges only: never resumed (the relay starts it from
@@ -279,7 +284,8 @@ def test_node_data_flows_only_while_a_panel_is_on_screen_and_switches_with_the_m
 
             d.panel("BTC")
             assert await _until(lambda: relay.handshakes)
-            assert relay.handshakes[0] == {"v": 2, "markets": ["BTC"], "execs": MARKETS, "start": "snapshot"}
+            assert relay.handshakes[0] == {"v": 2, "markets": ["BTC", "BTC.owner_pos"], "execs": MARKETS,
+                                           "start": "snapshot"}
             assert await _until(lambda: c.views.get("BTC") == "full")
 
             # The user opens HYPE: one switch, then HYPE full and BTC executions only.
@@ -287,8 +293,9 @@ def test_node_data_flows_only_while_a_panel_is_on_screen_and_switches_with_the_m
             while time.monotonic() - t0 < 3.5:
                 d.panel("HYPE")
                 await asyncio.sleep(0.1)
-            assert relay.switches == [{"markets": ["HYPE"], "execs": MARKETS}]
+            assert relay.switches == [{"markets": ["HYPE", "HYPE.owner_pos"], "execs": MARKETS}]
             assert c.views["HYPE"] == "full" and c.views["BTC"] == "execs"
+            assert c.views.get("HYPE.owner_pos") == "full" and "BTC.owner_pos" not in c.views     # moved with HYPE
 
             # The tab is hidden: 1 s after its last poll the subscription ends and the client forgets the old state.
             assert await _until(lambda: relay.closed == 1, timeout=4)
@@ -298,7 +305,8 @@ def test_node_data_flows_only_while_a_panel_is_on_screen_and_switches_with_the_m
             # Shown again: a new subscription from a fresh snapshot (nothing resumed).
             d.panel("HYPE")
             assert await _until(lambda: len(relay.handshakes) == 2)
-            assert relay.handshakes[1] == {"v": 2, "markets": ["HYPE"], "execs": MARKETS, "start": "snapshot"}
+            assert relay.handshakes[1] == {"v": 2, "markets": ["HYPE", "HYPE.owner_pos"], "execs": MARKETS,
+                                           "start": "snapshot"}
             stop.set()
             await task
     asyncio.run(run())
@@ -382,7 +390,7 @@ def test_a_tool_call_subscribes_on_demand_and_releases_after_answering():
             lease = m.lease("HYPE")
             assert lease["via"] == "a subscription of its own"
             assert await _until(lambda: relay.handshakes)
-            assert relay.handshakes[0] == {"v": 2, "markets": ["HYPE"], "execs": [], "start": "snapshot"}
+            assert relay.handshakes[0] == {"v": 2, "markets": ["HYPE", "HYPE.owner_pos"], "execs": [], "start": "snapshot"}
             assert m.client_for("HYPE") is m.tool_clients["HYPE"]["client"]
             m.release(lease["id"])
             assert m.tool_clients == {}
@@ -598,3 +606,33 @@ def test_a_relay_without_its_publisher_is_said_beside_the_connection():
                "state": "serving"}, 2, 2)
     assert c.connection["reason"] is None
     assert c.relay["state"] == "serving" and not c.markets      # a heartbeat is never a market's freshness
+
+
+def test_a_position_streams_relay_view_moves_with_its_market():
+    """A relay serves "<market>.owner_pos" only with its market's full data. Its hello entry and view lines go to the
+    market's own position stream (never a market of their own): a hello that doesn't announce the stream, or a view
+    line `none`, stops it and drops its positions; `full` restarts it at start_seq from its snapshot."""
+    header, msgs = recorded()
+    c = client("relay")
+    h = relay_hello(header, msgs, {"BTC": "full", "HYPE": "execs"})
+    h["markets"]["BTC.owner_pos"] = {"start_seq": 7, "next_seq": 7, "oldest_seq": 1, "snapshot": "in_stream", "view": "full"}
+    c.on_line(h, msgs[0][0], msgs[0][0] * 1_000_000)
+    assert "BTC.owner_pos" not in c.markets and "HYPE.owner_pos" not in c.markets
+    ps = c.markets["BTC"].opos
+    assert ps.offered and ps.last_seq == 6 and c.views["BTC.owner_pos"] == "full"
+    ep, ss = header["producer"]["epoch"], header["producer"]["session"]
+
+    def view(market, v, start=None):
+        c.on_line({"v": 2, "control": "view", "epoch": ep, "session": ss, "pub_ms": 1, "market": market, "view": v,
+                   "next_seq": 20, "oldest_seq": 1, "start_seq": start, "snapshot": "in_stream"}, 1, 1)
+
+    view("BTC.owner_pos", "none")
+    assert ps.last_seq is None and not ps.fam.valid and "BTC.owner_pos" not in c.views
+    assert "positions ride only with the open market" in ps.fam.reason
+    view("HYPE.owner_pos", "full", start=12)
+    hps = c.markets["HYPE"].opos
+    assert hps.offered and hps.last_seq == 11 and hps.expected_start == 12 and c.views["HYPE.owner_pos"] == "full"
+    # A later relay hello that no longer announces HYPE's stream stops it.
+    h2 = relay_hello(header, msgs, {"BTC": "full", "HYPE": "execs"})
+    c.on_line(h2, msgs[0][0], msgs[0][0] * 1_000_000)
+    assert hps.last_seq is None and "HYPE.owner_pos" not in c.views

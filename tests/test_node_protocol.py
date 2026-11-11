@@ -357,7 +357,9 @@ def _levels(ladder):
 def test_snapshot_through_100_after_event_101_with_and_without_the_events_between(surfaces):
     """A snapshot through S offered after event S+1 was applied (outside its stream, e.g. from a relay cache). The
     snapshot is the real book state at seq S, taken from a reference client fed the same recorded stream. The
-    plugin's ladder is read after every offer and every line, and compared with the reference's."""
+    plugin's ladder is read after every offer and every line, and compared with the reference's. Changed by Kevin,
+    Nov 10: a swapped-in book that no watermark covers yet reads STALE and is served under that label, not
+    withheld."""
     h, ms = _xyz_market(XY)
     S, X, gap_before, gap_after, ahead = 300, 480, 100, 350, 250
     deltas = {m["seq"] for _, m in ms if m["kind"] == "book_delta"}
@@ -392,9 +394,12 @@ def test_snapshot_through_100_after_event_101_with_and_without_the_events_betwee
     fed(c, plugin, [(rx, m) for rx, m in upto if m["seq"] != gap_before])
     assert c.markets[XY].book is None and plugin.read(XY, rx_x)["book"]["valid"] is False
     assert c.offer_snapshot(XY, "book", S, rows) == "swapped" and c.markets[XY].book.snapshot_rows() == truth
-    v = plugin.read(XY, rx_x)                                  # served only once a watermark covers it
-    assert v["book"]["valid"] is False and v["families"]["book"]["state"] == "STALE"
+    v = plugin.read(XY, rx_x)                                  # STALE until a watermark covers it; served labelled
+    assert v["book"]["valid"] is True and v["families"]["book"]["state"] == "STALE"
     assert "no freshness-advancing watermark" in v["families"]["book"]["reason"]
+    lad = plugin.last["node_book"]["ladder"]
+    assert _levels(lad) == truth_ladder and lad["freshness"] == "STALE"
+    assert lad["as_of_note"] == "as of the node's book, STALE: " + v["families"]["book"]["reason"]
     wm = next(m["seq"] for _, m in ms if m["seq"] > X and m["kind"] == "watermark")
     fed(c, plugin, [(rx, m) for rx, m in ms if X < m["seq"] <= wm])
     feed(ref, [(rx, m) for rx, m in ms if X < m["seq"] <= wm])
@@ -473,7 +478,9 @@ def test_a_second_older_snapshot_never_undoes_a_catch_up(surfaces, family, mk):
 def test_ladder_stops_are_unavailable_while_the_triggers_are(surfaces):
     """Review 4, B2. After a gap the book recovers from the real state at 300 and goes LIVE while the triggers stay
     INVALID: every node_book ladder row then says the stops to the next level are unavailable, with the reason,
-    never 0, until the in-stream 60 s trigger snapshot makes the triggers usable again."""
+    never 0, until the in-stream 60 s trigger snapshot makes the triggers usable again. Changed by Kevin, Nov 10:
+    once swapped in, the trigger family reads STALE until the next watermark and the column is filled under that
+    label (a late family labels, it doesn't withhold); only INVALID withholds it."""
     h, ms = _xyz_market(XY)
     wi = next(i for i, (_, m) in enumerate(ms) if m["seq"] >= 480 and m["kind"] == "watermark")
     ref = client()
@@ -492,7 +499,7 @@ def test_ladder_stops_are_unavailable_while_the_triggers_are(surfaces):
     assert c.offer_snapshot(XY, "book", 300, rows) == "swapped"
     first = next(m for _, m in ms if m["kind"] == "trig_snapshot" and m["seq"] > ms[wi][1]["seq"])
     trig_snap_end = first["seq"] + first["body"]["parts"] - 1
-    usable_again = False
+    usable_again = seen_stale = False
     for rx, m in ms[wi:]:
         c.on_line(m, rx, rx * 10 ** 6)
         v = plugin.read(XY, rx)
@@ -503,18 +510,29 @@ def test_ladder_stops_are_unavailable_while_the_triggers_are(surfaces):
         stops = [r["stops_to_next_level"] for r in rows_shown if r["stops_to_next_level"] is not None]
         assert len(stops) == len(rows_shown) - 2                       # only each side's last row has no range
         tst = v["families"]["triggers"]["state"]
-        if tst != "LIVE":                                    # INVALID until the snapshot's last part, then STALE
-            assert m["seq"] <= trig_snap_end or tst == "STALE"   # until the next watermark
-            assert lad["stops_available"] is False and f"triggers {tst}" in lad["stops_reason"]
+        ns = plugin.last["node_stops"]["stops"]
+        if tst == "INVALID":                                 # until the snapshot's last part
+            assert m["seq"] <= trig_snap_end
+            assert lad["stops_available"] is False and "triggers INVALID" in lad["stops_reason"]
             assert all(st == {"available": False, "reason": lad["stops_reason"]} for st in stops)
-            assert plugin.last["node_stops"]["stops"]["available"] is False
-        else:
-            usable_again = True
+            assert ns["available"] is False
+        else:                                                # STALE until the next watermark, then LIVE: filled
+            assert tst in ("STALE", "LIVE")
             assert lad["stops_available"] is True and all(isinstance(st.get("orders"), int) for st in stops)
-    assert usable_again
+            assert ns.get("available") is not False and ns["freshness"] == tst and isinstance(ns["rows"], list)
+            if tst == "STALE":
+                seen_stale = True
+                assert ns["as_of_note"] == "as of the node's waiting stops, STALE: " + v["families"]["triggers"]["reason"]
+            else:
+                usable_again = True
+                assert ns["as_of_note"] is None
+    assert usable_again and seen_stale
 
 
 def test_old_backlog_delivered_at_normal_speed_reads_behind(surfaces):
+    """Lines received 10 minutes after their blocks: every family reads BEHIND once a watermark has set the delay.
+    Changed by Kevin, Nov 10: the ladder is served under that label with the delay stated, not withheld."""
+    from hl_desk.util import iso_ms
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
     c = plugin.attach(client(cfg={"delayed_after_ms": 5_000, "stale_after_ms": 10 ** 12}))
@@ -528,7 +546,11 @@ def test_old_backlog_delivered_at_normal_speed_reads_behind(surfaces):
             assert all(f["state"] in ("BEHIND", "INVALID") for f in v["families"].values()), v["families"]
     st = v["families"]["book"]
     assert st["state"] == "BEHIND" and st["source_age_ms"] > 5_000 and st["delay_ms"] > 5_000
-    assert plugin.last["node_book"]["ladder"]["available"] is False and "BEHIND" in plugin.last["node_book"]["ladder"]["reason"]
+    lad = plugin.last["node_book"]["ladder"]
+    assert lad.get("available") is not False and lad["bids"] and lad["freshness"] == "BEHIND"
+    assert lad["as_of_note"] == f"as of the node's book at {iso_ms(st['watermark_block_time_ms'])}, {st['delay_ms'] / 1000:.1f} s behind"
+    assert plugin.last["node_book"]["thinning"]["as_of_note"] == lad["as_of_note"]
+    assert plugin.last["node_stops"]["stops"]["as_of_note"].startswith("as of the node's waiting stops at ")
 
 
 def _avg_delay(watermarks, t, window=5_000):
@@ -550,7 +572,7 @@ def test_frozen_producer_with_live_heartbeats_reads_stale(surfaces):
     a steady feed. After the freeze, the latest watermark's age keeps growing by exactly the time passed, and its
     5 s average (the node feed's delay) grows with it, both as counted here independently; the families read STALE
     exactly once the average passes the stale limit, set 2 s above the delay the feed had while it ran, and the
-    ladder is then withheld."""
+    ladder is then served under that label with the delay stated (changed by Kevin, Nov 10), not withheld."""
     h, ms = _xyz_market(XY)
     plugin = surfaces([XY])
     c = plugin.attach(client(cfg={"delayed_after_ms": 10 ** 12, "stale_after_ms": 10 ** 12}))
@@ -579,7 +601,9 @@ def test_frozen_producer_with_live_heartbeats_reads_stale(surfaces):
         states.append(st["state"])
     assert states[0] == "LIVE" and states[-1] == "STALE"
     assert "heartbeats don't count" in st["reason"]
-    assert plugin.last["node_book"]["ladder"]["available"] is False
+    lad = plugin.last["node_book"]["ladder"]
+    assert lad.get("available") is not False and lad["bids"] and lad["freshness"] == "STALE"
+    assert lad["as_of_note"].endswith(f", {st['delay_ms'] / 1000:.1f} s behind") and " at " in lad["as_of_note"]
 
 
 def test_lost_final_event(surfaces):
@@ -697,12 +721,44 @@ def test_a_duplicate_or_delayed_line_never_clears_clock_skew(surfaces):
     assert c.family_status(XY, "book", t2, t2 * 10 ** 6)["state"] != "UNKNOWN"
 
 
+def test_an_inconsistent_watermark_never_advances_freshness(surfaces):
+    """Review of Nov 10, B1. A watermark whose through_seq isn't its own seq - 1 (ahead, behind or absent) vouches for
+    state this client never applied: it is counted and ignored, so after the first snapshots the families stay
+    STALE through chat and the tab, the ladder served under that label; the next consistent watermark makes them
+    LIVE. Before, the first XYZ100 watermark with through_seq 107 (seq 7) made the book LIVE with 20 rows served
+    although sequence 107 was never received."""
+    h, ms = _xyz_market(XY)
+    first_wm = next(i for i, (_, m) in enumerate(ms) if m["kind"] == "watermark")
+    for bad in (ms[first_wm][1]["seq"] + 100, ms[first_wm][1]["seq"] - 5, None):
+        plugin = surfaces([XY])
+        c = plugin.attach(client(cfg={"delayed_after_ms": 10 ** 12, "stale_after_ms": 10 ** 12}))
+        _start(c, h)
+        for rx, m in ms[:first_wm + 1]:
+            m = dict(m, body={"through_seq": bad}) if m["kind"] == "watermark" else m
+            c.on_line(m, rx, rx * 10 ** 6)
+            v = plugin.read(XY, rx)
+            assert all(f["state"] != "LIVE" for f in v["families"].values()), (bad, v["families"])
+        st = plugin.last["node_status"]["markets"][XY]["families"]["book"]
+        assert st["state"] == "STALE" and "no freshness-advancing watermark" in st["reason"] and "delay_ms" not in st
+        lad = plugin.last["node_book"]["ladder"]
+        assert lad["freshness"] == "STALE" and lad["as_of_note"] == "as of the node's book, STALE: " + st["reason"]
+        assert c.markets[XY].counters["watermarks_inconsistent"] == 1 and c.markets[XY].flow.restart_pending
+        assert plugin.last["node_book"]["tape"].get("available") is False          # no flow window opened either
+        nxt = next(i for i, (_, m) in enumerate(ms) if i > first_wm and m["kind"] == "watermark")
+        for rx, m in ms[first_wm + 1:nxt + 1]:
+            c.on_line(m, rx, rx * 10 ** 6)
+        v = plugin.read(XY, ms[nxt][0])
+        assert v["families"]["book"]["state"] == "LIVE" and plugin.last["node_book"]["ladder"]["bids"]
+        assert c.markets[XY].counters["watermarks_inconsistent"] == 1
+
+
 def test_a_watermark_without_a_source_time_never_makes_a_family_live(surfaces):
     """Review 6, B1. PROTOCOL.md 2.1 lets block_time_ms be null when the node record had no parseable time. Such a
     watermark can't bound the source's age: (a) after the first snapshots it leaves the families STALE, never
-    LIVE, through chat and tab, with the ladder withheld; the first timed watermark then makes them LIVE.
-    (b) Once LIVE, null-time watermarks don't refresh the delay: it keeps growing, and past the stale limit (2 s
-    above the delay at the last timed watermark) the families read STALE with the ladder withheld."""
+    LIVE, through chat and tab, with the ladder served under that label (changed by Kevin, Nov 10: a late family
+    labels, it doesn't withhold); the first timed watermark then makes them LIVE. (b) Once LIVE, null-time
+    watermarks don't refresh the delay: it keeps growing, and past the stale limit (2 s above the delay at the
+    last timed watermark) the families read STALE, the ladder served with that label and the delay."""
     h, ms = _xyz_market(XY)
     first_wm = next(i for i, (_, m) in enumerate(ms) if m["kind"] == "watermark")
     plugin = surfaces([XY])
@@ -714,7 +770,9 @@ def test_a_watermark_without_a_source_time_never_makes_a_family_live(surfaces):
         v = plugin.read(XY, rx)
         assert all(f["state"] != "LIVE" for f in v["families"].values()), v["families"]
     st = plugin.last["node_status"]["markets"][XY]["families"]["book"]
-    assert st["state"] == "STALE" and plugin.last["node_book"]["ladder"]["available"] is False
+    lad = plugin.last["node_book"]["ladder"]
+    assert st["state"] == "STALE" and lad.get("available") is not False and lad["bids"] and lad["freshness"] == "STALE"
+    assert lad["as_of_note"] == "as of the node's book, STALE: " + st["reason"] and "delay_ms" not in st
     assert c.markets[XY].counters["watermarks_without_time"] == 1
     nxt = next(i for i, (_, m) in enumerate(ms) if i > first_wm and m["kind"] == "watermark")
     for rx, m in ms[first_wm + 1:nxt + 1]:
@@ -732,9 +790,13 @@ def test_a_watermark_without_a_source_time_never_makes_a_family_live(surfaces):
         assert st["delay_ms"] >= prev
         prev = st["delay_ms"]
         assert st["state"] == ("STALE" if st["delay_ms"] > limit else "LIVE")
+        lad = plugin.last["node_book"]["ladder"]
+        assert lad.get("available") is not False and lad["bids"] and lad["freshness"] == st["state"]
         if st["state"] == "STALE":
             stale = True
-            assert plugin.last["node_book"]["ladder"]["available"] is False
+            assert lad["as_of_note"].endswith(f", {st['delay_ms'] / 1000:.1f} s behind")
+        else:
+            assert lad["as_of_note"] is None
     assert stale and any(m["kind"] == "watermark" for _, m in later)
 
 
@@ -790,8 +852,8 @@ def _recorder_line_violations(o: dict) -> list[str]:
                 out += [] if isinstance(v, list) and all(isinstance(x, str) for x in v) else [f"recording_end.{k}"]
             elif k == "gaps":
                 out += [] if v == [] else ["recording_end.gaps: gap markers aren't in these fixtures"]
-            elif k == "cut":
-                out += [] if isinstance(v, dict) and all(_uint_or_str(x) for x in v.values()) else ["recording_end.cut"]
+            elif k == "cut":           # a cut's reason map, or null when the span was recorded whole (revision 2.3 recordings)
+                out += [] if v is None or (isinstance(v, dict) and all(_uint_or_str(x) for x in v.values())) else ["recording_end.cut"]
             elif not _uint_or_str(v):
                 out.append(f"recording_end.{k}: wrong shape")
     else:
@@ -830,7 +892,10 @@ def test_every_fixture_line_is_on_the_v2_allowlist_and_matches_its_manifest():
                 bad = fixture_violations(msg)
                 checked["control" if "control" in msg else "data"] += 1
             assert not bad, f"{fx['file']} line {n}: {bad}"
-    assert checked == {"data": 3714, "control": 4, "recorder": 3}       # 2 hellos and 2 heartbeats; 2 headers, 1 trailer
+    # 2 hellos and 2 heartbeats; 5 headers and 4 trailers (the three owner-position recordings of Nov 10 each carry a
+    # header and a trailer and no control line, as does the live one of Nov 10 23:05Z); their 3,392 data lines include
+    # the position streams' own
+    assert checked == {"data": 7106, "control": 4, "recorder": 11}
     # The check isn't vacuous: an extra field, a forbidden node field, an unknown kind, a nested object under a
     # scalar control field, an unlisted key in a nested map, or an unlisted recorder field is reported.
     line = next(m for m in (json.loads(t).get("msg") for t in

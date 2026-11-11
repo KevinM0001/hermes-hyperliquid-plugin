@@ -76,7 +76,15 @@
 .hd-p-ladder { flex: 1 1 340px; max-width: 460px; }
 .hd-p-chart { flex: 999 1 360px; }
 /* the market row: the chart on the left, the aggregated ladder beside it, directly under the summary (Kevin, Nov 9) */
-.hd-row-m { flex-wrap: nowrap; align-items: stretch; }
+/* The market row as a grid (Kevin, Nov 10): chart | ladder on one row, so the two cards share a height; under them
+   Ask Hermes and the Flow notes on the left, the public Flow panel on the right filling the space under the ladder. */
+.hd-row-m { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, 430px); grid-template-rows: auto auto auto; gap: 8px; align-items: stretch; }
+.hd-row-m > .hd-p-chart { grid-column: 1; grid-row: 1; display: flex; flex-direction: column; min-width: 0; }
+.hd-row-m > .hd-p-ladder { grid-column: 2; grid-row: 1; max-width: none; min-width: 0; }
+.hd-row-m > .hd-p-hermes { grid-column: 1; grid-row: 2; }
+.hd-row-m > .hd-p-notes { grid-column: 1; grid-row: 3; }
+.hd-row-m > .hd-p-flow { grid-column: 2; grid-row: 2 / 4; min-width: 0; }
+@media (max-width: 1000px) { .hd-row-m { grid-template-columns: minmax(0, 1fr); } .hd-row-m > * { grid-column: 1 !important; grid-row: auto !important; } }
 .hd-col-main { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .hd-col-main > .hd-p-chart { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; }
 .hd-col-main > .hd-p-notes { flex: 0 0 auto; }
@@ -93,6 +101,12 @@
 .hd-wrow:hover { background: #0F0F0F; }
 .hd-wrow-on { border-left-color: var(--hd-bid); }
 .hd-whead { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.hd-wrow-mini { display: flex; align-items: baseline; gap: 12px; padding: 6px 12px; height: 32px; overflow: hidden; }
+.hd-wfold { margin-top: 2px; }
+.hd-why.hd-wfold > summary::before { content: "+"; }
+.hd-wfold[open] > summary::before { content: "\2212"; }
+.hd-wfold > .hd-why-body { max-width: none; margin-top: 6px; }
+.hd-wmini-why { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .hd-wsym { font-weight: 700; font-size: 13.5px; color: var(--hd-text); }
 .hd-wpx { color: var(--hd-text-2); }
 .hd-wwhy { color: var(--hd-muted); font-size: 12px; }
@@ -112,10 +126,20 @@
 .hd-hs-status { font: 500 11px/1.3 var(--hd-mono); color: var(--hd-muted); }
 .hd-hs-text { font: 400 13px/1.5 var(--hd-sans); color: var(--hd-text); white-space: pre-wrap; max-height: 380px; overflow: auto; background: #0A0A0A; border-radius: 4px; padding: 10px 12px; }
 .hd-hs-model select { max-width: 320px; }
+.hd-hs-drill { max-width: 860px; }
+.hd-hs-drill .hd-hs-q { white-space: normal; }
+.hd-hs-text-drill { max-height: 62vh; min-height: 120px; }
+.hd-hs-text-drill { white-space: normal; }
+.hd-md-p { margin: 0 0 2px; }
+.hd-md-li { padding-left: 14px; text-indent: -10px; margin: 0 0 2px; }
+.hd-md-li2 { padding-left: 30px; }
+.hd-md-gap { height: 8px; }
+.hd-hs-text b { color: var(--hd-text); font-weight: 600; }
 @media (max-width: 720px) { .hd-note-row { grid-template-columns: 1fr; } }
 .hd-row-m .hd-p-chart > .hd-card-body { flex: 1 1 auto; }
-.hd-row-m .hd-chart-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 480px; }
-.hd-row-m .hd-chart { flex: 1 1 auto; height: auto; min-height: 480px; }
+/* Shorter chart and ladder (Kevin, Nov 10): the row fits under the brief without scrolling. */
+.hd-row-m .hd-chart-wrap { flex: 1 1 auto; display: flex; flex-direction: column; min-height: 400px; }
+.hd-row-m .hd-chart { flex: 1 1 auto; height: auto; min-height: 400px; }
 .hd-row-m .hd-p-ladder { flex: 0 1 430px; min-width: 360px; max-width: 460px; }
 @media (max-width: 1000px) {
   .hd-row-m { flex-wrap: wrap; }
@@ -286,6 +310,8 @@
 .hd-btn-primary { background: var(--hd-bid); border-color: var(--hd-bid); color: #000000; }
 .hd-btn-primary:hover:not(:disabled) { background: #46E59B; border-color: #46E59B; }
 .hd-btn-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.hd-btn-quiet { background: transparent; border-color: transparent; color: var(--hd-muted); }
+.hd-btn-quiet:hover { color: var(--hd-text); border-color: var(--hd-line); }
 .hd-toggle { display: inline-flex; gap: 0; padding: 2px; border-radius: 4px; background: var(--hd-track); }
 .hd-toggle .hd-btn-xs { background: transparent; color: var(--hd-muted); border-radius: 3px; min-height: 20px; }
 .hd-toggle .hd-btn-xs:hover:not(:disabled) { color: var(--hd-text); background: transparent; }
@@ -326,6 +352,10 @@
 .hd-brand h1 { font-size: 15px; font-weight: 700; letter-spacing: .01em; color: var(--hd-text); }
 .hd-brand-sub { font-size: 11px; color: var(--hd-muted); }
 .hd-markets { display: flex; flex-wrap: wrap; gap: 2px; flex: none; align-self: stretch; }
+.hd-views { display: inline-flex; gap: 2px; padding: 2px; border-radius: 6px; background: #000; margin-right: 6px; }
+.hd-view { font: 600 12px/1 var(--hd-sans); color: var(--hd-muted); background: transparent; border: 0; border-radius: 4px; padding: 7px 12px; cursor: pointer; }
+.hd-view:hover { color: var(--hd-text); }
+.hd-view-on { color: #000; background: var(--hd-bid); }
 .hd-market {
   position: relative; font: 600 13px/1 var(--hd-sans); padding: 0 12px; min-height: 40px; border: 0; border-radius: 0;
   background: transparent; color: var(--hd-muted); cursor: pointer;
@@ -338,7 +368,7 @@
 .hd-collector { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; font-size: 11.5px; color: var(--hd-text-2); max-width: 100%; }
 .hd-collector-line { display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
 .hd-collector-err { color: #FFB3B6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 360px; }
-.hd-collector-result { font-size: 11px; flex: 1 1 100%; text-align: right; }
+.hd-collector-res { font-size: 11px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hd-prov {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px;
   padding: 7px 14px; border-top: 1px solid var(--hd-line); font-size: 11.5px; color: var(--hd-muted);
@@ -349,7 +379,9 @@
 
 /* ---------------------------------------------------------------- instant read ("At a glance") */
 .hd-glance { display: flex; flex-direction: column; }
-.hd-tiles { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1px; background: var(--hd-line); }
+/* The five tiles share the row by what they hold (Kevin, Nov 10): the regime's sub line is the longest and was
+   truncated at a fifth, the spread needs the least; the top wallet's two-line sub keeps its room. */
+.hd-tiles { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.78fr) minmax(0, 1.35fr) minmax(0, 0.97fr) minmax(0, 1.15fr); gap: 1px; background: var(--hd-line); }
 @media (max-width: 1000px) { .hd-tiles { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); } }
 .hd-tile { background: var(--hd-card); padding: 10px 14px 9px; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .hd-tile-wide { grid-column: 1 / -1; }
@@ -358,6 +390,23 @@
 .hd-tile-value .hd-na { font-size: 12px; white-space: normal; }
 .hd-tile-value .hd-regime { font-size: 12px; padding: 5px 8px; }
 .hd-tile-value-sm { font-size: 15px; }
+/* Fixed heights for the top card (Kevin, Nov 10): the tiles' value row is one line and the sub text is clamped to three
+   lines (the full text in the tooltip), the provenance line reserves two lines, the "not fresh" row is always present. */
+/* Smaller tiles (Kevin, Nov 10): a 17 px value, a two-line explanation (full text in the tooltip), tighter padding. */
+.hd-tile { padding: 7px 12px 7px; gap: 2px; }
+.hd-tile-label { height: 14px; font-size: 10px; white-space: nowrap; overflow: hidden; }
+.hd-tile-value { flex-wrap: nowrap; height: 23px; min-height: 23px; font-size: 17px; font-variant-numeric: tabular-nums; }
+.hd-tile-value .hd-regime { font-size: 11px; padding: 4px 7px; }
+.hd-tile-value-sm { font-size: 13px; }
+.hd-tile-sub { height: 30px; font-size: 11px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.hd-stat-value, .hd-num { font-variant-numeric: tabular-nums; }
+.hd-prov { flex-wrap: nowrap; min-height: 0; height: 30px; padding: 0 14px; overflow: hidden; }
+.hd-provcard { padding: 2px 0 4px; }
+.hd-prov-1 { height: 32px; padding-top: 2px; border-top: none; }
+.hd-prov-2 { border-top: none; height: 30px; padding-bottom: 2px; }
+.hd-prov-item { flex: 0 1 auto; min-width: 0; }
+.hd-prov-grow { flex: 1 1 auto; }
+.hd-prov .hd-badge, .hd-prov .hd-chip { flex: none; }
 .hd-tile-sub { font-size: 11.5px; color: var(--hd-muted); line-height: 1.35; }
 .hd-tile-sub .hd-num { color: var(--hd-text-2); }
 .hd-tile-list { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 4px 28px; font-size: 11.5px; color: var(--hd-text-2); line-height: 1.35; }
@@ -379,7 +428,7 @@
 .hd-stat-value .hd-na { font-size: 11.5px; }
 .hd-stat-sub { font-size: 11px; color: var(--hd-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 240px; }
 .hd-stat-shared { flex: 1 1 100%; font-size: 11px; color: var(--hd-muted); line-height: 1.35; }
-.hd-unv { font-size: 11px; color: var(--hd-warn); white-space: nowrap; }
+.hd-unv { font-size: 11px; color: var(--hd-muted); white-space: nowrap; }
 .hd-unv-badge { font: 600 9.5px/1 var(--hd-mono); letter-spacing: .06em; padding: 2px 5px; border-radius: 3px; background: rgba(242, 193, 78, 0.16); color: var(--hd-warn); }
 
 /* ---------------------------------------------------------------- tables */
@@ -397,11 +446,11 @@
 .hd-dimrow td { opacity: .5; }
 
 /* ---------------------------------------------------------------- ladder */
-.hd-ladder-scroll { max-height: 600px; }
+.hd-ladder-scroll { max-height: none; overflow: visible; }
 .hd-group { display: inline-flex; align-items: center; gap: 5px; font: 600 10.5px/1 var(--hd-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--hd-muted); }
 .hd-group select { background: #000000; color: var(--hd-text); border: 1px solid var(--hd-muted); border-radius: 4px; padding: 2px 6px; font: 500 11.5px/1.3 var(--hd-mono); text-transform: none; letter-spacing: 0; }
 .hd-ladder th { padding: 5px 6px; white-space: normal; line-height: 1.15; vertical-align: bottom; }
-.hd-ladder td { height: 22px; padding: 2px 6px; font-size: 11.5px; }
+.hd-ladder td { height: 20px; padding: 1px 6px; font-size: 11.5px; }
 .hd-barcell { position: relative; }
 .hd-bar { position: absolute; right: 0; top: 2px; bottom: 2px; border-left: 2px solid; }
 .hd-bar-bid { background: var(--hd-bid-fill); border-color: var(--hd-bid); }
@@ -412,9 +461,43 @@
 
 /* ---------------------------------------------------------------- chart */
 .hd-chart-wrap { position: relative; }
+.hd-chart-ov { position: absolute; inset: 0; overflow: hidden; pointer-events: none; z-index: 1; }
+.hd-chart-band { position: absolute; pointer-events: none; border-radius: 1px; box-sizing: border-box; }
+.hd-band-stops { background: rgba(179, 157, 255, .30); border-right: 2px solid rgba(179, 157, 255, .9); }
+.hd-band-depthbid { background: rgba(24, 229, 137, .22); border-left: 2px solid rgba(24, 229, 137, .85); }
+.hd-band-depthask { background: rgba(255, 69, 77, .22); border-left: 2px solid rgba(255, 69, 77, .85); }
+.hd-band-ranked { outline: 1px solid rgba(179, 157, 255, .9); outline-offset: -1px; }
+.hd-band-tip { position: absolute; z-index: 3; max-width: 380px; pointer-events: none; background: rgba(18, 18, 18, .96); border: 1px solid var(--hd-line); border-radius: 4px; padding: 6px 8px; font: 500 11px/1.4 var(--hd-mono); color: var(--hd-text); display: flex; flex-direction: column; gap: 4px; }
+.hd-ovbar { margin-left: 8px; }
+/* the context values in the chart card's head (Kevin, Nov 10) */
+.hd-p-chart .hd-card-head { flex-wrap: nowrap; align-items: center; }   /* title | centred values | badge on one line */
+.hd-p-chart .hd-card-titles { flex: 0 0 auto; }
+.hd-p-chart .hd-badges { flex: 1 1 auto; justify-content: flex-end; align-items: center; min-width: 0; flex-wrap: nowrap; }
+@media (max-width: 1150px) { .hd-p-chart .hd-card-head { flex-wrap: wrap; } .hd-p-chart .hd-badges { flex-wrap: wrap; } }
+.hd-ctx-inline { flex: 1 1 auto; min-width: 0; display: flex; justify-content: flex-end; }
+/* Centred between the title and the badge, each value in a fixed-width slot so a digit more or less never moves
+   the row (Kevin, Nov 10). */
+.hd-ctx-inline { justify-content: center; }
+.hd-ctx-inline .hd-stats { gap: 2px 10px; justify-content: center; }
+.hd-stat-inline { display: inline-flex; align-items: baseline; justify-content: center; gap: 6px; max-width: none; white-space: nowrap; }
+.hd-stat-inline .hd-stat-label { font-size: 9.5px; white-space: nowrap; }
+.hd-stat-inline .hd-stat-value { font-size: 12px; font-variant-numeric: tabular-nums; }
+.hd-slot-mark { width: 230px; }
+.hd-slot-funding { width: 160px; }
+.hd-slot-oi { width: 150px; }
+.hd-slot-vol { width: 145px; }
+.hd-late { font-size: 11px; }
+/* what the node sees */
+/* A thinner brief (Kevin, Nov 10): tighter lines, and it folds to its one-line verdict. */
+.hd-brief { display: flex; flex-direction: column; gap: 3px; }
+.hd-brief-row { display: flex; gap: 12px; align-items: baseline; font-size: 12px; line-height: 1.35; color: var(--hd-text-2); }
+.hd-brief-k { flex: 0 0 140px; font: 600 10px/1.5 var(--hd-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--hd-muted); }
+.hd-brief-t { min-width: 0; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+@media (max-width: 760px) { .hd-brief-k { flex-basis: 90px; } }
+.hd-p-brief > .hd-card-body { padding: 7px 14px 8px; gap: 6px; }
 .hd-ivbar { margin-right: 4px; }
 .hd-ivbar .hd-btn-xs { font-family: var(--hd-mono); padding: 0 6px; }
-.hd-chart { height: 480px; width: 100%; border-radius: 4px; overflow: hidden; background: var(--hd-card); }
+.hd-chart { height: 400px; width: 100%; border-radius: 4px; overflow: hidden; background: var(--hd-card); }
 .hd-chart-readout {
   position: absolute; top: 6px; left: 8px; z-index: 2; pointer-events: none; max-width: calc(100% - 80px);
   display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 3px 8px; border-radius: 4px;
@@ -584,7 +667,7 @@
 .hd-wt-pair { display: flex; flex-wrap: wrap; gap: 14px; }
 .hd-wt { flex: 1 1 560px; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .hd-wt-title { font-size: 12.5px; color: var(--hd-text-2); }
-.hd-wt-scroll { max-height: 420px; border: 1px solid var(--hd-line); border-radius: 4px; }
+.hd-wt-scroll { max-height: 420px; overflow: auto; border: 1px solid var(--hd-line); border-radius: 4px; }
 .hd-wallets th { padding: 5px 6px; white-space: normal; line-height: 1.15; vertical-align: bottom; }
 .hd-wallets td { padding: 4px 6px; font-size: 11.5px; }
 
@@ -630,6 +713,27 @@
 
 /* Flow Deck: confirmed, now and pending on separate lines (the confirmed label never describes other numbers) */
 .hd-deck-states { display: flex; flex-direction: column; gap: 4px; margin: 6px 0 2px; font-size: 12px; }
+/* the compact Flow Deck card (Kevin, Nov 10) */
+.hd-dl { display: flex; flex-direction: column; gap: 4px; }
+.hd-dl-row { display: flex; align-items: center; gap: 6px 14px; white-space: nowrap; overflow: hidden; min-width: 0; font: 500 12px/1.4 var(--hd-mono); color: var(--hd-text-2); }
+.hd-dl-head { height: 28px; gap: 6px 10px; }
+.hd-dl-head .hd-deck-mkt { font-size: 14px; }
+.hd-dl-head .hd-deck-px { font-size: 14px; color: var(--hd-text); }
+.hd-dl-now { display: inline-flex; align-items: center; gap: 4px; color: var(--hd-muted); }
+.hd-dl-reason { color: var(--hd-muted); overflow: hidden; text-overflow: ellipsis; }
+.hd-dl-ask { margin-left: auto; }
+.hd-dl-nums, .hd-dl-split { height: 22px; }
+.hd-dl-cell { display: inline-flex; align-items: baseline; gap: 4px; white-space: nowrap; }
+.hd-dl-cell .hd-num, .hd-dl-cell b { color: var(--hd-text); }
+.hd-dl-k { color: var(--hd-muted); font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em; }
+.hd-dl-strong .hd-dl-k { color: var(--hd-text-2); font-weight: 700; }
+.hd-dl-key { color: var(--hd-text); }
+.hd-dl-mark { color: var(--hd-warn); font-weight: 700; }
+.hd-dl-src { margin-left: auto; font-size: 10.5px; }
+.hd-dl-fold > summary { font-size: 10px; }
+.hd-dl-details { display: flex; flex-direction: column; gap: 4px; font-size: 11.5px; line-height: 1.4; color: var(--hd-text-2); }
+.hd-dl-details b { color: var(--hd-text); font-weight: 600; }
+@media (max-width: 900px) { .hd-dl-row { white-space: normal; height: auto; flex-wrap: wrap; } }
 .hd-deck-state { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hd-deck-state > .hd-dn-label { min-width: 72px; }
 /* the selected market's card under the summary (Kevin, Nov 9): three columns */
@@ -732,6 +836,9 @@
 .hd-smap-ex { white-space: nowrap; }
 .hd-smap-census { margin-top: 8px; }
 .hd-smap-kvs { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.hd-smap-drops { margin: 2px 0 8px; }
+.hd-smap-folds { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.hd-smap-fold > .hd-why-body { max-width: none; }
 /* order flow map (node fills) */
 .hd-p-ofm { flex: 1 1 100%; }
 .hd-ofm-win { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 11.5px; color: var(--hd-muted); padding: 0 0 8px; }
@@ -846,3 +953,8 @@
 
 /* a glance tile whose value is a list, not a number */
 .hd-tile-value.hd-tile-plain { font: inherit; white-space: normal; overflow: visible; min-height: 0; display: block; }
+/* the stop map's estimate (Kevin, Nov 10): a quiet second figure beside the stated one */
+.hd-smap-est { font-size: 10.5px; line-height: 1.2; }
+.hd-smap-byest { list-style: none; padding-left: 0; margin: 2px 0 4px; font-size: 11.5px; }
+/* the stop overlay's estimate (Kevin, Nov 10): the whole-position orders at their owners' positions, hatched beyond the stated bar */
+.hd-band-stops-est { background: repeating-linear-gradient(45deg, rgba(179, 157, 255, .34) 0 4px, rgba(179, 157, 255, .06) 4px 8px); border-right: 2px dashed rgba(179, 157, 255, .9); }

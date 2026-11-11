@@ -662,6 +662,8 @@ def test_through_the_plugin_snapshot_tab_and_replay_slot(surfaces):
     tab = plugin.last["tab"]["node"]
     assert tab["live"]["flow_map"] == json.loads(json.dumps(fm, default=str))
     assert "order flow map" in " ".join(tab["panels"])
+    # the node_book tool carries the same map, so the agent can quote its readings (Nov 10)
+    assert plugin.last["node_book"]["flow_map"] == json.loads(json.dumps(fm, default=str))
     rep = plugin.read(SP, end + 3_000, slot="replay")["flow_map"]
     assert rep["provenance"]["mode"] == "REPLAY" and rep["freshness"]["state"] == "REPLAY"
     assert rep["totals"]["fills"] == fm["totals"]["fills"] + 1 and rep["totals"]["open_long_usd"] == fm["totals"]["open_long_usd"] + 100_000
@@ -669,10 +671,14 @@ def test_through_the_plugin_snapshot_tab_and_replay_slot(surfaces):
     assert plugin.last["tab"]["node"]["live"]["flow_map"]["totals"] == fm["totals"]            # live unchanged
 
 
-def test_latest_snapshot_withholds_the_map_once_the_flow_lapses_by_serving_time(surfaces):
-    """Serving-time aging (as the tape): a snapshot whose node fills are LIVE when built, served 3 s later past the
-    delayed limit (2 s here), withholds the map with the reason; within the limit it stays, its freshness carrying the
-    served age; a historical read is unchanged."""
+def test_latest_snapshot_keeps_the_map_labelled_once_the_flow_lapses_by_serving_time(surfaces):
+    """Serving-time aging (as the tape), changed by Kevin, Nov 10 (a late family labels, it doesn't withhold): a
+    snapshot whose node fills are LIVE when built, served 3 s later past the delayed limit (2 s here), keeps the map
+    with its buckets and readings as built, its freshness the flow family's aged status (BEHIND, "by the time this
+    was served", the served age and the delay advanced) and an "as of" note that states the block time and the
+    delay; the tape is served the same way. Within the limit it stays LIVE, its freshness carrying the served age and
+    no note; a historical read is unchanged."""
+    from hl_desk.util import iso_ms
     plugin = surfaces([SP])
     plugin.desk.collector = {"state": "connected", "note": "offline test feed"}
     c, f, end = _eight_buckets(plugin.attach(client(cfg={"delayed_after_ms": 2_000, "stale_after_ms": 4_000})))
@@ -681,20 +687,32 @@ def test_latest_snapshot_withholds_the_map_once_the_flow_lapses_by_serving_time(
     built = end + 6_100
     view = plugin.read(SP, built)
     fm = view["flow_map"]
-    assert fm["available"] is True and fm["freshness"]["state"] == "LIVE" and view["tape"].get("available") is not False
+    assert fm["available"] is True and fm["freshness"]["state"] == "LIVE" and fm["as_of_note"] is None
+    assert view["tape"].get("available") is not False and view["tape"]["freshness"] == "LIVE"
     snap = plugin.last["snapshot"]
+    words = ("freshness", "as_of_note")
+    same = lambda a, b: {k: a[k] for k in a if k not in words} == {k: b[k] for k in b if k not in words}
     late = age_snapshot_for_serving(dict(snap, served={"latest": True, "age_s": 3.0}))["markets"][SP]["node"]["live"]
-    assert late["families"]["flow"]["state"] == "BEHIND" and late["families"]["flow"]["aged_by_ms"] == 3_000
+    fl = late["families"]["flow"]
+    assert fl["state"] == "BEHIND" and fl["aged_by_ms"] == 3_000 and "by the time this was served" in fl["reason"]
     w = late["flow_map"]
-    assert w["available"] is False and w["reason"].startswith("node fills BEHIND:") and "by the time this was served" in w["reason"]
-    assert set(w) == {"available", "reason", "stream", "provenance", "freshness", "window"}
-    assert w["window"] == fm["window"] and w["provenance"] == fm["provenance"] and w["freshness"] == late["families"]["flow"]
-    assert late["tape"]["available"] is False                                        # withheld together
+    assert w["available"] is True and w["freshness"] == fl and same(w, fm)
+    assert w["buckets"] == fm["buckets"] and w["readings"] == fm["readings"]
+    note = f"as of the node's fills at {iso_ms(fl['watermark_block_time_ms'])}, {fl['delay_ms'] / 1000:.1f} s behind"
+    assert w["as_of_note"] == note
+    assert late["tape"].get("available") is not False and late["tape"]["freshness"] == "BEHIND"      # served together
+    assert late["tape"]["as_of_note"] == note
     soon = age_snapshot_for_serving(dict(snap, served={"latest": True, "age_s": 0.5}))["markets"][SP]["node"]["live"]["flow_map"]
     assert soon["available"] is True and soon["freshness"]["state"] == "LIVE" and soon["freshness"]["aged_by_ms"] == 500
-    assert soon["buckets"] == fm["buckets"] and soon["readings"] == fm["readings"]
+    assert soon["as_of_note"] is None and soon["buckets"] == fm["buckets"] and soon["readings"] == fm["readings"]
     hist = age_snapshot_for_serving(dict(snap, served={"latest": False, "age_s": 9.0}))["markets"][SP]["node"]["live"]["flow_map"]
     assert hist == fm
-    # the same gate on a bare view: a lapsed flow family withholds the map; an unknown served age too
-    assert aged_view(view, 3_000)["flow_map"]["available"] is False
-    assert aged_view(view, None)["flow_map"]["available"] is False and aged_view(view, 500)["flow_map"]["available"] is True
+    # the same on a bare view: a lapsed flow family keeps the map, labelled; an unknown served age reads STALE and
+    # keeps it too; within the limit there is no note
+    bare = aged_view(view, 3_000)["flow_map"]
+    assert bare["available"] is True and bare["freshness"]["state"] == "BEHIND"
+    assert bare["as_of_note"].endswith(f", {fl['delay_ms'] / 1000:.1f} s behind")
+    unknown = aged_view(view, None)["flow_map"]
+    assert unknown["available"] is True and unknown["freshness"]["state"] == "STALE"
+    assert unknown["as_of_note"].startswith("as of the node's fills at ")
+    assert aged_view(view, 500)["flow_map"]["as_of_note"] is None

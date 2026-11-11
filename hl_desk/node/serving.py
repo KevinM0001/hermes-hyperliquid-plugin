@@ -1,12 +1,18 @@
-"""Node results aged to the moment a latest snapshot is served (Codex review 7, B1).
+"""Node results aged to the moment a latest snapshot is served (Codex review 7, B1; Kevin, Nov 10).
 
-A snapshot is built once a second, but a tool may read the latest one up to a few seconds later. A node family
-that was LIVE at build time stops being LIVE once the node feed's delay (the 5 s average of the latest watermark's
-age, client.delay) passes the delayed or stale limit. So every node result a tool serves from the latest snapshot is
-re-judged at serving time: each LIVE family status has its delay and ages advanced by the snapshot's age when served
-(an upper bound: the average can grow no faster than time passes), and any family that has lapsed reads BEHIND or
-STALE with the reason. Every number built on it is then withheld, exactly as the panel builder withholds it for a
-family that isn't usable.
+A snapshot is built once a second, but a tool may read the latest one up to a few seconds later. So every node
+result a tool serves from the latest snapshot is re-judged at serving time: each LIVE family status has its delay
+and ages advanced by the snapshot's age when served (an upper bound: the average can grow no faster than time
+passes), and a family whose delay has passed the delayed or stale limit by then reads BEHIND or STALE with the
+reason, "by the time this was served". The market's delay block is advanced the same way.
+
+A late family labels, it doesn't withhold (Kevin, Nov 10: present the information even if delayed, say so and show
+the time). The ladder, walls, thinning, stops, tape, order flow map, Flow Deck and burst buckets and wallet splits
+built on a family that has lapsed to BEHIND or STALE are served as built, with the family's state, reason and delay
+next to them and their "as of" note re-stated at the served delay, so a reader sees "BEHIND, 73.4 s behind" beside
+the numbers and the delay keeps counting up. Only no data, INVALID (a gap, a crossed book, a sequence hole, a lost
+family) and UNKNOWN (clock skew) withhold, at build time and here alike; a family that was usable when built never
+lapses into either by waiting, so nothing is withheld here that the build served.
 
 A historical snapshot (read by ID) is not aged: it is labelled as of its build time. REPLAY families run on the
 replay's own clock and are never aged. The tab's snapshot route isn't aged here either: the tab ages what it
@@ -16,7 +22,7 @@ shows itself, counting the served age and every second since it asked (app.js sn
 from __future__ import annotations
 
 from .client import delay_state
-from .panels import CENSUS_BANDS_KEYS, CENSUS_BOOK_KEYS, census_withheld
+from .panels import CENSUS_BANDS_KEYS, CENSUS_BOOK_KEYS, THIN_NOTE, as_of_note, census_withheld, usable
 
 USABLE = ("LIVE", "REPLAY")
 BUCKET_KEYS = ("new_long", "cover", "new_short", "exit")
@@ -60,45 +66,33 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
     if fams == view["families"] and dl is view.get("delay"):
         return view
     out = dict(view, families=fams, delay=dl)
-    book, trig, fl = fams.get("book") or {}, fams.get("triggers") or {}, fams.get("flow") or {}
-    if "book" in out and book.get("state") not in USABLE and (view["families"].get("book") or {}).get("state") in USABLE:
-        why = _why("book", book)
-        out["book"] = dict(out["book"], valid=False, reason=why)
-        out["ladder"] = {"available": False, "reason": why}
-        out["walls"] = {"available": False, "reason": why}
-        out["thinning"] = {"available": False, "reason": why, "note": (view.get("thinning") or {}).get("note")}
-        st = out.get("stops")
-        if isinstance(st, dict) and "map" in st:        # the stop map's depth, clusters and book-built census counts
-            cen = st.get("census")
-            out["stops"] = dict(st, map={"available": False, "reason": why}, clusters=None, clusters_reason=why,
-                                census=census_withheld(cen, why, CENSUS_BOOK_KEYS) if isinstance(cen, dict) else cen)
+    # (view key, family, the family's name in a reason, the label of its "as of" note)
+    blocks = (("ladder", "book", "book", "book"), ("walls", "book", "book", "book"), ("thinning", "book", "book", "book"),
+              ("stops", "triggers", "triggers", "waiting stops"), ("tape", "flow", "node fills", "fills"),
+              ("flow_map", "flow", "node fills", "fills"))
+    for key, fam, name, label in blocks:
+        block, st = out.get(key), fams.get(fam) or {}
+        if not isinstance(block, dict) or block.get("available") is False or not usable(view["families"].get(fam)):
+            continue
+        if not usable(st):                              # UNKNOWN by serving time: withheld as the build would
+            why = f"{name} {st.get('state')}: {st.get('reason')}"
+            out[key] = {"available": False, "reason": why} | (
+                {"note": THIN_NOTE} if key == "thinning" else {"coverage": block.get("coverage")} if key == "tape" else
+                {"stream": "node fills", "provenance": block.get("provenance"), "freshness": st, "window": block.get("window")} if key == "flow_map" else {})
+            continue
+        if key == "flow_map":
+            out[key] = dict(block, freshness=st, as_of_note=as_of_note(label, st))   # its own freshness is the full status
+        else:
+            out[key] = dict(block, freshness=st.get("state"), as_of_note=as_of_note(label, st))
+    est_block = (out.get("stops") or {}).get("estimate") if isinstance(out.get("stops"), dict) else None
+    if isinstance(est_block, dict) and isinstance(fams.get("owner_pos"), dict):
+        # The estimate's state follows the aged owner_pos family (its as-of time is already in the block).
+        out["stops"] = dict(out["stops"], estimate=dict(est_block, freshness=fams["owner_pos"].get("state")))
     bands = fams.get("bands") or {}
-    if "stops" in out and bands.get("state") not in USABLE and (view["families"].get("bands") or {}).get("state") in USABLE:
+    if "stops" in out and not usable(bands) and usable(view["families"].get("bands")):
         st = out.get("stops")
         if isinstance(st, dict) and isinstance(st.get("census"), dict):     # the census counts read from the bands view
             out["stops"] = dict(st, census=census_withheld(st["census"], _why("bands", bands), CENSUS_BANDS_KEYS))
-    if "stops" in out and trig.get("state") not in USABLE and (view["families"].get("triggers") or {}).get("state") in USABLE:
-        why = _why("triggers", trig)
-        out["stops"] = {"available": False, "reason": why}
-        lad = out.get("ladder")
-        if isinstance(lad, dict) and "bids" in lad:     # the ladder's stops column follows the trigger family too
-            na = {"available": False, "reason": why}
-            out["ladder"] = dict(lad, stops_available=False, stops_reason=why, **{
-                side: [dict(r, stops_to_next_level=None if r.get("stops_to_next_level") is None else dict(na))
-                       for r in lad[side]] for side in ("bids", "asks")})
-    if "tape" in out and fl.get("state") not in USABLE and (view["families"].get("flow") or {}).get("state") in USABLE:
-        out["tape"] = {"available": False, "reason": f"node fills {fl.get('state')}: {fl.get('reason')}",
-                       "coverage": (view.get("tape") or {}).get("coverage")}
-    fm = view.get("flow_map")
-    if isinstance(fm, dict) and fl:
-        if fm.get("available") and fl.get("state") not in USABLE:
-            # The Order Flow Map, withheld like the tape: its buckets, totals, account shares and readings go; what
-            # stays is the window it was built over, its provenance and the lapsed status with the reason.
-            out["flow_map"] = {"available": False, "reason": f"node fills {fl.get('state')}: {fl.get('reason')}",
-                               "stream": "node fills", "provenance": fm.get("provenance"), "freshness": fl,
-                               "window": fm.get("window")}
-        else:
-            out["flow_map"] = dict(fm, freshness=fl)        # still usable: its own freshness carries the served age
     if isinstance(view.get("liquidation_events"), list):
         out["liquidation_events"] = [dict(ev, freshness=aged_status(ev.get("freshness"), age_ms))
                                      for ev in view["liquidation_events"]]
@@ -106,15 +100,16 @@ def aged_view(view: dict | None, age_ms: float) -> dict | None:
 
 
 def aged_fill_result(res: dict | None, age_ms: float) -> dict | None:
-    """A result built from node fills (Flow Deck or burst buckets, a wallet split), re-judged at serving time:
-    when its flow family has lapsed, its numbers are withheld with the reason."""
+    """A result built from node fills (Flow Deck or burst buckets, a wallet split), re-judged at serving time: its
+    flow freshness is aged and the numbers stay with it (a late family labels, Kevin, Nov 10); only a family no
+    longer usable (UNKNOWN) withholds them with the reason."""
     if not isinstance(res, dict) or not res.get("available") or not isinstance(res.get("freshness"), dict):
         return res
     st = aged_status(res["freshness"], age_ms)
-    if st is res["freshness"] or st.get("state") in USABLE:
+    if st is res["freshness"] or usable(st):
         return dict(res, freshness=st)
     why = f"node fills {st.get('state')}: {st.get('reason')}"
-    keep = {k: res[k] for k in ("stream", "window_label", "provenance", "coverage", "window") if k in res}
+    keep = {k: res[k] for k in ("stream", "window_label", "as_of_note", "provenance", "coverage", "window") if k in res}
     out = keep | {"available": False, "reason": why, "freshness": st}
     for k in BUCKET_KEYS:                               # the bucket metrics a card or burst shows, withheld
         if k in res:

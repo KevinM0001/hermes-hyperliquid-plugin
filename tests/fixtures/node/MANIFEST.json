@@ -32,6 +32,34 @@
         "run2": "e8a2cc5fe8ca47c742897c310814c5f585fca8a76e1a77cb476b78139220a7d3"
       },
       "filter": "each run's hello line, then its xyz:XYZ100 lines for the first 20 s of block time and the heartbeats published up to 1 s after the last of them, byte for byte; run 1 then run 2"
+    },
+    {
+      "file": "owner-pos-handmade.jsonl.gz",
+      "lines_kept": 21,
+      "bytes_uncompressed": 9254,
+      "sha256_uncompressed": "444547e5d87583b8520a0a66580949c11a564df7ede8990aca6a94b533343d42",
+      "filter": "the engine session's hand-made recording (Nov 10) in the PROTOCOL.md revision-2.3 shapes: synthetic addresses, orders, executions and positions for BTC and its position stream BTC.owner_pos, not node data; a snapshot pair, then a set, a changed position and a drop; byte for byte, recorder format, allowlist livefeed-v2.1"
+    },
+    {
+      "file": "owner-pos-handmade-unavailable.jsonl.gz",
+      "lines_kept": 16,
+      "bytes_uncompressed": 7914,
+      "sha256_uncompressed": "24623caef54d3f271281ab58db3344d93cd2cfba8d115755375ae16b0fb40465",
+      "filter": "the engine session's hand-made recording (Nov 10), synthetic values: the producer declares positions unavailable after a block whose fills record was not read (an opos_delta with 'unavailable', then a periodic opos_snapshot carrying it); byte for byte, allowlist livefeed-v2.1"
+    },
+    {
+      "file": "owner-pos-HYPE-30s.jsonl.gz",
+      "lines_kept": 757,
+      "bytes_uncompressed": 7576681,
+      "sha256_uncompressed": "73957f336dc431f138ed4c2f90aad87815e85afaae3f17eb260e8b89010c151a",
+      "filter": "the producer's own recording of the recorded Nov 7 window replayed offline (engine branch, Nov 10): HYPE and HYPE.owner_pos, 30 s of block time, one opos_snapshot of 1,751 owners then 6 opos_deltas (4 set rows, 7 drops), 0 gaps; checked by the engine against an independent calculation (194,855 position checks, 0 mismatches); byte for byte, allowlist livefeed-v2.1"
+    },
+    {
+      "file": "owner-pos-HYPE-live-120s.jsonl.gz",
+      "lines_kept": 2606,
+      "bytes_uncompressed": 15191433,
+      "sha256_uncompressed": "68be4e666f8a88eb4c7b34aecec88c77f6abcc31785eba245a9bf517b259781e",
+      "filter": "the engine's LIVE recording from the shadow runner (fixed build, Nov 10 23:05Z, allowlist livefeed-v2.1; BTC, HYPE and their position streams, 120 s of block time from 1216674194, verified against an independent probe: 2,883,774 position checks, 0 mismatches), cut to the header line, every line whose msg.market is HYPE or HYPE.owner_pos (each starting at its own full snapshot; 12 position deltas) and the trailer, byte for byte"
     }
   ],
   "note": "lines are copied unchanged from the recording; nothing is synthesized"

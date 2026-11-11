@@ -65,9 +65,10 @@ def _age_shown(payload: dict, age_s: float) -> dict:
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the tab's pure function")
 def test_b1_the_tab_withholds_a_confirmed_card_in_the_builds_shape():
-    """The tab's ageShown, on the chosen market's card and on another market's Flow Deck summary: the withheld card
-    has the build's keys, its last confirmed regime is the string the renderer draws (RegimeBadge), with the same
-    since time and tick as the build's, and every number is null with the reason."""
+    """The tab's ageShown, on the chosen market's card and on another market's Flow Deck summary: once the snapshot
+    has sat on screen past the screen's allowance (30 s, Kevin, Nov 10), the withheld card has the build's keys, its
+    last confirmed regime is the string the renderer draws (RegimeBadge), with the same since time and tick as the
+    build's, and every number is null with the reason. Within the allowance the card is kept whole."""
     eng, complete = _confirmed_engine()
     built = eng.card("trades stale")
     trades = {"field": "trades", "status": "fresh", "progress_age_s": 29.5, "max_age_s": 30.0,
@@ -76,7 +77,9 @@ def test_b1_the_tab_withholds_a_confirmed_card_in_the_builds_shape():
                "market": {"market": "BTC", "freshness": {"trades": trades}, "deck": {"card": complete},
                           "book": {}, "flow": {"values": {}, "cvd": {"buckets": []}, "large_prints": {}}, "wallets": {}},
                "deck": {"HYPE": {"trades_freshness": trades, "card": dict(complete, market="HYPE")}}}
-    out = _age_shown(payload, 1.0)
+    kept = _age_shown(payload, 1.0)                                            # within the allowance: whole
+    assert kept["market"]["deck"]["card"]["regime"] == complete["regime"] and kept["deck"]["HYPE"]["card"]["numbers"] == complete["numbers"]
+    out = _age_shown(payload, 31.0)                                            # past it: withheld in the build's shape
     for card in (out["market"]["deck"]["card"], out["deck"]["HYPE"]["card"]):
         assert set(card) == set(built)
         assert card["last_confirmed"] == built["last_confirmed"]

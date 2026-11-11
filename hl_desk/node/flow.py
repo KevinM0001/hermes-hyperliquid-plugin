@@ -23,6 +23,9 @@ from .proto import dec
 
 ZERO = Decimal(0)
 RETENTION_MS = 16 * 60 * 1000
+# The one uncovered reason a window may be shifted for (see NodeFlow.covered_window): the fills exist, the node just
+# hasn't processed through the window's end yet.
+NOT_THROUGH = "node fills not processed through the window's end yet"
 LIQ_BURST_WINDOW_MS = 60_000
 
 
@@ -191,15 +194,42 @@ class NodeFlow:
                     coverage | {"covers": False,
                                 "reason": f"node fills observed only since {self.since_ms} (block {self.since_block}); "
                                           "the window starts earlier"})
+        if self.last_block_time_ms is not None and start_ms < self.last_block_time_ms - RETENTION_MS:
+            # Fills are pruned 16 min behind the latest execs block: a window from before that isn't guaranteed whole.
+            return ([e for e in self.execs.values() if start_ms < e.time_ms <= end_ms],
+                    coverage | {"covers": False,
+                                "reason": f"node fills older than {RETENTION_MS // 60_000} min before the node's last block "
+                                          "are no longer kept; the window starts earlier"})
         if self.last_block_time_ms is None or end_ms > self.last_block_time_ms:
             return ([e for e in self.execs.values() if start_ms < e.time_ms <= end_ms],
-                    coverage | {"covers": False, "reason": "node fills not processed through the window's end yet"})
+                    coverage | {"covers": False, "reason": NOT_THROUGH})
         bad = [t for t in self.unreadable if start_ms < t <= end_ms]
         if bad:
             return ([e for e in self.execs.values() if start_ms < e.time_ms <= end_ms],
                     coverage | {"covers": False, "reason": f"{len(bad)} execution(s) in this window couldn't be read "
                                                            "(missing tid, price, size or time), so its totals are unknown"})
         return [e for e in self.execs.values() if start_ms < e.time_ms <= end_ms], coverage | {"covers": True, "reason": None}
+
+    def covered_window(self, start_ms: int, end_ms: int) -> tuple[list[Execution], dict, dict]:
+        """The window (start_ms, end_ms] when the node fills cover it. When they fail to only because they aren't
+        processed through end_ms yet, the last window of the same length they do cover, ending at the processed-
+        through block time, checked in full like any window (the fills' start, retention, unreadable executions).
+        Kevin, Nov 10: the Flow Deck card's node buckets and the wallet split show the last covered window, labelled,
+        rather than nothing while the node runs behind. Any other uncovered reason stands. Returns (execs, coverage,
+        window), window = {start_ms, end_ms, requested: {start_ms, end_ms} | None, shifted_by_ms}: requested is None
+        and shifted_by_ms 0 when the window served is the one asked for."""
+        asked = {"start_ms": start_ms, "end_ms": end_ms, "requested": None, "shifted_by_ms": 0}
+        execs, cov = self.window(start_ms, end_ms)
+        if cov["covers"] or cov["reason"] != NOT_THROUGH or self.last_block_time_ms is None:
+            return execs, cov, asked
+        end2 = self.last_block_time_ms
+        start2 = end2 - (end_ms - start_ms)
+        execs2, cov2 = self.window(start2, end2)
+        if not cov2["covers"]:
+            return execs, cov | {"reason": f"{NOT_THROUGH}, and the last window of this length they reach isn't "
+                                           f"covered either: {cov2['reason']}"}, asked
+        return execs2, cov2, {"start_ms": start2, "end_ms": end2, "requested": {"start_ms": start_ms, "end_ms": end_ms},
+                              "shifted_by_ms": end_ms - end2}
 
     def coverage(self) -> dict:
         return {"stream": self.stream, "since_block": self.since_block, "since_ms": self.since_ms,

@@ -18,9 +18,59 @@ from decimal import Decimal
 from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
 from .flow_map import FlowMapState, build as build_flow_map
-from .triggers import CENSUS_EXCLUSIONS, category, census
-from ..util import median
+from .transport import source_label
+from .triggers import (CENSUS_EXCLUSIONS, EST_COUNTED_NEARER, EST_MISSING, EST_NOT_YET, MAP_PLAUSIBLE_RATIO, category, census,
+                       estimates)
 from .proto import dec, fmt, num
+from ..util import iso_ms, median
+
+# The family states that withhold what is built on the family (Kevin, Nov 10): INVALID and UNKNOWN, besides having
+# no data at all. BEHIND and STALE label: their panels are served with the state, the reason and the delay. Until
+# Nov 10 the hl-node ran 73 s behind the chain for an hour and every node panel went dark; the stop clusters, resting
+# depth and taker flow are worth reading late, said late.
+WITHHOLD = ("INVALID", "UNKNOWN")
+LATE = ("BEHIND", "STALE")
+
+
+def usable(st: dict | None) -> bool:
+    """Whether what is built on a family is served: any state but INVALID or UNKNOWN (a missing status never is)."""
+    return isinstance(st, dict) and st.get("state") not in WITHHOLD
+
+
+def as_of_note(label: str, st: dict | None) -> str | None:
+    """The caveat of a block built on a family that is BEHIND or STALE, so it never reads as the present:
+    "as of the node's book at 2026-11-10T15:35:12.345Z, 73.4 s behind"; None while the family is current (LIVE or
+    REPLAY). The time is the family's last watermark's block time, the delay the family's delay_ms (at serving time,
+    advanced by the served age); a family whose delay isn't known says its state and reason instead."""
+    if not isinstance(st, dict) or st.get("state") not in LATE:
+        return None
+    t, d = st.get("watermark_block_time_ms"), st.get("delay_ms")
+    when = f" at {iso_ms(t)}" if isinstance(t, int) and not isinstance(t, bool) else ""
+    behind = (f", {d / 1000:.1f} s behind" if isinstance(d, (int, float)) and not isinstance(d, bool)
+              else f", {st['state']}: {st.get('reason')}")
+    gone = "; the feed is disconnected" if str(st.get("reason") or "").startswith("disconnected:") else ""
+    return f"as of the node's {label}{when}{behind}{gone}"
+
+
+def late_fields(label: str, st: dict) -> dict:
+    """The freshness fields a served block carries beside its numbers: the family's state and the 'as of' note."""
+    return {"freshness": st.get("state"), "as_of_note": as_of_note(label, st)}
+
+
+def shift_fields(win: dict, prefix: str, of: str) -> dict:
+    """What a result built over a shifted node-fill window says about it (Kevin, Nov 10): an 'as of' note with the
+    block time the fills reach and the shift, and a label naming the window it covers; both None when the window
+    served is the one asked for (NodeFlow.covered_window), so a current window reads as the present."""
+    n = win.get("shifted_by_ms") or 0
+    if not n:
+        return {"as_of_note": None, "window_label": None}
+    length = win["end_ms"] - win["start_ms"]
+    span = f"{round(length / 60_000)} min" if length >= 120_000 else f"{round(length / 1000)} s"
+    clock = lambda ms: iso_ms(ms)[11:19]
+    return {"as_of_note": f"as of the node's fills at {iso_ms(win['end_ms'])}, {n / 1000:.1f} s behind {of}",
+            "window_label": f"{prefix}the node's last {span}, {clock(win['start_ms'])} to {clock(win['end_ms'])} UTC, "
+                            f"{n / 1000:.0f} s behind {of}"}
+
 
 ZERO = Decimal(0)
 LADDER_LEVELS = 20
@@ -40,7 +90,7 @@ TAPE_ROWS = 30
 VENUE_CHECK = ("checked against the venue only at restart: the engine compares its waiting-stop set with the venue's only when it restarts (its rebase check); during a run nothing compares them, so a stop the venue has already ended can stay shown until the next restart")
 STOPS_ROWS_RANGE_BPS = 200          # band rows shown within 2% of the mid; everything beyond is counted below/above
 BOOK_PANEL_FAMILIES = ("book",)
-MAP_PLAUSIBLE_RATIO = Decimal(10)   # stop map: a trigger price outside [ref/10, ref x 10] is implausible
+# stop map: a trigger price outside [ref/10, ref x 10] is implausible (defined once, in triggers, beside the estimate)
 MAP_CLUSTERS_PER_SIDE = 2
 MAP_SIDES = {"fall": {"side": "sell", "label": "Sell-side triggers", "book_side": "bids_below", "book": "B",
                       "walked": "bids at and below", "sign": "-",
@@ -276,14 +326,77 @@ def node_delay(client, market: str, now_mono_ns=None) -> dict:
 
 
 def provenance(client, market: str) -> dict:
-    return {"source": client.source, "mode": client.mode, "epoch": client.epoch, "session": client.session,
+    return {"source": source_label(client.source), "mode": client.mode, "epoch": client.epoch, "session": client.session,
             "replay_session": client.replay_session if client.mode == "REPLAY" else None,
             "stream": client.stream_label(), "market": market, "protocol": "l4-livefeed v2 (document revision 2.2)"}
 
 
 def families(client, market: str, now_wall_ms=None, now_mono_ns=None) -> dict:
-    return {f: client.family_status(market, f, now_wall_ms, now_mono_ns)
-            for f in ("book", "triggers", "depth", "bands", "flow")}
+    out = {f: client.family_status(market, f, now_wall_ms, now_mono_ns)
+           for f in ("book", "triggers", "depth", "bands", "flow")}
+    mf = client.markets.get(market)
+    if mf is not None and (mf.opos.offered or mf.opos.unavailable):
+        # The owner position stream (PROTOCOL.md 4.8) once the handshake named it: its family, or why the feed has none.
+        out["owner_pos"] = client.family_status(market, "owner_pos", now_wall_ms, now_mono_ns)
+    return out
+
+
+EST_RULE = ("whole-position TP/SL orders have no stated size; each is estimated at its owner's current position when its "
+            "side would close it, one position counted once per side and kind at its nearest trigger, less the owner's stated "
+            "orders that fire first; the estimate is kept apart from the stated figures and never enters the size-outlier "
+            "test, the exclusions or the census ratios; a flat or wrong-side owner leaves the size unknown with the reason")
+
+
+def owner_estimates(mf, fam: dict) -> tuple[dict | None, dict]:
+    """The whole-position orders' estimates (triggers.estimates) and what the stops block says about them (Kevin,
+    Nov 10): available only when the triggers and owner_pos families are both usable and the stream holds positions;
+    the as-of is the older of the two families' blocks and the basis names both when they differ; cached per
+    (triggers change, positions change), so a build with no new block costs nothing."""
+    ps = mf.opos
+    ost = fam.get("owner_pos")
+    base = {"available": False, "rule": EST_RULE, "freshness": ost["state"] if ost else None}
+    if ost is None:
+        return None, base | {"reason": ps.unavailable or "this feed carries no owner position stream"}
+    if not usable(ost) or ps.positions is None or mf.triggers is None:
+        return None, base | {"reason": f"owner positions {ost['state']}: {ost.get('reason')}"}
+    tf = mf.fam["triggers"]
+    # The as-of is what the two families' last consistent watermarks vouch for (the same source as the late-data
+    # note), not the latest line's envelope, which can name a block not fully applied yet.
+    tb, pb, tbt, pbt = tf.wm_block, ps.fam.wm_block, tf.wm_block_time_ms, ps.fam.wm_block_time_ms
+    same = tb == pb
+    # An owner missing from the stream is a feed defect only when both families stand at the same block; between a
+    # market's line and its stream's line of the same block it is the expected moment before the set arrives.
+    missing = EST_MISSING if same else EST_NOT_YET
+    ref = mf.book.mid() if (mf.book is not None and mf.crossed is None) else None
+    if ref is None:
+        # Without a reference price an order already true at it can't be set aside, so no estimate is made (the map
+        # isn't shown then either).
+        return None, base | {"reason": "no valid book mid, so orders already true at the price can't be set aside"}
+    bf = mf.fam["book"]
+    key = (tf.last_change_seq, tf.since_seq, ps.fam.last_change_seq, ps.fam.since_seq, same, bf.last_change_seq, ref)
+    cache = getattr(mf, "_est_cache", None)
+    if cache is None or cache[0] != key:
+        cache = mf._est_cache = (key, estimates(mf.triggers.orders, ps.positions, missing, ref))
+    est = cache[1]
+    times = [x for x in (tbt, pbt) if isinstance(x, int) and not isinstance(x, bool)]
+    older = min(times) if times else None
+    unknown: dict = {}
+    for e in est.values():
+        if e["sz"] is None:
+            unknown[e["reason"]] = unknown.get(e["reason"], 0) + 1
+    basis = f"owners' positions at block {pb}" + (f" ({ps.basis})" if ps.basis else "") + f"; waiting triggers at block {tb}"
+    if not same:
+        basis += "; the two families stand at different blocks, so the estimate is as of the older"
+    meta = base | {"available": True, "reason": None, "as_of_ms": older,
+                   "as_of_note": (f"if triggered now, from the owners' positions at {iso_ms(older)}" if older is not None
+                                  else "if triggered now, from the owners' positions (block time unknown)"),
+                   "positions_block": pb, "triggers_block": tb, "same_block": same, "basis": basis,
+                   "owners": len(ps.positions), "whole_position_orders": len(est),
+                   "estimated": sum(1 for e in est.values() if e["sz"] is not None and e["reason"] != EST_COUNTED_NEARER),
+                   "counted_at_nearer": sum(1 for e in est.values() if e["reason"] == EST_COUNTED_NEARER),
+                   "upper_bound": sum(1 for e in est.values() if e["upper_bound"]), "unknown": unknown,
+                   "defects": unknown.get(EST_MISSING, 0) if same else 0}
+    return est, meta
 
 
 def book_validity(mf, fam_status: dict) -> tuple[bool, str | None]:
@@ -294,7 +407,7 @@ def book_validity(mf, fam_status: dict) -> tuple[bool, str | None]:
         c = mf.crossed
         return False, (f"book crossed since seq {c['since_seq']} (best bid {fmt(c['best_bid'])} at or above best ask "
                        f"{fmt(c['best_ask'])}); invalid until a fresh snapshot clears it")
-    if st["state"] not in ("LIVE", "REPLAY"):
+    if not usable(st):                 # UNKNOWN (clock skew) withholds; BEHIND and STALE serve the book with their state
         return False, f"book {st['state']}: {st.get('reason')}"
     return True, None
 
@@ -304,7 +417,7 @@ def ladder(mf, client, trig_status: dict | None = None, levels: int = LADDER_LEV
     # The stops column comes from the trigger family: while it isn't usable (invalid, stale, behind or of unknown
     # age), every row says so with the reason, never 0 (which would read as no waiting interest).
     tst = trig_status or {"state": "INVALID", "reason": "trigger state not given"}
-    stops_ok = mf.triggers is not None and tst["state"] in ("LIVE", "REPLAY")
+    stops_ok = mf.triggers is not None and usable(tst)     # a late trigger family fills the column, labelled (Kevin, Nov 10)
     stops_na = None if stops_ok else {"available": False, "reason": f"triggers {tst['state']}: {tst.get('reason')}"}
     now = mf.block_time_ms
     since = (now or 0) - CHANGE_WINDOW_MS
@@ -414,7 +527,7 @@ def stop_bands(mf, client) -> dict:
 
 # --- the stop map (Kevin's stop and liquidity map report): trigger bands beside the depth they would walk ----------
 
-def stop_map(mf, depth: dict | None, unavailable: str | None) -> dict:
+def stop_map(mf, depth: dict | None, unavailable: str | None, est: dict | None = None, est_meta: dict | None = None) -> dict:
     """The stops panel's map, clusters and exclusions: every waiting trigger in a 0.5% band of the move that fires it
     (the thinning panel's edges, out to 10%) or under one counted exclusion; per band the resting depth of the same
     book, same moment, that its triggers would walk (the band and every band farther out, the report's "bids at and
@@ -424,29 +537,45 @@ def stop_map(mf, depth: dict | None, unavailable: str | None) -> dict:
     price, already true at the price, beyond the range, size outlier last): the size test needs the band's walked
     depth, the same exact sum the band's walk ratio divides by."""
     tr, book = mf.triggers, mf.book
+    est_meta = est_meta or {"available": False, "reason": "no estimate", "rule": EST_RULE, "freshness": None}
     if unavailable is not None:
         why = f"needs a valid book for the reference price and the resting depth: {unavailable}"
         return {"map": {"available": False, "reason": why}, "clusters": None, "clusters_reason": why,
-                "exclusions": {"available": False, "reason": why}, "census": _census(mf, None, why)}
+                "exclusions": {"available": False, "reason": why}, "census": _census(mf, None, why),
+                "clusters_by_estimate": [], "estimate": est_meta}
     mid = book.mid()
     walked = {d: _walked_depth(depth[meta["book"]]) for d, meta in MAP_SIDES.items()}
-    c = census(tr, mid, THIN_STEP, THIN_BANDS, MAP_PLAUSIBLE_RATIO, {d: w["beyond"] for d, w in walked.items()})
+    c = census(tr, mid, THIN_STEP, THIN_BANDS, MAP_PLAUSIBLE_RATIO, {d: w["beyond"] for d, w in walked.items()}, est)
     sides, candidates = {}, []
     for d, meta in MAP_SIDES.items():
         dbands, w = depth[meta["book"]], walked[d]
         rows = []
         for k, b in enumerate(c["bands"][d]):
-            row = _map_row(d, meta, k, b, dbands[k], w["between"][k], w["beyond"][k])
+            row = _map_row(d, meta, k, b, dbands[k], w["between"][k], w["beyond"][k], est_meta)
             rows.append(row)
             if row["notional_usd"]:
                 candidates.append((d, k, row))
         sides[d] = {**{x: meta[x] for x in ("side", "label", "book_side", "members")}, "fires_on": d,
                     "depth_total_usd": usd(w["total"]), "bands": rows}
-    clusters = []
+    clusters, by_estimate = [], []
     for d in MAP_SIDES:
+        # Facts rank: the clusters are the largest stated notionals, and estimates never reorder them. When the
+        # estimate's largest band differs, one sentence per side says so (the Plugin session's rule, Nov 10).
         ranked = sorted((x for x in candidates if x[0] == d), key=lambda x: (-x[2]["notional_usd"], x[1], -x[2]["orders"]))
         for rank, (_d, k, row) in enumerate(ranked[:MAP_CLUSTERS_PER_SIDE], 1):
             clusters.append({"rank": rank, "text": _cluster_text(row), **row})
+        if est_meta.get("available"):
+            with_est = [r for r in sides[d]["bands"] if r.get("total_est_usd")]
+            if with_est:
+                top = max(with_est, key=lambda r: (r["total_est_usd"], -r["k"]))
+                if not ranked or top["k"] != ranked[0][1]:
+                    meta, b = MAP_SIDES[d], top["band"]
+                    text = (f"by the estimate, the largest {meta['label'].lower()[:-1]} band is {b['near_px']} to {b['far_px']} "
+                            f"({meta['sign']}{b['from_pct']:.1f}% to {meta['sign']}{b['to_pct']:.1f}%), about "
+                            f"{_money(top['total_est_usd'])} if its whole-position orders fired at their owners' positions"
+                            + (f" as of {iso_ms(est_meta['as_of_ms'])[11:19]}Z" if est_meta.get("as_of_ms") else ""))
+                    sides[d]["by_estimate_note"] = text
+                    by_estimate.append({"fires_on": d, "k": top["k"], "text": text})
     return {"map": {"available": True, "label": "resting trigger orders (stops and take-profits) by 0.5% band out to 10% "
                                               "from the current price, beside the resting limit depth they would walk",
                     "as_of": {"book_time_ms": mf.block_time_ms, "block": mf.block, "note": MAP_NOTE},
@@ -470,6 +599,8 @@ def stop_map(mf, depth: dict | None, unavailable: str | None) -> dict:
                               "accounts": "distinct owners of the band's orders (the feed's user field)"},
                     "venue_check": VENUE_CHECK},
             "clusters": clusters,
+            "clusters_by_estimate": by_estimate,
+            "estimate": est_meta,
             "exclusions": _exclusions(c),
             "census": _census(mf, c, None)}
 
@@ -488,7 +619,8 @@ def _walked_depth(dbands: list) -> dict:
     return {"total": total, "between": between, "beyond": beyond}
 
 
-def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal, beyond: Decimal) -> dict:
+def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal, beyond: Decimal,
+             est_meta: dict | None = None) -> dict:
     near, far = (dband["hi"], dband["lo"]) if d == "fall" else (dband["lo"], dband["hi"])
     q = Decimal("0.0001")
     n, unsized = b["orders"], b["unsized_orders"]
@@ -534,6 +666,31 @@ def _map_row(d: str, meta: dict, k: int, b: dict, dband: dict, between: Decimal,
     else:
         walk["ratio_pct"] = _sig(float(notional / beyond) * 100)      # 4 significant figures: a tiny share is never a 0
         walk["lower_bound"] = bool(unsized)
+    # The estimate, beside the stated figures and never inside them (Kevin, Nov 10): each band counted as if it fires
+    # first; the mixed total and its walk share are labelled estimated; an owner whose estimated size alone exceeds
+    # the depth at and beyond the band is flagged outsized, apart from the stated size test.
+    lg_e = b.pop("_est_largest", None)
+    if est_meta and est_meta.get("available"):
+        e_n, e_not, unk = b["est_orders"], b["est_notional"], sum(b["est_unknown"].values())
+        total = (notional if notional is not None else ZERO) + e_not
+        row["estimate"] = {
+            "label": "estimated: if triggered now, from the owners' positions; each band counted as if it fires first",
+            "notional_usd": usd(e_not) if e_n else None, "sz": num(b["est_sz"]) if e_n else None, "orders": e_n,
+            "upper_bound_orders": b["est_upper"], "counted_at_nearer": b["est_nearer"], "unknown_orders": unk,
+            "unknown_reasons": dict(b["est_unknown"]), "owners": len(b["est_users"]), "as_of_ms": est_meta.get("as_of_ms"),
+            # the flag names no owner and no size (a per-account position never leaves the plugin): only the notional
+            "outsized": ({"notional_usd": usd(lg_e[0]),
+                          "note": "one owner's estimated size is worth more than everything resting at and beyond this band; "
+                                  "shown, and kept out of the stated-size outlier test"}
+                         if lg_e is not None and beyond > 0 and lg_e[0] > beyond else None)}
+        # the served total is the sum of the two served (rounded) figures, so it never differs from them by a cent
+        row["total_est_usd"] = (round((row["notional_usd"] or 0.0) + (row["estimate"]["notional_usd"] or 0.0), 2)
+                                if (e_n or notional is not None) else None)
+        walk["ratio_pct_est"] = (_sig(float(total / beyond) * 100) if beyond > 0 and (e_n or notional is not None) else None)
+        walk["ratio_est_label"] = "estimated: stated plus the whole-position estimate over the same depth"
+    else:
+        row["estimate"] = None
+        row["total_est_usd"] = None
     row["walk"] = walk
     return row
 
@@ -574,20 +731,44 @@ def _cluster_text(row: dict) -> str:
     who = f"{n} order{'s' if n != 1 else ''} from {acc} account{'s' if acc != 1 else ''}"
     depth = _money(walk["depth_at_and_beyond_usd"]) if walk["depth_at_and_beyond_usd"] else None
     if row["notional_usd"] is None:
+        est = row.get("estimate")
+        if est and est["orders"] and row.get("total_est_usd") is not None:
+            when = f" as of {iso_ms(est['as_of_ms'])[11:19]}Z" if est.get("as_of_ms") else ""
+            head = (f"{where}: {who}, every one whole-position, no stated size: about {_money(row['total_est_usd'])} if they "
+                    f"fired at their owners' positions{when}")
+            if depth and walk.get("ratio_pct_est") is not None:
+                return f"{head}; the {meta['walked']} it total {depth}, about {_pct2(walk['ratio_pct_est'])} of it by the estimate"
+            return "; ".join([head] + ([f"the {meta['walked']} it total {depth}"] if depth else [walk["ratio_reason"]]))
         head = f"{where}: {who}, every one whole-position: size unknown, not 0"
         return "; ".join([head] + ([f"the {meta['walked']} it total {depth}"] if depth else [walk["ratio_reason"]]))
     size = ("at least " if row["lower_bound"] else "") + _money(row["notional_usd"])
-    head = f"{where}: {size} across {who}"
+    est = row.get("estimate")
+    with_est = bool(est and est["orders"] and row.get("total_est_usd") is not None)
+    if with_est:
+        # Both figures in one breath (Kevin, Nov 10): the stated floor first, then the estimate with its as-of time.
+        when = f" as of {iso_ms(est['as_of_ms'])[11:19]}Z" if est.get("as_of_ms") else ""
+        head = (f"{where}: {size} stated, about {_money(row['total_est_usd'])} with whole-position orders at their "
+                f"owners' positions{when}, across {who}")
+    else:
+        head = f"{where}: {size} across {who}"
     if walk["ratio_pct"] is not None:
         tail = (f"the {meta['walked']} it total {depth}, so this cluster is {'at least ' if walk['lower_bound'] else ''}"
                 f"{_pct2(walk['ratio_pct'])} of the liquidity it would walk")
+        if with_est and walk.get("ratio_pct_est") is not None:
+            tail += f", about {_pct2(walk['ratio_pct_est'])} with the estimate"
     elif depth:
         tail = f"the {meta['walked']} it total {depth}; {walk['ratio_reason']}"
     else:
         tail = walk["ratio_reason"]
     parts = [head, tail]
-    if unsized:
-        parts.append(f"{unsized} of {n} orders report{'s' if unsized == 1 else ''} no size, so this is understated")
+    if unsized and with_est:
+        unk, nearer = est["unknown_orders"], est.get("counted_at_nearer") or 0
+        parts.append(f"{unsized} of {n} ({_pct2(100 * unsized / n)}) whole-position, {est['orders']} estimated"
+                     + (f", {nearer} counted at a nearer trigger" if nearer else "") + (f", {unk} unknown" if unk else ""))
+    elif unsized:
+        # The unsized count as a number and a share (Kevin, Nov 10): "301 of 663 (45%) size unknown"; "at least" in
+        # the head already says the notional is a floor.
+        parts.append(f"{unsized} of {n} ({_pct2(100 * unsized / n)}) size unknown")
     return "; ".join(parts)
 
 
@@ -613,6 +794,7 @@ def _exclusions(c: dict) -> dict:
     for k in CENSUS_EXCLUSIONS:
         b = c["excluded"][k]
         b.pop("_largest", None)
+        b.pop("_est_largest", None)
         out[k] = {"orders": b["orders"], "sized_orders": b["sized_orders"], "unknown_size_orders": b["unsized_orders"],
                   "accounts": len(b["users"]), "notional_usd": usd(b["notional"]) if b["sized_orders"] else None,
                   "lower_bound": bool(b["unsized_orders"] and b["sized_orders"]),
@@ -889,25 +1071,29 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
         "since_seq": mf.crossed["since_seq"], "best_bid": fmt(mf.crossed["best_bid"]),
         "best_ask": fmt(mf.crossed["best_ask"]), "since_block_time_ms": mf.crossed["since_block_time_ms"]},
         "book_time_ms": mf.block_time_ms}
-    base["ladder"] = ladder(mf, client, fam["triggers"]) if ok else {"available": False, "reason": why}
-    base["walls"] = walls(mf, ps) if ok else {"available": False, "reason": why}
+    # Each block built on a family carries the family's state and, when it is BEHIND or STALE, the "as of" note:
+    # served late with its delay stated, never as the present, and never withheld for lateness (Kevin, Nov 10).
+    late = late_fields("book", fam["book"])
+    base["ladder"] = (ladder(mf, client, fam["triggers"]) | late) if ok else {"available": False, "reason": why}
+    base["walls"] = (walls(mf, ps) | late) if ok else {"available": False, "reason": why}
     depth = depth_bands(mf.book, mf.book.mid()) if ok and mf.book.mid() is not None else None
-    base["thinning"] = (thinning(mf, depth) | {"book_time_ms": mf.block_time_ms, "freshness": fam["book"]["state"]}) if ok else {
+    base["thinning"] = (thinning(mf, depth) | {"book_time_ms": mf.block_time_ms, "freshness": fam["book"]["state"]} | late) if ok else {
         "available": False, "reason": why, "note": THIN_NOTE}
     base["history"] = history(ps, client, market) if mf.book is not None else {"available": False, "reason": why}
     tst = fam["triggers"]
-    if mf.triggers is not None and tst["state"] in ("LIVE", "REPLAY"):
-        base["stops"] = stop_bands(mf, client) | stop_map(mf, depth, None if depth is not None else (
-            why or "no mid: one side of the book is empty"))
+    if mf.triggers is not None and usable(tst):
+        est, est_meta = owner_estimates(mf, fam)
+        base["stops"] = late_fields("waiting stops", tst) | stop_bands(mf, client) | stop_map(
+            mf, depth, None if depth is not None else (why or "no mid: one side of the book is empty"), est, est_meta)
     else:
         base["stops"] = {"available": False, "reason": f"triggers {tst['state']}: {tst.get('reason')}"}
     rule = mf.flow.bursts
     base["bursts"] = ({"available": True, **_jsonable(rule.status())} if rule is not None else
                       {"available": False, "reason": "node-mode bursts aren't attached to this source"})
     fst = fam["flow"]
-    if fst["state"] in ("LIVE", "REPLAY"):
-        base["tape"] = {"rows": tape(mf), "coverage": mf.flow.coverage()}
-        base["flow_map"] = flow_map(mf, base["provenance"], fst)
+    if usable(fst):
+        base["tape"] = {"rows": tape(mf), "coverage": mf.flow.coverage()} | late_fields("fills", fst)
+        base["flow_map"] = flow_map(mf, base["provenance"], fst) | {"as_of_note": as_of_note("fills", fst)}
     else:
         base["tape"] = {"available": False, "reason": f"node fills {fst['state']}: {fst.get('reason')}",
                         "coverage": mf.flow.coverage()}
@@ -924,7 +1110,7 @@ def market_view(client, market: str, opts: dict, now_wall_ms=None, now_mono_ns=N
 
 def _flow_ok(client, market, now_wall_ms=None, now_mono_ns=None):
     st = client.family_status(market, "flow", now_wall_ms, now_mono_ns)
-    return st["state"] in ("LIVE", "REPLAY"), st
+    return usable(st), st
 
 
 def flow_meta(client, market: str, now_wall_ms=None, now_mono_ns=None) -> dict:
@@ -943,7 +1129,7 @@ def deck_buckets(client, market: str, start_ms: int, end_ms: int, now_wall_ms=No
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:
         return meta | {"available": False, "reason": f"node fills {st['state']}: {st.get('reason')}"}
-    execs, cov = mf.flow.window(start_ms, end_ms)
+    execs, cov, win = mf.flow.covered_window(start_ms, end_ms)
     if not cov["covers"]:
         return meta | {"available": False, "reason": cov["reason"], "coverage": cov}
     a = activity_buckets(execs)
@@ -953,8 +1139,8 @@ def deck_buckets(client, market: str, start_ms: int, end_ms: int, now_wall_ms=No
         # single taker) could belong to either side: no split of this window is exact, so none is shown.
         return meta | {"available": False, "coverage": cov, "unclassified_usd": num(unknown_side),
                        "reason": "unclassified notional in this window: " + a["buying"]["reason"].split(": ", 1)[-1]}
-    return meta | {"available": True, "stream": "node fills", "window": {"start_ms": start_ms, "end_ms": end_ms},
-                   "coverage": cov, **_jsonable_activity(a)}
+    return meta | {"available": True, "stream": "node fills", "window": win, "coverage": cov,
+                   **shift_fields(win, "", "the card's window"), **_jsonable_activity(a)}
 
 
 def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int, now_wall_ms=None, now_mono_ns=None) -> dict:
@@ -967,11 +1153,15 @@ def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int, now_w
     meta = {"provenance": provenance(client, market), "freshness": st}
     if not ok:
         return meta | {"available": False, "reason": f"node fills {st['state']}: {st.get('reason')}"}
-    execs, cov = mf.flow.window(start_ms, end_ms)
+    execs, cov, win = mf.flow.covered_window(start_ms, end_ms)
     if not cov["covers"]:
         return meta | {"available": False, "reason": cov["reason"]}
-    return meta | {"available": True, "stream": "node fills", "window": {"start_exclusive_ms": start_ms, "end_ms": end_ms},
-                   "coverage": cov, "wallets": _jsonable(wallet_splits(execs, set(users)))}
+    req = win["requested"]
+    window = {"start_exclusive_ms": win["start_ms"], "end_ms": win["end_ms"], "shifted_by_ms": win["shifted_by_ms"],
+              "requested": {"start_exclusive_ms": req["start_ms"], "end_ms": req["end_ms"]} if req else None}
+    return meta | {"available": True, "stream": "node fills", "window": window, "coverage": cov,
+                   **shift_fields(win, "these wallets' node split over ", "the panel's window"),
+                   "wallets": _jsonable(wallet_splits(execs, set(users)))}
 
 
 def _jsonable_activity(a: dict) -> dict:

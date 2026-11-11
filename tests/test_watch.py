@@ -179,7 +179,7 @@ def test_taker_per_hour_scales_the_covered_minutes_not_four_hours():
     tk, why = watch.taker_per_hour(mins)
     assert why is None
     assert tk == {"per_hour_usd": 75000.0, "notional_usd": 18750.0, "minutes_covered": 15, "hours_covered": 0.25, "method": tk["method"]}
-    assert "divided by the covered hours" in tk["method"] and "divides the 4h total by 4" in tk["method"]
+    assert "divided by the covered hours" in tk["method"] and "the 4h total divided by 4" in tk["method"]
     tk, why = watch.taker_per_hour(watch.window_minutes(bars, minute(-100), 240, watch.coverage_intervals(store)))
     assert tk is None and why == "no covered minute in the 4h window"
 
@@ -316,9 +316,9 @@ def test_range_7d_from_seven_days_or_the_4h_fallback_saying_which():
 # --- verdict ------------------------------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("pos,delta,expected", [
-    (35.0, -0.5, ("MIDDLE", "warning", "mid-range: the condition you said costs you money")),
-    (50.0, None, ("MIDDLE", "warning", "mid-range: the condition you said costs you money")),
-    (65.0, 0.5, ("MIDDLE", "warning", "mid-range: the condition you said costs you money")),
+    (35.0, -0.5, ("MIDDLE", "warning", "mid-range: neither the low nor the high of the range")),
+    (50.0, None, ("MIDDLE", "warning", "mid-range: neither the low nor the high of the range")),
+    (65.0, 0.5, ("MIDDLE", "warning", "mid-range: neither the low nor the high of the range")),
     (34.999, -0.0501, ("LOW + FADING", "good", "at the low of range and the 4h wave is decelerating")),
     (10.0, 0.0501, ("LOW + BUILDING", "critical", "at the low of range but the wave is still accelerating")),
     (10.0, -0.05, ("LOW", "serious", "at the low of range, wave flat")),
@@ -348,7 +348,7 @@ def test_block_shape_and_the_same_withholding_at_build_and_serving_time():
     assert w["range_24h"]["position_pct"] == 83.333 and w["range_7d"]["position_pct"] == 62.5 and w["range_7d"]["from"] == "1d"
     assert w["verdict"] == {"label": "HIGH", "tone": "serious", "text": "at the high of range, wave not measurable yet", "position_pct": 83.333,
                             "wave_delta": None, "wave_state": None, "rule": watch.VERDICT_RULE, "wave_reason": w["wave_reason"],
-                            "kind": "a description by Kevin's own rule, not a signal or a forecast"}
+                            "kind": "a description by a fixed rule, not a signal or a forecast"}
     assert w["coverage"]["windows_end_ms"] == minute(16) and w["coverage"]["minutes_retained"] == 240 and w["coverage"]["gaps_in_4h"] == []
     assert w["notes"][0].startswith("Not a forecast") and any("loss-maker" in n for n in w["notes"])
     assert json.loads(json.dumps(w)) == w
@@ -510,7 +510,7 @@ def test_build_time_withholding_when_trades_are_not_fresh_but_the_fast_book_is()
     assert w["price"] == 100.0 and w["price_from"] == "book_fast" and w["range_24h"]["position_pct"] == 83.333
     assert w["verdict"] == {"label": "HIGH", "tone": "serious", "text": "at the high of range, wave not measurable yet", "position_pct": 83.333,
                             "wave_delta": None, "wave_state": None, "rule": watch.VERDICT_RULE, "wave_reason": r,
-                            "kind": "a description by Kevin's own rule, not a signal or a forecast"}
+                            "kind": "a description by a fixed rule, not a signal or a forecast"}
     assert m["deck"]["card"]["regime"]["value"] is None                   # the card is withheld by the same field
 
 

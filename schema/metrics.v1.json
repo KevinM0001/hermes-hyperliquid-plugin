@@ -6,7 +6,7 @@
     "hyperliquid_docs": "See docs/ENDPOINTS.md for every endpoint and the doc link that confirms it.",
     "hl_deck": "The author's terminal Flow Deck, hl_deck.py (a private tool, not distributed; the version of 2026-10-09, 547 lines). Regime, card and latch definitions marked source=hl_deck are ported from it; the code is not copied. Line numbers refer to that file.",
     "handoff": "Definitions marked source=handoff come from Handoff 1 (burst alert, wallet shares, depth bands). Definitions marked source=plugin are this plugin's own choices, documented here because neither the docs nor hl_deck define them.",
-    "watch": "Kevin's swing-context page (a private page, not distributed): its 24h range track with the hatched middle 30%, the 7d position, 15m/1h/4h flow, the 4h wave, taker per hour, the hour's top wallet and verdict(). Definitions marked source=watch are ported from it; the code is not copied, and the data is the plugin's own (minute bars from the counted public trades, the venue's closed candles)."
+    "watch": "the swing-context block (ported from a private trading page, not distributed): its 24h range track with the hatched middle 30%, the 7d position, 15m/1h/4h flow, the 4h wave, taker per hour, the hour's top wallet and verdict(). Definitions marked source=watch are ported from it; the code is not copied, and the data is the plugin's own (minute bars from the counted public trades, the venue's closed candles)."
   },
   "conventions": {
     "time": "Source times are Hyperliquid's millisecond timestamps (the 'time' field). Local receive times are the collector's monotonic clock in nanoseconds. Receipt-progress ages use the monotonic clock. Source recency compares the local wall clock with source time through the clock relationship in freshness.clock_relationship, whose uncertainty must be known; otherwise nothing source-timestamped is fresh.",
@@ -105,6 +105,8 @@
         "source_time": "WsTrade.time (ms)",
         "max_age_s_by_market": {
           "BTC": 30.0,
+          "ETH": 30.0,
+          "SOL": 45.0,
           "HYPE": 60.0,
           "xyz:SP500": 120.0,
           "xyz:XYZ100": 120.0,
@@ -114,6 +116,8 @@
         "reason_when_exceeded": "No trade for longer than the max age. A quiet market can't be told apart from a stalled trades feed, so window values are null until a trade arrives.",
         "source_max_age_s_by_market": {
           "BTC": 35.0,
+          "ETH": 35.0,
+          "SOL": 50.0,
           "HYPE": 65.0,
           "xyz:SP500": 125.0,
           "xyz:XYZ100": 125.0,
@@ -134,6 +138,8 @@
         "watermark": "The market's fast l2Book time at the moment the context arrived on the same connection (recorded, not used as a freshness proof).",
         "max_age_s_by_market": {
           "BTC": 20.0,
+          "ETH": 20.0,
+          "SOL": 20.0,
           "HYPE": 20.0,
           "xyz:SP500": 45.0,
           "xyz:XYZ100": 45.0,
@@ -166,15 +172,15 @@
       }
     },
     "clock_relationship": {
-      "decision": "Kevin, Nov 8 (GPT review R11 finding 7): a value is fresh only when its feed is still advancing and its source timestamp is recent, judged with a clock relationship whose uncertainty is known; otherwise it is delayed or unverified, never fresh.",
+      "decision": "Nov 8: a value is fresh only when its feed is still advancing and its source timestamp is recent, judged with a clock relationship whose uncertainty is known; otherwise it is delayed or unverified, never fresh.",
       "estimate": "source_age = local wall clock now - source time",
       "local_clock_bound": "The local wall clock's error bound E: on Linux the kernel's maximum error from adjtimex (maxerror) while the clock is NTP-synchronized; otherwise the plugin setting clock_error_bound_ms; if neither is known, E is unknown.",
       "source_clock": "Hyperliquid's source timestamps are taken as accurate (an assumption; the docs don't state their accuracy). Network delay counts as source age.",
       "rules": "fresh when receipt progress is recent AND source_age + E <= source_max_age AND source_age >= -(E + 1 s); delayed when source_age - E > source_max_age; unverified when E is unknown, the source time is ahead of local time beyond E + 1 s, or source_age is within E of the limit.",
       "fields_without_source_time": "activeAssetCtx has none: it reports receipt recency and an unknown source age, and is never fresh. Another field's timestamp doesn't prove its source recency. Since 1.3.0 its values are served marked unverified with that receipt age (fields.activeAssetCtx.served)."
     },
-    "in_the_tab": "the tab ages the snapshot it shows: its age is served.age_s plus all the time since the tab sent the request, so delivery delay and time on screen count. Every status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) is re-judged at that age, as at serving (served_latest): a lapsed field reads stale or delayed with the reason, and every value built on it is withheld in place, null with the reason; context values shown marked unverified have their received_age_s grown the same way and are withheld once it passes the max age; a node family LIVE at build time whose delay bound passes its limit reads DELAYED or STALE, with its node values withheld. The page keeps its layout and is never blanked for a delay (Kevin, Nov 8); the delay bar says when the snapshot is past 5 s or a status has lapsed. The empty view is only for having no current snapshot at all",
-    "served_latest": "Codex h1 review 1, B1: a tool reading the latest snapshot re-judges each public status fresh at build time at the snapshot's served age: progress_age + age > max_age reads stale, source_age + age + clock bound > source_max_age reads delayed, each with the reason 'by the time this was served'; every value the build gates on that field is withheld as the build withholds it (book_fast: top of book and its price lines; book_full: ladder, exact and observed depth; book_sf4/sf3: approximate and observed depth; book_sf4/sf3/sf2: each its own grouped ladder in book.ladders, withheld whole; trades: flow values, CVD values, large-print count, the Flow Deck card, wallet panels; ctx: context values shown marked unverified have received_age_s grown by the served age, and are withheld with their mark and oracle lines once it passes the max age). A snapshot read by ID is historical and stays as of its build time (hl_desk/serving_public.py)"
+    "in_the_tab": "the tab ages the snapshot it shows: its age is served.age_s plus all the time since the tab sent the request, so delivery delay and time on screen count, and every fresh status's ages advance on screen. The screen has a 30 s allowance: the page refreshes about once a second and shows each snapshot for one to two seconds, so a verdict within seconds was the refresh cadence, not a lag; within the allowance the tab shows the snapshot as built, and a status whose advanced age has passed its own limit is labelled 'as built' rather than fresh. Once the snapshot has been on screen past 30 s, every status it shows as fresh (the chosen market's fields and every market's Flow Deck trades) is re-judged at that age, as at serving (served_latest): a lapsed field reads stale or delayed with the reason, and every value built on it is withheld in place, null with the reason; context values shown marked unverified have their received_age_s grown the same way and are withheld once it passes the max age; a node family LIVE at build time whose delay bound passes its limit reads DELAYED or STALE, with its node values withheld. The agent's tools re-judge at serving time regardless, so for up to 30 s chat may say stale while the screen still shows the number as built. The page keeps its layout and is never blanked for a delay; a no-snapshot answer while a snapshot is on screen changes nothing (the screen freezes, Nov 10); the status row says when the snapshot is past the allowance. The empty view is only for having never had a snapshot",
+    "served_latest": "a tool reading the latest snapshot re-judges each public status fresh at build time at the snapshot's served age: progress_age + age > max_age reads stale, source_age + age + clock bound > source_max_age reads delayed, each with the reason 'by the time this was served'; every value the build gates on that field is withheld as the build withholds it (book_fast: top of book and its price lines; book_full: ladder, exact and observed depth; book_sf4/sf3: approximate and observed depth; book_sf4/sf3/sf2: each its own grouped ladder in book.ladders, withheld whole; trades: flow values, CVD values, large-print count, the Flow Deck card, wallet panels; ctx: context values shown marked unverified have received_age_s grown by the served age, and are withheld with their mark and oracle lines once it passes the max age). A snapshot read by ID is historical and stays as of its build time (hl_desk/serving_public.py)"
   },
   "metrics": {
     "book.best_bid": {
@@ -254,7 +260,7 @@
     },
     "book.largest_level": {
       "source": "plugin",
-      "formula": "per side, the returned level with the largest aggregate size sz (coin), ties to the level nearer the top of book; reported as the whole level {px, sz, api_count, notional_usd} in levels.largest (hl_market) and drawn as the chart's largest-level price line. Commentary names the largest level only from this field (Codex h1 review 2, B3)",
+      "formula": "per side, the returned level with the largest aggregate size sz (coin), ties to the level nearer the top of book; reported as the whole level {px, sz, api_count, notional_usd} in levels.largest (hl_market) and drawn as the chart's largest-level price line. Commentary names the largest level only from this field",
       "units": "px USD per coin; sz coin; notional USD",
       "inputs": [
         "l2Book full (20 levels, no nSigFigs)"
@@ -262,7 +268,7 @@
       "side_convention": "bid and ask separately",
       "window": "latest push",
       "reset_rule": "replaced by every push",
-      "completeness_rule": "only among the levels Hyperliquid returned (at most 20 per side); null when that side has no returned level; null with a reason (bid_reason / ask_reason) when any returned level on that side has a missing or invalid px or sz, since it could be the largest (Codex h1 review 3, B1); withheld with the ladder when the 20-level book isn't fresh; an aggregated level, never an individual order"
+      "completeness_rule": "only among the levels Hyperliquid returned (at most 20 per side); null when that side has no returned level; null with a reason (bid_reason / ask_reason) when any returned level on that side has a missing or invalid px or sz, since it could be the largest; withheld with the ladder when the 20-level book isn't fresh; an aggregated level, never an individual order"
     },
     "book.grouped_ladder": {
       "source": "plugin",
@@ -277,7 +283,7 @@
       "completeness_rule": "a book that isn't fresh at build time, or has lapsed by the time it is served or shown, is withheld whole as {reason}: never a stale grouped ladder; a side with a malformed level has its largest withheld with the reason (book.largest_level); a grouping's price step is for display only, read from consecutive returned levels, not a documented bucket width"
     },
     "book.depth_band": {
-      "source": "handoff; Kevin's decision 10 (GPT review R11 finding 10)",
+      "source": "handoff; decision 10",
       "bands_pct": [
         0.25,
         0.5,
@@ -418,6 +424,8 @@
       "threshold": {
         "large_print_usd_by_market": {
           "BTC": 250000,
+          "ETH": 200000,
+          "SOL": 100000,
           "HYPE": 100000,
           "xyz:SP500": 50000,
           "xyz:XYZ100": 50000,
@@ -598,7 +606,7 @@
       "label": "absolute observed trade-price change per $1M of net aggressive flow. A descriptive ratio, not an estimate of the price change an additional $1M order would cause."
     },
     "deck.pressure": {
-      "source": "plugin (Kevin's decision, Nov 8; GPT review R11 finding 8)",
+      "source": "plugin (decision of Nov 8)",
       "formula": "aggressive_buy_notional / aggressive_sell_notional over every valid execution in the window, flips included; available when aggressive_sell_notional >= 25000",
       "units": "ratio (dimensionless)",
       "inputs": [
@@ -613,7 +621,7 @@
       "completeness_rule": "null with reason 'aggressive selling below the $25K floor' under the floor; null if the window is incomplete. The same definition in public and node mode. The data check verifies public trade semantics for every flow number before release."
     },
     "deck.activity_buckets": {
-      "source": "Handoff 1c position-effect formulas (GPT review R11 finding 8)",
+      "source": "Handoff 1c position-effect formulas",
       "formula": "For each participant, from its signed pre-fill position s and fill size q: for a buy, cover_qty = min(q, max(-s, 0)) and new_long_qty = q - cover_qty; for a sell, exit_qty = min(q, max(s, 0)) and new_short_qty = q - exit_qty. Each quantity is converted at that execution's price. The Flow Deck uses only the aggressive participant's effects, so new_long + cover = aggressive buying and new_short + exit = aggressive selling.",
       "units": "USD notional",
       "inputs": [
@@ -622,7 +630,7 @@
       "side_convention": "buy side: new-long, cover; sell side: new-short, exit",
       "window": "deck.window",
       "reset_rule": "per tick",
-      "completeness_rule": "needs node mode (implemented in Handoff 1c Part B). A missing starting position makes the dependent split unavailable, with the unclassified notional shown; it is never treated as zero; a participant's position effect counts only when complete for its side (a buy's cover and new_long, a sell's exit and new_short, none negative, adding up to the fill size; Codex h1 review 4, B2), otherwise its notional is unclassified and the side's buckets are unavailable with the reason, never 0"
+      "completeness_rule": "needs node mode (implemented in Handoff 1c Part B). A missing starting position makes the dependent split unavailable, with the unclassified notional shown; it is never treated as zero; a participant's position effect counts only when complete for its side (a buy's cover and new_long, a sell's exit and new_short, none negative, adding up to the fill size), otherwise its notional is unclassified and the side's buckets are unavailable with the reason, never 0"
     },
     "deck.top_wallet": {
       "source": "hl_deck",
@@ -680,7 +688,7 @@
     },
     "deck.watch": {
       "source": "watch",
-      "watch_ref": "Kevin's swing-context page: its 24h range track with the hatched middle 30%, 7d position, 15m/1h/4h flow, 4h wave, taker/hr, top wallet (1h) and verdict()",
+      "watch_ref": "the private swing-context page it was ported from: its 24h range track with the hatched middle 30%, 7d position, 15m/1h/4h flow, 4h wave, taker/hr, top wallet (1h) and verdict()",
       "formula": "Per followed market, deck.<market>.watch, from the plugin's own data. Minute bars: per UTC minute of the collector's counted public trades (the trade store's execution sets, every segment), taker buy and sell notional (px*sz by side), trade count, high, low and last price, and each aggressor's notional in the minute; the newest 240 minutes are kept, the per-wallet sums for the latest 60. Windows are whole UTC minutes ending at the trades watermark's minute (exclusive): 15m = 15, 1h = 60, 4h = 240 minutes. flow.<window>: buy_usd, sell_usd and trades over the window's covered minutes; imbalance = (buy - sell) / (buy + sell). wave: the covered minutes of the 4h window split into halves by count (the second half holds the extra minute when the count is odd); delta = |imbalance(second half)| - |imbalance(first half)|; state decelerating when delta < -0.05, accelerating when delta > 0.05, else flat; both halves' imbalances and minute counts are reported. taker_per_hour: per_hour_usd = taker notional (buy + sell) over the covered minutes of the 4h window / hours_covered (minutes_covered / 60); the page divides the 4h total by 4, the plugin divides by the covered hours and says so. top_wallet_1h: share_pct = (sum over the 1h window's covered minutes of each minute's top aggressor notional) / the hour's taker notional * 100 (the page's definition); address, notional_usd and minute_ms name the minute-top wallet with the largest notional; hour_top is the hour-wide top aggressor (address, notional_usd, share_pct of the hour's taker notional). Ties: the lowest address within a minute, the latest minute between minute tops. range_24h: the last 24 closed 1h candles, high with high_ms and low with low_ms (the most recent candle on ties). range_7d: the last 7 closed 1d candles, or the last 42 closed 4h candles when fewer than 7 days exist ('from' says which, with fallback_reason). position_pct = (price - low) / (high - low) * 100, not clamped ('outside' is above or below past the range); zone low below 35, middle 35 to 65, high above 65 (middle_band_pct). price: the fast book's mid when book_fast is fresh, else the last counted trade (price_from: book_fast or last_trade; price_time_ms). verdict (the page's verdict(), on the 24h position and the 4h wave): position in [35, 65] -> label MIDDLE, tone warning, 'mid-range: the condition you said costs you money'; else the edge (low below 35, high above 65): wave delta < -0.05 -> '<EDGE> + FADING', tone good, 'at the <edge> of range and the 4h wave is decelerating'; delta > 0.05 -> '<EDGE> + BUILDING', tone critical, 'at the <edge> of range but the wave is still accelerating'; otherwise '<EDGE>', tone serious, 'at the <edge> of range, wave flat'; with no wave, '<EDGE>', tone serious, 'at the <edge> of range, wave not measurable yet' with wave_reason.",
       "thresholds": {
         "middle_band_pct": [
@@ -905,7 +913,7 @@
       "completeness_rule": "not computed in this version. If ever shown, only as a separately named legacy comparison; never used by the classifier, and agreement with it is not evidence that leaving out flips is correct."
     },
     "book.depth_band_approximate": {
-      "source": "plugin; Kevin's decision 10 (GPT review R11 finding 10)",
+      "source": "plugin; decision 10",
       "formula": "For each band and side, the finest aggregated book (nSigFigs=4, then nSigFigs=3) whose returned buckets reach the band edge: approx_usd = sum(px*sz) over buckets whose representative (returned) price is inside the band. range_usd = [approx_usd - notional of the outermost bucket counted, approx_usd + notional of the nearest bucket left out], because Hyperliquid doesn't document bucket alignment, so the bucket at the edge may be partly in or out.",
       "units": "USD notional (an estimate: representative price times aggregate size)",
       "inputs": [
@@ -978,7 +986,7 @@
       "completeness_rule": "always unverified and null with a reason: the answer carries no response timestamp, so whether the set is current can't be established (freshness.fields.frontendOpenOrders); an order's placement time doesn't establish it"
     },
     "trades.validity": {
-      "source": "plugin; Codex review 2 finding 3",
+      "source": "plugin",
       "formula": "a trade is valid when px > 0, sz > 0, integer time and tid, side in {B, A}, users = two 0x addresses (40 hex), and coin equal to the subscription's coin",
       "units": "rule",
       "inputs": [
@@ -991,7 +999,7 @@
       "routing": "a trades message is routed by its records' coins, never by the first record alone. Records naming no coin or another coin are invalid records of the subscribed coin the message names. A message naming no subscribed coin, with a record lacking its coin, can't be attributed, so it ends every subscribed market's trade coverage as a gap"
     },
     "deck.late_trades": {
-      "source": "plugin; Codex review 6 finding 3",
+      "source": "plugin",
       "formula": "a trade whose time is at or before the last evaluated tick re-evaluates, from the earliest tick whose 90 s window contains it, every retained tick (the last 8), starting from the latch state saved before that tick: window numbers, live classification, pending/confirmed latch and the regime-change events those ticks produced are re-derived from the execution set. A regime change the re-evaluation no longer supports is withdrawn with a 'regime_change_withdrawn' event, and the card carries 'revised' with the late-trade count and the ticks re-evaluated",
       "units": "rule",
       "inputs": [
@@ -1040,7 +1048,7 @@
     },
     "node.family_state": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
-      "formula": "per family (book, triggers, depth, bands, flow): INVALID if not recovered; REPLAY for a valid replay family; UNKNOWN when client wall - pub_ms < -1000 ms; STALE when no freshness-advancing watermark since the family became valid; otherwise from the node feed's delay (Kevin, Nov 8): delay(t) = wall at the market's latest timed watermark's receipt - its block_time_ms + monotonic time since receipt, averaged exactly over the last 5000 ms (or since the first watermark) = delay_ms; STALE when delay_ms > 30000; BEHIND (shown as DELAYED) when delay_ms > 10000; else LIVE. Heartbeats never count, so a silent feed's delay keeps growing",
+      "formula": "per family (book, triggers, depth, bands, flow): INVALID if not recovered; REPLAY for a valid replay family; UNKNOWN when client wall - pub_ms < -1000 ms; STALE when no freshness-advancing watermark since the family became valid; otherwise from the node feed's delay: delay(t) = wall at the market's latest timed watermark's receipt - its block_time_ms + monotonic time since receipt, averaged exactly over the last 5000 ms (or since the first watermark) = delay_ms; STALE when delay_ms > 30000; BEHIND (shown as DELAYED) when delay_ms > 10000; else LIVE. Heartbeats never count, so a silent feed's delay keeps growing",
       "units": "state",
       "inputs": [
         "watermark",
@@ -1050,7 +1058,7 @@
       "side_convention": "as stated",
       "window": "current",
       "reset_rule": "per producer session and replay session",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.level_total_sz": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1063,7 +1071,7 @@
       "side_convention": "as stated",
       "window": "current book",
       "reset_rule": "replaced at every swap",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.level_orders": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1076,7 +1084,7 @@
       "side_convention": "as stated",
       "window": "current book",
       "reset_rule": "replaced at every swap",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.largest_order_size_at_level": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1089,7 +1097,7 @@
       "side_convention": "as stated",
       "window": "current book",
       "reset_rule": "replaced at every swap",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.oldest_resting_order_at_level": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1102,7 +1110,7 @@
       "side_convention": "as stated",
       "window": "current book",
       "reset_rule": "replaced at every swap",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.level_change_10s": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1114,7 +1122,7 @@
       "side_convention": "as stated",
       "window": "last 10 s of block time",
       "reset_rule": "restarts at every gap (the change history never bridges one)",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.stops_band": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1140,7 +1148,7 @@
       "side_convention": "as stated",
       "window": "observed since the book became valid",
       "reset_rule": "dropped at every gap",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.heatmap_sample": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1152,7 +1160,7 @@
       "side_convention": "as stated",
       "window": "15 minutes",
       "reset_rule": "restarts at every gap; partial until it covers 15 minutes",
-      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in"
+      "completeness_rule": "null with the family's state and reason unless the family is valid; LIVE only after a watermark the client has applied every message before; heartbeats never count; INVALID after a gap, new producer session, dropped connection or incomplete snapshot until the family's own snapshot is swapped in. What the state withholds: BEHIND and STALE label, they don't withhold: every node result built on the family is served with the family's state, reason and delay_ms, and the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note ('as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time"
     },
     "node.thinning_band": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
@@ -1171,7 +1179,7 @@
       "side_convention": "fall side (sell stops and buy take-profits, below the price) against the bids below; rise side (buy stops and sell take-profits, above the price) against the asks above",
       "window": "current",
       "reset_rule": "replaced at every swap",
-      "formula": "stop map (Kevin's stop and liquidity map report): every waiting trigger lands in band k = floor(distance / 0.5%) out to 10% of the move that fires it (a sell stop or buy take-profit fires on a fall, a buy stop or sell take-profit on a rise; the feed carries no condition string, so the move follows from kind and side) or under one counted exclusion (node.stop_exclusions). Per band: notional_usd = sum(sz * trigger_px) over the orders with a stated size, with lower_bound (true when any order in the band has no size: the notional is at least this) and unknown_size_orders beside it; accounts = distinct users; by_category the same per category. walk.depth_at_and_beyond_usd = node.thinning_band depth_usd summed over the band and every band farther from the price on the walked side, to 10% (the report's 'bids at and below it'); walk.depth_between_usd = the bands nearer than it (thinning cumulative_from_price_usd of the band before, 0 for k = 0); ratio_pct = notional_usd / depth_at_and_beyond_usd x 100, to 4 significant figures (a tiny share is never a 0), with the same lower_bound and unknown_size_orders beside it. The reference price is the book mid, the thinning panel's",
+      "formula": "stop map (the stop and liquidity map report): every waiting trigger lands in band k = floor(distance / 0.5%) out to 10% of the move that fires it (a sell stop or buy take-profit fires on a fall, a buy stop or sell take-profit on a rise; the feed carries no condition string, so the move follows from kind and side) or under one counted exclusion (node.stop_exclusions). Per band: notional_usd = sum(sz * trigger_px) over the orders with a stated size, with lower_bound (true when any order in the band has no size: the notional is at least this) and unknown_size_orders beside it; accounts = distinct users; by_category the same per category. walk.depth_at_and_beyond_usd = node.thinning_band depth_usd summed over the band and every band farther from the price on the walked side, to 10% (the report's 'bids at and below it'); walk.depth_between_usd = the bands nearer than it (thinning cumulative_from_price_usd of the band before, 0 for k = 0); ratio_pct = notional_usd / depth_at_and_beyond_usd x 100, to 4 significant figures (a tiny share is never a 0), with the same lower_bound and unknown_size_orders beside it. The reference price is the book mid, the thinning panel's",
       "units": "USD; % of the walked depth",
       "inputs": [
         "trig_snapshot",
@@ -1207,6 +1215,26 @@
       ],
       "completeness_rule": "{available: false, reason} without a valid book (nothing can be judged against a price); a count that can't be known from the feed is null with a reason (trailing stops' notional), never 0; nothing excluded here is in the map's bands"
     },
+    "node.owner_pos": {
+      "side_convention": "signed: positive long, negative short, '0' flat; per owner, never summed",
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.3, section 4.8): the opt-in position stream \"<market>.owner_pos\", named by the plugin in its handshake",
+      "formula": "the signed position in the market of every owner of a waiting whole-position TP/SL (position_tpsl true), as the node's state has it: read from the node state snapshot at the producer's start, then every fill applied, each fill's own starting position checked against the tracked one; a decimal string at the market's size decimals, negative for a short, '0' for flat as a fact",
+      "units": "contracts (the market's size unit)",
+      "inputs": ["opos_snapshot", "opos_delta"],
+      "window": "the node's current state at the stream's block",
+      "reset_rule": "a stream gap, a bad start or a malformed snapshot or delta invalidates the owner_pos family alone (the market's families stand); the producer's 'unavailable' (a fills record not read, or a start snapshot failing the open-interest check) holds it unavailable with the reason until a new session; a new producer session starts it over",
+      "completeness_rule": "family states as node.family_state. A producer without position streams lists the stream as unknown in its hello: the family reads INVALID 'this feed carries no owner positions' and no estimate is made. The plugin keeps the positions in collector memory only and never serves a per-account position: only per-band aggregates and reason counts leave it (the Plugin session's rule, Nov 10)"
+    },
+    "node.stop_estimate": {
+      "side_convention": "per band of the move that fires it (sell-side triggers below the price, buy-side above), as node.stop_walk_ratio; the estimate closes the owner's position, so a sell-side order estimates a long and a buy-side order a short",
+      "source": "plugin, from node.owner_pos joined to the triggers family by block",
+      "formula": "for each whole-position order: |pos| when the order's side would close the owner's position (a sell, side A, for a long; a buy, side B, for a short), less the stated sizes of the owner's same-side orders that fire before it in the same move (then an upper bound, said so); within an owner's same-side orders of one kind only the one that fires first carries the position, the others carry 0 ('same position, counted at its nearest trigger'); a flat owner, a wrong-side order or an owner missing from the stream leave the size unknown with the reason. Per band: estimate.notional_usd = sum of estimated size x trigger price, estimate.orders, unknown_orders and unknown_reasons, upper_bound_orders, counted_at_nearer, owners, outsized (one owner's estimated notional above the depth at and beyond the band); total_est_usd = stated notional_usd + estimate.notional_usd, labelled estimated; walk.ratio_pct_est = total_est_usd / depth_at_and_beyond_usd x 100. The stops block's 'estimate' says what it is as of (as_of_ms = the older of the two families' block times, as_of_note 'if triggered now, from the owners' positions at <time>', basis naming both blocks and whether they differ), the counts over the market, and 'defects' (owners missing while both families are valid at the same block)",
+      "units": "USD notional; % of the walked depth",
+      "inputs": ["node.owner_pos", "node.stop_walk_ratio"],
+      "window": "the node's current state at the older of the triggers and owner_pos blocks",
+      "reset_rule": "recomputed when either family changes; cached by (triggers change, positions change)",
+      "completeness_rule": "the estimate is a second figure beside the stated ones and never inside them: sz, notional_usd, lower_bound, the clusters' ranking (by stated notional), the size-outlier test, the exclusions and the census ratios use stated sizes only. estimate is available only while the triggers and owner_pos families are both usable and the stream holds positions; otherwise {available: false, reason}. The cluster sentence carries both figures ('at least $17.94M stated, about $31.2M with whole-position orders at their owners' positions as of 19:04:06Z ...; 334 of 735 (45%) whole-position, 312 estimated, 22 unknown'); when the estimate's largest band differs from the stated cluster, clusters_by_estimate holds one sentence per side. Each band is counted as if it fires first; no cross-band total is served. The agent says 'estimated from the owner's position as of <time>' in the same sentence as the figure, stated first"
+    },
     "node.stop_census": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
       "formula": "the stops panel's census, the sanity checks on the feed's resting trigger orders for the market, each count from the client state that already holds it: triggers_total = the applied waiting set now (snapshot and deltas; triggers_through_seq), unsized_total = its whole-position orders (size 0 on the wire), excluded_by_engine as the feed reports it; within_10pct, outside and unsized_within_10pct = the engine's own bands view (protocol 4.5: rows summed by kind and side, outside.below + outside.above, position_tpsl_orders), as it counted them at its ref_px and block, never a recount (bands_view carries ref_px, range_bps, width, lo, hi, block, block_time_ms, seq, by_category, outside, excluded_by_engine); excluded = the map's exclusions by reason (node.stop_exclusions) with excluded_by_engine; executable_orders_total = the client's resting executable book now; executable_within_10pct = its orders priced within the bands view's range_bps of its ref_px (the book mid when there is no bands view); executable_to_trigger_ratio = executable_orders_total / triggers_total, 2 decimals; snapshot_totals = the last complete snapshots' stated book_snapshot.total_orders and trig_snapshot.total_triggers with their block and block_time_ms, and their ratio",
@@ -1231,12 +1259,12 @@
         "execs"
       ],
       "side_convention": "aggressor (taker) side",
-      "window": "the card's 90 s window or the burst's 60 s window, in node fills",
+      "window": "the card's 90 s window or the burst's 60 s window, in node fills. Nov 10: when the node's fills aren't processed through the card's window yet (the node behind the chain), the card's buckets cover the last window of the same length the fills do cover, ending at the processed-through block time, and say so: window.start_ms/end_ms are the window covered, window.requested the card's own, window.shifted_by_ms the gap, window_label names the covered times and the gap, as_of_note reads 'as of the node's fills at <block time>, <gap> s behind the card's window'; both are null when the window served is the card's own. The shift happens only for that one reason and the shifted window passes every other check (fills observed since, retention, unreadable executions) or the buckets stay unavailable; the bursts' windows are never shifted. The wallet panels' node_activity_split follows the same rule against the panel's window (window.start_exclusive_ms/end_ms, requested, shifted_by_ms, window_label 'these wallets' node split over the node's last <span> ...', as_of_note), so the wallets stay ranked by the public window while their node split names its own.",
       "reset_rule": "restarts after the first watermark following a gap, new session, replay session change or fills_known false",
-      "completeness_rule": "unavailable with a reason and the unclassified notional when any taker effect, role or identity is missing; unavailable when node fills don't cover the window; never scaled to 100%; a participant's position effect counts only when complete for its side (a buy's cover and new_long, a sell's exit and new_short, none negative, adding up to the fill size; Codex h1 review 4, B2), otherwise its notional is unclassified and the side's buckets are unavailable with the reason, never 0"
+      "completeness_rule": "unavailable with a reason and the unclassified notional when any taker effect, role or identity is missing; unavailable when node fills don't cover the window; never scaled to 100%; a participant's position effect counts only when complete for its side (a buy's cover and new_long, a sell's exit and new_short, none negative, adding up to the fill size), otherwise its notional is unclassified and the side's buckets are unavailable with the reason, never 0"
     },
     "node.flow_map": {
-      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2); Kevin's order-flow map report, ported to node mode",
+      "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2); the order-flow map report, ported to node mode",
       "formula": "aggressive (taker) flow over eight 15-minute buckets aligned to the clock: bucket k (0..7) starts at floor(end_ms / 900000) * 900000 - (7 - k) * 900000, end_ms being the latest block time whose node fills are known (the last bucket is in progress); each node fill once (by (market, tid)), the aggressor side only, at px x sz, split by the taker's own position effect (dir_mapping). Per bucket and in the totals: buy_usd = open_long_usd + close_short_usd + flip_to_long_usd; sell_usd = close_long_usd + open_short_usd + flip_to_short_usd; net_usd = buy_usd - sell_usd; risk_added_usd = open_long_usd + open_short_usd; risk_removed_usd = close_long_usd + close_short_usd; flip_usd = flip_to_long_usd + flip_to_short_usd, apart from both risk sums, so buy_usd + sell_usd = risk_added_usd + risk_removed_usd + flip_usd (the two decompositions are orthogonal: a window can be net buying and net removing risk at once); fills counts the classified fills and flip_fills the flips among them; accounts = distinct taker addresses in the bucket, top_account_share_pct = its largest account's notional / (buy_usd + sell_usd) x 100; totals.aggressive_usd = buy_usd + sell_usd",
       "dir_mapping": {
         "Open Long": "taker bought, effect new_long only: taker buying, risk added (open_long_usd)",
@@ -1295,7 +1323,7 @@
     },
     "node.liquidation_burst": {
       "source": "node feed (l4-livefeed protocol v2, PROTOCOL.md revision 2.2)",
-      "formula": "liquidations (counted once each) within 60 s of block time >= liq_burst_count (default 2) or their notional >= liq_burst_usd (default 1,000,000); rearms when the window falls below both; evaluated at each node executions message and each watermark at its own block time t, over (t - 60 s, t] (Codex h1 review 4, B1): it fires once when the window reaches a threshold and re-arms when the window falls below both, a quiet market's at its watermarks",
+      "formula": "liquidations (counted once each) within 60 s of block time >= liq_burst_count (default 2) or their notional >= liq_burst_usd (default 1,000,000); rearms when the window falls below both; evaluated at each node executions message and each watermark at its own block time t, over (t - 60 s, t]: it fires once when the window reaches a threshold and re-arms when the window falls below both, a quiet market's at its watermarks",
       "units": "count; USD",
       "inputs": [
         "node.liquidation"
@@ -1371,7 +1399,7 @@
     "events": "A confirmed change creates an event 'PREV -> NEW (held Ns)' when a previous confirmed regime existed; held = this tick's time - the previous regime's since (hl_deck 439-441).",
     "gap_rule": "plugin rule: at a gap the confirmed regime ends, an event 'PREV -> (gap)' records how long it held up to the segment's last complete tick, and the latch clears. No regime, held time or event spans a gap.",
     "held": "card held = latest complete tick time - since, in source time",
-    "decisions": "Kevin, Nov 8, accepting GPT review R11 findings 8 and 9: PRESSURE is aggressive buy notional over aggressive sell notional (flips included, $25K selling floor) in both modes, so TRENDING can fire on public data and the UNRESOLVED state is removed; the explanations below replace hl_deck's GUIDE wording and claim no cause the numbers can't show; the confirmed regime, the live classification and any pending change are shown separately.",
+    "decisions": "Nov 8: PRESSURE is aggressive buy notional over aggressive sell notional (flips included, $25K selling floor) in both modes, so TRENDING can fire on public data and the UNRESOLVED state is removed; the explanations below replace hl_deck's GUIDE wording and claim no cause the numbers can't show; the confirmed regime, the live classification and any pending change are shown separately.",
     "display": "Each card reports three things separately, with their times: confirmed_regime (the latched regime, since and held), live_classification (what this tick's window numbers classify as, with its explanation) and pending (a different classification waiting for its second consecutive tick). The confirmed label is never presented as describing different current numbers.",
     "meanings": {
       "ABSORBING": {
@@ -1419,7 +1447,7 @@
         "text": "No qualifying executions occurred in the complete observed window. This is distinct from an unavailable or unverified feed."
       }
     },
-    "meanings_source": "GPT review R11 finding 9's replacement text, adopted by Kevin on Nov 8. Regimes are heuristic classifications of the stated execution-window measurements; their labels do not establish a cause, a participant's intent or remaining size, or a profitable trading opportunity. hl_deck's original GUIDE wording is no longer shown.",
+    "meanings_source": "the replacement text adopted on Nov 8. Regimes are heuristic classifications of the stated execution-window measurements; their labels do not establish a cause, a participant's intent or remaining size, or a profitable trading opportunity. hl_deck's original GUIDE wording is no longer shown.",
     "validation": {
       "status": "descriptive; no predictive test on record",
       "source": "Commentary TOOL_PROPOSALS 2 (Nov 9): a validation status next to every Flow Deck label, so the reliability line is quoted from the result, not recalled. The record holds no predictive test of any regime label (commentary study, 'not proposed: a forecasting or signal field'); the labels are heuristic classifications of the window's measurements (meanings_source)",
@@ -1434,6 +1462,8 @@
         "window_s": 60,
         "min_notional_usd_by_market": {
           "BTC": 10000000,
+          "ETH": 5000000,
+          "SOL": 2000000,
           "HYPE": 2000000,
           "xyz:SP500": 1000000,
           "xyz:XYZ100": 1000000,
@@ -1452,7 +1482,7 @@
       "wallets": "The aggressive participants (takers) of the burst's own executions, each with its aggressive notional on that side, ranked against the burst's total with the wallets.ranked_list rules (target 50%, cap 50, ties by address). Shares use the burst total as the denominator.",
       "config": "public mode: per-market threshold in plugin settings burst_min_usd (BTC default $10M from the handoff; other defaults are plugin choices); node mode: automatic per market from the burst calibration 2026-11-08.1 (dated 2026-11-08, measured 2026-11-03 to 2026-11-08 UTC exclusive, i.e. Nov 3 to 7; target 10 a day; BTC $30M, 10.6 a day; HYPE $5M, 14.6 a day; xyz:SP500 $5M, 7.2 a day; xyz:XYZ100 $5M, 11.0 a day), or manual per market in node_burst_min_usd",
       "node_mode": {
-        "source": "Kevin, Nov 8: burst calibration option A (analysis PLAN.md 'The burst rule', 'Validation', 'The reference for ranks', 'The default for the first release')",
+        "source": "Nov 8: burst calibration option A (analysis PLAN.md 'The burst rule', 'Validation', 'The reference for ranks', 'The default for the first release')",
         "applies": "node mode only (a node feed is configured): bursts come from node fills and public-trades bursts aren't shown; public mode keeps alerts.burst above and burst_min_usd",
         "rule": "For each side, the taker notional (px*sz) of the market's node executions in (W - 60 s, W], evaluated once per node block (W = the block time of each node executions message). A disarmed side re-arms when its sum before this block's executions are added is below the threshold; then, if armed and the sum has reached the threshold, it fires once and disarms. A gap (a sequence gap, a new producer or replay session) re-arms both sides and starts a new segment at the node fills' next window start; no burst spans a gap.",
         "incomplete_windows": "A window that starts before the segment start, or that contains a rejected or unreadable record, keeps its executions but never fires, re-arms or disarms.",
@@ -1515,14 +1545,16 @@
   },
   "changes": [
     "1.1.0 (Handoff 1c Part B): node.* metrics from the l4-livefeed protocol v2, additive; no public-data metric changed",
-    "1.2.0 (burst calibration, Kevin's choice A): node-mode bursts on node fills with the calibration's rule (alerts.burst.node_mode), automatic thresholds from a dated calibration with a manual override, and a rank against the calibration's reference; the public-trades burst rule is unchanged and is public mode's",
-    "1.2.0 also (Kevin, Nov 8, node-mode flicker): node.family_state comes from the node feed's delay, the latest watermark's age averaged over 5 s, LIVE up to 10 s, BEHIND (shown as DELAYED) above it, STALE above 30 s; the tab never blanks for a delay",
-    "1.2.0 also (Codex h1 review 1): public statuses are re-judged at a latest snapshot's served age, and the tab ages what it shows the same way, withholding lapsed values in place",
-    "1.2.0 also (Codex h1 review 2): book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)",
+    "1.2.0 (burst calibration, choice A): node-mode bursts on node fills with the calibration's rule (alerts.burst.node_mode), automatic thresholds from a dated calibration with a manual override, and a rank against the calibration's reference; the public-trades burst rule is unchanged and is public mode's",
+    "1.2.0 also: node.family_state comes from the node feed's delay, the latest watermark's age averaged over 5 s, LIVE up to 10 s, BEHIND (shown as DELAYED) above it, STALE above 30 s; the tab never blanks for a delay",
+    "1.2.0 also: public statuses are re-judged at a latest snapshot's served age, and the tab ages what it shows the same way, withholding lapsed values in place",
+    "1.2.0 also: book.largest_level, a computed field for the largest returned level per side; node walls and the clock offset use the true median (the mean of the two middle values for an even count)",
     "1.2.0 also (Node Project review B2/B3, Nov 9): node.stops_band's stated size is a lower bound or unknown with whole-position TP/SL orders, never 0 for them; stops carry venue_check",
-    "1.2.0 also (Codex h1 review 3): book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
-    "1.2.0 also (Codex h1 review 4): liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution",
-    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals; Flow Deck card path (six 15 s points) and dominated_by, and a validation status on the card's regime labels (Commentary TOOL_PROPOSALS 1, 4 and 2, Nov 9), additive; deck.watch, Kevin's swing-context page per market (minute bars from the counted public trades under the coverage rules, ranges from the venue's closed candles, the verdict by his own rule), its serving-time withholding, and the hl_watch tool; node.flow_map, the Order Flow Map from node fills (Kevin's order-flow map report: taker flow over eight 15-minute buckets by risk opened, closed or flipped, account shares and the four readings), under market.node.live and market.node.replay, withheld with the tape at serving time; the node stops panel's stop map (node.stop_walk_ratio, node.stop_clusters, node.stop_exclusions: trigger bands at the thinning panel's edges with the depth they would walk, the two largest clusters per side quoted as in Kevin's stop and liquidity map report, counted exclusions, lower_bound beside every notional and ratio, and a census block, node.stop_census, of the feed's waiting set against the engine's bands view, the book and the snapshots' stated totals) and node.thinning_band cumulative_from_price_usd, additive",
-    "1.3.0 also (Kevin, Nov 9): node.stop_exclusions' size_outlier is an absolute test, an order whose stated notional at its trigger price exceeds the resting depth at and beyond its band on the side it fires into (the band's walk depth_at_and_beyond_usd), judged last and inside the bands only, in place of a stated size above 100 x the market's median stated size: on BTC that median was 0.00186 (a cap near $14K) and the multiple excluded 1,005 orders / $182M, more than every cluster together; exclusions.order and the served rule text follow"
+    "1.2.0 also: book.largest_level and its chart line are withheld with a reason when a level on that side is malformed",
+    "1.2.0 also: liquidation bursts at each executions message's and watermark's own block time over (t - 60 s, t], re-arming at watermarks; position effects count only when complete for their side; flow and wallet windows carry labels and depth approximations their resolution",
+    "1.3.0: context values served marked unverified; book.ladders at nSigFigs 4/3/2; candles route and chart.intervals; Flow Deck card path (six 15 s points) and dominated_by, and a validation status on the card's regime labels (Commentary TOOL_PROPOSALS 1, 4 and 2, Nov 9), additive; deck.watch, the swing-context block per market (minute bars from the counted public trades under the coverage rules, ranges from the venue's closed candles, the verdict by his own rule), its serving-time withholding, and the hl_watch tool; node.flow_map, the Order Flow Map from node fills (the order-flow map report: taker flow over eight 15-minute buckets by risk opened, closed or flipped, account shares and the four readings), under market.node.live and market.node.replay, withheld with the tape at serving time; the node stops panel's stop map (node.stop_walk_ratio, node.stop_clusters, node.stop_exclusions: trigger bands at the thinning panel's edges with the depth they would walk, the two largest clusters per side quoted as in the stop and liquidity map report, counted exclusions, lower_bound beside every notional and ratio, and a census block, node.stop_census, of the feed's waiting set against the engine's bands view, the book and the snapshots' stated totals) and node.thinning_band cumulative_from_price_usd, additive",
+    "1.3.0 also: a late node family labels, it doesn't withhold. BEHIND and STALE serve every node result built on the family with its state, reason and delay_ms (the ladder, walls, thinning, stops, tape and flow_map add freshness and as_of_note: 'as of the node's book at <block time>, 73.4 s behind'); INVALID, UNKNOWN and no data withhold, at build time and at serving time; the Flow Deck and burst node buckets and the wallet node split keep their numbers under lateness with their freshness aged; the tab shows late node data with a quiet 'delayed' label and the delay counting up. Later the same day: the Flow Deck card's node buckets and the wallet panels' node split, whose window is the present, show the last window of the same length the node's fills do cover when the node hasn't processed through the present yet, with that window's bounds, the requested window, the shift, a label and an as_of_note (node.activity_buckets.window). Later still: the opt-in owner position stream (node.owner_pos) and the whole-position size estimate beside the stated stop figures (node.stop_estimate); the stated figures, the ranking, the outlier test, the exclusions and the census ratios are unchanged",
+    "1.3.0 also: node.stop_exclusions' size_outlier is an absolute test, an order whose stated notional at its trigger price exceeds the resting depth at and beyond its band on the side it fires into (the band's walk depth_at_and_beyond_usd), judged last and inside the bands only, in place of a stated size above 100 x the market's median stated size: on BTC that median was 0.00186 (a cap near $14K) and the multiple excluded 1,005 orders / $182M, more than every cluster together; exclusions.order and the served rule text follow",
+    "1.3.0 also (decision of Nov 10): ETH and SOL join the default markets, with their own freshness ages, large-print and burst thresholds (ETH $5M, SOL $2M per 60 s of aggressive flow); their node-mode burst threshold is manual (node_burst_min_usd) until the calibration covers them"
   ]
 }

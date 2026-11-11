@@ -72,8 +72,8 @@ def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000,
     """Feed exec bodies to the plugin's live node client as protocol v2 lines (each followed by a watermark), next
     to a complete public Flow Deck card and a wallet panel listing W over the same span. After every line, read
     the card's activity buckets (hl_alerts) and the wallet panel's node split (hl_wallets), through chat and the
-    tab. Until the fills are processed through the window's end both stay unavailable with a reason, never
-    partial. drop: the index of a body whose execs line is lost (a real sequence gap). Returns the final reads."""
+    tab. Until the fills are processed through the window's end both stay unavailable with a reason or (Kevin,
+    Nov 10) show the last covered window of the same length, labelled; never a partial present window. drop: the index of a body whose execs line is lost (a real sequence gap). Returns the final reads."""
     from helpers import NS, open_segment, trade
     plugin = surfaces([SP], **(desk_cfg or {}))
     ms = plugin.desk.markets[SP]
@@ -114,9 +114,18 @@ def _plugin_run(surfaces, bodies, drop=None, desk_cfg=None, t_first=T0 + 60_000,
         if history is not None:
             history.append((m, plugin.last))
         if m is not lines[-1]:
-            assert card["available"] is False and card["reason"], card
-            assert all(card[k]["value"] is None and card[k]["reason"] for k in ("new_long", "cover", "new_short", "exit"))
-            assert wal["available"] is False and wal["reason"], wal
+            # Until the fills reach the window's end: unavailable with a reason, or (Kevin, Nov 10) the last window of
+            # the same length the fills do cover, shifted and labelled as such; never a partial present window.
+            if card["available"]:
+                assert card["window"]["shifted_by_ms"] > 0 and card["window"]["requested"] and card["as_of_note"]
+                assert card["window"]["end_ms"] == m["block_time_ms"]
+            else:
+                assert card["reason"], card
+                assert all(card[k]["value"] is None and card[k]["reason"] for k in ("new_long", "cover", "new_short", "exit"))
+            if wal["available"]:
+                assert wal["window"]["shifted_by_ms"] > 0 and wal["as_of_note"]
+            else:
+                assert wal["reason"], wal
         assert card["stream"] == "node fills" and card["provenance"]["source"] == "test-socket"
         assert card["freshness"]["family"] == "flow"
     return plugin, reads[-1]
@@ -135,8 +144,10 @@ def test_node_burst_through_the_plugin(surfaces):
     """Node mode (Kevin's choice A): the burst comes from node fills, one evaluation per node block, at the manual
     threshold; it carries its threshold's label, its rank against the reference and its own side's buckets, with
     provenance and freshness, the same through chat and the tab. Public-trades bursts aren't shown in node mode,
-    although W's public buying (about $4,080 a minute) is over its burst_min_usd here. The buckets are withheld
-    while the node fills aren't fresh at the build; after a producer restart the earlier stream's burst is gone."""
+    although W's public buying (about $4,080 a minute) is over its burst_min_usd here. The buckets carry the node
+    fills' freshness at the build and are withheld only while the node fills are INVALID or UNKNOWN (changed by
+    Kevin, Nov 10: a late family labels, it doesn't withhold); after a producer restart the earlier stream's burst
+    is gone."""
     buy_flip = _flip_buy()
     sell = _exec(31, "100", "2", 0, "A", [_p(A, "A", "taker", {"exit": "2", "new_short": "0"}),
                                           _p(B, "B", "maker", {"cover": "0", "new_long": "2"})])
@@ -165,8 +176,8 @@ def test_node_burst_through_the_plugin(surfaces):
         assert na["stream"] == "node fills" and na["provenance"]["source"] == "test-socket"
         assert na["freshness"]["family"] == "flow"
         assert not {"new_short", "exit", "new_short_pct", "exit_pct"} & set(na)       # its own side only
-        if na["freshness"]["state"] == "LIVE":
-            assert na["available"] is True
+        if na["freshness"]["state"] not in ("INVALID", "UNKNOWN"):
+            assert na["available"] is True and "delay_ms" in na["freshness"]
             assert _v(na["cover"]) == 300 and _v(na["new_long"]) == 100
             assert _v(na["cover_pct"]) == 75 and _v(na["buying_aggressive_usd"]) == 400
         else:
@@ -198,11 +209,14 @@ def test_public_mode_keeps_its_public_trades_bursts(surfaces):
     assert deck["bursts"]["mode"] == "public" and deck["bursts"]["threshold_usd"] == 4_000.0
 
 
-def test_latest_reads_withhold_node_fill_results_once_their_flow_lapses(surfaces, monkeypatch):
-    """Review 7, B1, for results built from node fills, with Kevin's Nov 8 delay rule: the Flow Deck card's buckets
-    (hl_alerts) and the wallet split (hl_wallets) are available in the latest snapshot when built, with the node
-    fills LIVE; read 2.5 s later, past the stale limit by their delay bound (set here 2 s above the delay they had
-    when built), they are withheld with the reason, through chat and the tab's tool route."""
+def test_latest_reads_keep_node_fill_results_once_their_flow_lapses_labelled(surfaces, monkeypatch):
+    """Review 7, B1, for results built from node fills, with Kevin's Nov 8 delay rule; changed by Kevin, Nov 10 (a
+    late family labels, it doesn't withhold). The Flow Deck card's buckets (hl_alerts) and the wallet split
+    (hl_wallets) are available in the latest snapshot when built, with the node fills LIVE; read 1.5 s later, past
+    the delayed limit by their delay bound (set here 1 s above the delay they had when built), and 2.5 s later,
+    past the stale limit (2 s above), they stay served with their numbers unchanged, the freshness BEHIND then
+    STALE with the reason "by the time this was served", aged_by_ms and the delay advanced by the served age,
+    through chat and the tab's tool route."""
     from hl_desk import runtime, tools
     e = _flip_buy()
     _, (probe, _) = _plugin_run(surfaces, [{"execs": [e]}])
@@ -212,21 +226,27 @@ def test_latest_reads_withhold_node_fill_results_once_their_flow_lapses(surfaces
     assert card["available"] and card["freshness"]["state"] == "LIVE" and wal["available"]
     assert card["freshness"]["delay_ms"] == d
 
-    def latest(tool, extra=None):
-        monkeypatch.setattr(runtime.time, "time", lambda: (NOW + 2_500) / 1000)
-        monkeypatch.setattr(runtime.time, "monotonic_ns", lambda: (NOW - T0 + 2_500) * 10 ** 6)
+    def latest(tool, after_ms, extra=None):
+        monkeypatch.setattr(runtime.time, "time", lambda: (NOW + after_ms) / 1000)
+        monkeypatch.setattr(runtime.time, "monotonic_ns", lambda: (NOW - T0 + after_ms) * 10 ** 6)
         via_chat = json.loads(tools.run_tool(tool, {"market": SP, **(extra or {})}, plugin.rt))
         if tool == "hl_alerts":
             via_tab = plugin.http.get(f"/api/plugins/hyperliquid-desk/tool/{tool}", params={"market": SP}).json()
             strip = lambda r: {k: v for k, v in r.items() if k not in ("served", "historical")}
             assert strip(via_chat) == strip(via_tab)
         return via_chat
-    ab = latest("hl_alerts")["cards"][SP]["card"]["activity_buckets"]
-    assert ab["available"] is False and "node fills STALE" in ab["reason"] and "by the time this was served" in ab["reason"]
-    assert all(ab[k]["value"] is None for k in ("new_long", "cover", "new_short", "exit"))
-    assert not any(k.endswith("_pct") for k in ab)
-    split = latest("hl_wallets", {"window_min": 5})["panel"]["node_activity_split"]
-    assert split["available"] is False and "node fills STALE" in split["reason"] and "wallets" not in split
+    buckets = ("new_long", "cover", "new_short", "exit", "cover_pct", "new_long_pct", "buying_aggressive_usd")
+    for after_ms, want in ((1_500, "BEHIND"), (2_500, "STALE")):
+        ab = latest("hl_alerts", after_ms)["cards"][SP]["card"]["activity_buckets"]
+        fr = ab["freshness"]
+        assert ab["available"] is True and fr["state"] == want and "by the time this was served" in fr["reason"]
+        assert fr["aged_by_ms"] == after_ms and fr["delay_ms"] == d + after_ms
+        assert {k: ab[k] for k in buckets} == {k: card[k] for k in buckets}       # the numbers as built
+        assert _v(ab["cover"]) == 300 and _v(ab["new_long"]) == 100 and _v(ab["cover_pct"]) == 75
+        split = latest("hl_wallets", after_ms, {"window_min": 5})["panel"]["node_activity_split"]
+        assert split["available"] is True and split["freshness"]["state"] == want
+        assert split["freshness"]["aged_by_ms"] == after_ms and split["freshness"]["delay_ms"] == d + after_ms
+        assert split["wallets"] == wal["wallets"]
 
 
 def _v(metric):

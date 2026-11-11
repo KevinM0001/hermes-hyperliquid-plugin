@@ -115,7 +115,7 @@ SCHEMAS = {
     },
     "hl_watch": {
         "name": "hl_watch",
-        "description": ("Kevin's swing-context page for Hyperliquid markets, computed by the plugin from its own data, for one "
+        "description": ("The swing-context block for Hyperliquid markets, computed by the plugin from its own data, for one "
                         "market or every followed market: the price and where it sits in the 24h range (the last 24 closed 1h "
                         "candles; the middle 35 to 65% is the band he identified as his loss-maker) and in the 7d range, taker "
                         "flow imbalance over 15m, 1h and 4h from minute bars of public trades, the 4h wave (the second half of "
@@ -532,7 +532,7 @@ def hl_structure(snap: dict, args: dict, rt=None) -> dict:
 
 
 def hl_watch(snap: dict, args: dict, rt=None) -> dict:
-    """Kevin's swing-context page per market (hl_desk.watch), read from the snapshot's deck.<market>.watch: the same block
+    """the swing-context block per market (hl_desk.watch), read from the snapshot's deck.<market>.watch: the same block
     the tab shows, with each market's provenance and the status of the fields it is built on (trades, the fast book)."""
     names = [args["market"]] if args.get("market") else sorted(snap["markets"])
     markets = {}
@@ -546,9 +546,9 @@ def hl_watch(snap: dict, args: dict, rt=None) -> dict:
     return {"tool": "hl_watch", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
             "mode": snap["mode"], **_served(snap), "markets": markets,
             "definitions": {k: m[k] for k in ("formula", "thresholds", "window", "completeness_rule")}
-            | {"source": "schema/metrics.v1.json deck.watch (ported from Kevin's swing-context page)"},
+            | {"source": "schema/metrics.v1.json deck.watch (ported from a private swing-context page)"},
             "schema": snap["schema"], "disclaimer": DISCLAIMER,
-            "note": ("descriptions by Kevin's own rule, not a forecast or a signal: say where the price sits, what the flow "
+            "note": ("descriptions by a fixed rule, not a forecast or a signal: say where the price sits, what the flow "
                      "and the wave measured and over how many covered minutes, which wallet led the hour, and what is "
                      "unavailable and why (a null part has its reason beside it as <part>_reason)")}
 
@@ -576,8 +576,9 @@ SCHEMAS.update({
         "description": ("Node-mode order book for one market from every resting order: ladder levels with total size, order "
                         "count, 'largest order size at this level' and 'oldest resting order at this level' (separate "
                         "statistics), changes in the last 10 s labelled only from lifecycle records (absorbed, pulled, unknown), "
-                        "walls, the liquidity-thinning bands out to 10% and whether the book is crossed (then invalid). "
-                        "With provenance and freshness."),
+                        "walls, the liquidity-thinning bands out to 10%, the order flow map (eight 15-minute buckets of node fills "
+                        "split by the taker's own position effect, with its written readings) and whether the book is crossed "
+                        "(then invalid). With provenance and freshness."),
         "parameters": {"type": "object", "properties": {"market": _MARKET_PROP, "source": _NODE_SOURCE_PROP,
                                                         "snapshot_id": _SNAP_PROP}, "required": ["market"]},
     },
@@ -642,17 +643,26 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
     return {"tool": "node_status", "ok": True, "snapshot_id": snap["snapshot_id"], "snapshot_time": snap["built_at"],
             **_served(snap), "source": source, "node": snap.get("node_status"), "markets": markets,
             "states": {"LIVE": "the node feed's delay (5 s average of the latest watermark's age) is within its limit",
-                       "BEHIND": "delayed: the node feed's 5 s average delay is above the delayed limit",
-                       "STALE": "the node feed's 5 s average delay is above the stale limit (heartbeats don't count)",
-                       "UNKNOWN": "clock skew: ages can't be bounded",
-                       "INVALID": "not recovered since a gap, new session or incomplete snapshot",
-                       "REPLAY": "a recording, never current"}}
+                       "BEHIND": "delayed: the node feed's 5 s average delay is above the delayed limit; the data is "
+                                 "served with this label and its delay, as of its block time, never as current",
+                       "STALE": "the node feed's 5 s average delay is above the stale limit (heartbeats don't count); "
+                                "the data is served with this label and its delay, as of its block time, never as current",
+                       "UNKNOWN": "clock skew: ages can't be bounded; the data is withheld",
+                       "INVALID": "not recovered since a gap, new session or incomplete snapshot; the data is withheld",
+                       "REPLAY": "a recording, never current"},
+            "rule": ("a late family labels, it doesn't withhold: BEHIND and STALE data is served with "
+                     "its state, reason and delay_ms; INVALID, UNKNOWN and no data withhold"),
+            "owner_pos": ("the market's owner position stream (PROTOCOL.md 4.8, opt-in): the signed position of every "
+                          "owner of a waiting whole-position TP/SL, feeding the stop map's size estimate beside the "
+                          "stated figures; listed only when the handshake named the stream; INVALID with the reason when "
+                          "the feed has none; no per-account position is ever served")}
 
 
 def node_book(snap: dict, args: dict, rt=None) -> dict:
     market, view, source = _node_view(snap, args)
     body = {"book": view.get("book"), "ladder": view.get("ladder"), "walls": view.get("walls"),
-            "thinning": view.get("thinning"), "tape": view.get("tape")}
+            "thinning": view.get("thinning"), "tape": view.get("tape"),
+            "flow_map": view.get("flow_map")}        # the order flow map with its readings (Nov 10); withheld with the tape
     if view.get("available") is False:
         body = {"available": False, "reason": view.get("reason")}
     return _node_envelope("node_book", snap, market, view, source, body)
@@ -717,7 +727,7 @@ def run_tool(name: str, args: dict | None, rt) -> str:
             return _error(name, err or "no snapshot available", collector=rt.status().get("collector"))
         # Results in the latest snapshot are re-judged at serving time: a node family past its delay limit by now
         # isn't served as LIVE, a public field past its freshness limit isn't served as fresh, and nothing built on
-        # either is served (Codex h1 review 1, B1). Historical reads (by ID) are as of build time.
+        # either is served. Historical reads (by ID) are as of build time.
         from .node.serving import age_snapshot_for_serving
         from .serving_public import age_snapshot
         snap = age_snapshot(age_snapshot_for_serving(snap))
