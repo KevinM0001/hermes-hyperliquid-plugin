@@ -1,10 +1,8 @@
-# DRAFT catalog entry for NousResearch/hermes-agent plugin-catalog/hyperliquid-desk.yaml.
-# Not submitted. Before the PR: make the repo public, set sha to the full 40-character
-# commit Codex accepted, and re-run `hermes plugins validate --install-deps` at that commit.
-# requires_hermes matches plugin.yaml exactly.
+# The catalog entry for NousResearch/hermes-agent, plugin-catalog/hyperliquid-desk.yaml.
+# <SHA> is the 40-character commit the entry pins (a file can't name its own commit): it is filled in the catalog PR.
 name: hyperliquid-desk
 repo: https://github.com/KevinM0001/hermes-hyperliquid-plugin
-sha: "FILL_IN_THE_ACCEPTED_40_CHARACTER_COMMIT_SHA"
+sha: "<SHA>"
 subdir: ""
 description: Live Hyperliquid dashboard tab, Flow Deck alerts, wallets and market tools with a commentary skill on Hyperliquid's public data, plus node panels from the plugin author's hosted relay (on by default, can be turned off) or your own engine feed. Read-only; no orders, no trading keys.
 maintainer: KevinM0001
@@ -12,6 +10,14 @@ tier: community
 category: tools
 requires_hermes: ">=0.23.0"
 version: "1.0.0"
+image: "https://raw.githubusercontent.com/KevinM0001/hermes-hyperliquid-plugin/<SHA>/docs/screenshots/card.png"
+screenshots:
+  - "https://raw.githubusercontent.com/KevinM0001/hermes-hyperliquid-plugin/<SHA>/docs/screenshots/01-desk.png"
+  - "https://raw.githubusercontent.com/KevinM0001/hermes-hyperliquid-plugin/<SHA>/docs/screenshots/02-chart-ladder.png"
+  - "https://raw.githubusercontent.com/KevinM0001/hermes-hyperliquid-plugin/<SHA>/docs/screenshots/03-flow-deck.png"
+  - "https://raw.githubusercontent.com/KevinM0001/hermes-hyperliquid-plugin/<SHA>/docs/screenshots/04-wallets.png"
+  - "https://raw.githubusercontent.com/KevinM0001/hermes-hyperliquid-plugin/<SHA>/docs/screenshots/05-node-stop-map.png"
+  - "https://raw.githubusercontent.com/KevinM0001/hermes-hyperliquid-plugin/<SHA>/docs/screenshots/06-ask-hermes.png"
 readme: true
 platforms: [linux, macos]
 title: Hyperliquid Desk
