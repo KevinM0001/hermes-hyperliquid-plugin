@@ -45,7 +45,7 @@ COVERAGE_NOTE = ("one bar per candle aligned to the clock, from the candle's ope
                  "covered, it has ended and every fill record in it was read, and one that starts before the node fills were "
                  "observed, spans a gap or is in progress says so with its coverage; a candle with no covered second and no "
                  "fill has no bar; nothing is scaled or filled in")
-RETENTION_NOTE = ("one-minute taker-flow sums are kept for 24 h of block time behind the latest block whose node fills are known, "
+RETENTION_NOTE = ("one-minute taker-flow sums are kept for 24 h of block time behind the latest block whose node fills are known while the node feed stays connected (a new connection starts a new ring), "
                   "and every interval of one minute or more is summed from them, clock-aligned; the 15 s bars come from the "
                   "fills themselves, kept 16 min behind the node's last block, so older 15 s bars aren't served")
 BEFORE_OBSERVED = "before the node fills were observed"
