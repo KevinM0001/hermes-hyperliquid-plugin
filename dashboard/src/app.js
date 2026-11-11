@@ -2878,16 +2878,33 @@
             cells.push(h("td", { key: "na", colSpan: 4 }, h(Unavailable, { reason: sp.reason || "unavailable, and no reason was given" }),
               isNum(sp.unclassified_usd) ? h("span", { className: "hd-dim" }, " \u00b7 unclassified " + usd(sp.unclassified_usd)) : null));
           } else {
-            SPLIT_COLS.forEach(function (c) {
-              const uv = g(sp, "usd", c[0]);
-              const pv = g(sp, "pct", c[0]);
-              const why = g(sp, "pct_reason", c[2]);
-              if (!isNum(pv)) note(why);
-              // A bucket without a percentage shows only the reason (the tab's own rule: never a 0 beside "unavailable").
-              cells.push(h("td", { key: c[0], className: "hd-r" }, isNum(pv)
-                ? h(Fragment, null, isNum(uv) ? usd(uv) : missing(), " ", h("b", { className: "hd-dim" }, pct(pv, 1)))
-                : h(Unavailable, { reason: why || "percentage not in snapshot", compact: true })));
-            });
+            // A side with nothing filled has no percentage: a share of zero notional has no value, and that is not
+            // missing data. Its cells say so in plain words, the plugin's reason in the tooltip and in the notes under
+            // the table (Kevin, Nov 11); both sides at zero say it once across the four cells. "unavailable" stays for
+            // a percentage the snapshot withholds with notional on that side (or without saying why).
+            const noSide = { buying: sp.bought_usd === 0, selling: sp.sold_usd === 0 };
+            const sideWhy = { buying: g(sp, "pct_reason", "buying"), selling: g(sp, "pct_reason", "selling") };
+            const noPct = SPLIT_COLS.every(function (c) { return !isNum(g(sp, "pct", c[0])); });
+            if (noSide.buying && noSide.selling && noPct) {
+              note(sideWhy.buying); note(sideWhy.selling);
+              cells.push(h("td", { key: "none", colSpan: 4, className: "hd-dim", title: [sideWhy.buying, sideWhy.selling].filter(Boolean).join("; ") || undefined },
+                pair[0] === "aggressive" ? "no taker fills" : "no fills"));
+            } else {
+              SPLIT_COLS.forEach(function (c) {
+                const uv = g(sp, "usd", c[0]);
+                const pv = g(sp, "pct", c[0]);
+                const why = sideWhy[c[2]];
+                if (isNum(pv)) {
+                  cells.push(h("td", { key: c[0], className: "hd-r" }, isNum(uv) ? usd(uv) : missing(), " ", h("b", { className: "hd-dim" }, pct(pv, 1))));
+                  return;
+                }
+                note(why);
+                // A bucket without a percentage shows only a word (the tab's own rule: never a 0 beside "unavailable").
+                cells.push(h("td", { key: c[0], className: "hd-r" }, noSide[c[2]]
+                  ? h("span", { className: "hd-dim", title: why || undefined }, c[2] === "buying" ? "no buys" : "no sells")
+                  : h(Unavailable, { reason: why || "percentage not in snapshot", compact: true })));
+              });
+            }
           }
         }
         rows.push(h("tr", { key: a + ":" + pair[0], className: j ? "hd-split-aggr" : undefined },
