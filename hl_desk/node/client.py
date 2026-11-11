@@ -243,6 +243,8 @@ class FeedClient:
         for m, mf in old.items():
             mf.note("partition replaced", reason=why)
         self.counters["sessions"] += 1
+        # The relay's views (self.views) outlive the partition: a position stream the connection's hello announced is
+        # offered again when its market's fresh feed is built (_market), since no new hello will name it.
 
     def _market(self, name: str) -> MarketFeed:
         mf = self.markets.get(name)
@@ -250,6 +252,13 @@ class FeedClient:
             mf = self.markets[name] = MarketFeed(name, self.stream_label())
             if self.burst_rule_factory is not None:
                 mf.flow.bursts = self.burst_rule_factory(name, self)
+            if self.views.get(name + OWNER_POS_SUFFIX) == "full":
+                # A relay's hello comes only at connect. When the producer starts a new session on the same connection,
+                # the next line's epoch replaces the partition with no hello to announce the position stream again,
+                # while the view the hello gave it stands. The announcement is kept, and only that: the stream is
+                # offered as a fresh one (no sequence to resume, nothing unavailable), started by the new session's own
+                # first line and snapshot.
+                mf.opos.offered = True
         return mf
 
     def unreadable_line(self, why: str) -> None:
@@ -380,6 +389,11 @@ class FeedClient:
                         self.markets[m].expected_start = None
                     if m + OWNER_POS_SUFFIX not in announced:
                         self._stream_view(m, "none", {})
+                # The views are the connection's, by name: a hello that follows a new producer session finds the
+                # partition already replaced (no markets to walk above), so a market or stream it no longer announces
+                # is dropped from the views here, or a stale entry would offer a stream this connection doesn't carry.
+                for k in [k for k in self.views if k not in announced]:
+                    self.views.pop(k)
             for m, info in announced.items():
                 if isinstance(m, str) and m.endswith(OWNER_POS_SUFFIX):
                     if relay_views:

@@ -1237,7 +1237,7 @@
       "units": "contracts (the market's size unit)",
       "inputs": ["opos_snapshot", "opos_delta"],
       "window": "the node's current state at the stream's block",
-      "reset_rule": "a stream gap, a bad start or a malformed snapshot or delta invalidates the owner_pos family alone (the market's families stand); the producer's 'unavailable' (a fills record not read, or a start snapshot failing the open-interest check) holds it unavailable with the reason until a new session; a new producer session starts it over",
+      "reset_rule": "a stream gap, a bad start or a malformed snapshot or delta invalidates the owner_pos family alone (the market's families stand); the producer's 'unavailable' (a fills record not read, or a start snapshot failing the open-interest check) holds it unavailable with the reason until a new session; a new producer session starts it over (on a relay connection, whose hello comes only at connect, a new producer session on the same connection keeps the stream announced: the family waits for the new session's own snapshot, never reading as a feed without positions)",
       "completeness_rule": "family states as node.family_state. A producer without position streams lists the stream as unknown in its hello: the family reads INVALID 'this feed carries no owner positions' and no estimate is made. The plugin keeps the positions in collector memory only and never serves a per-account position: only per-band aggregates and reason counts leave it (the Plugin session's rule, Nov 10)"
     },
     "node.stop_estimate": {
