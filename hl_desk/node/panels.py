@@ -18,6 +18,7 @@ from decimal import Decimal
 from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
 from .flow_map import FlowMapState, build as build_flow_map
+from .taker_flow import INTERVAL_MS as TAKER_FLOW_INTERVAL_MS, TakerFlowState, build as build_taker_flow
 from .transport import source_label
 from .triggers import (CENSUS_EXCLUSIONS, EST_COUNTED_NEARER, EST_MISSING, EST_NOT_YET, MAP_PLAUSIBLE_RATIO, category, census,
                        estimates)
@@ -145,6 +146,15 @@ def flow_map_state_of(mf) -> FlowMapState:
     return st
 
 
+def taker_flow_state_of(mf) -> TakerFlowState:
+    """The chart's taker flow per candle: the ring of one-minute sums of this market partition (hl_desk/node/taker_flow.py),
+    kept like the flow map's accumulator: over a gap, with the hole stated; dropped with the partition."""
+    st = getattr(mf, "taker_flow", None)
+    if st is None:
+        st = mf.taker_flow = TakerFlowState()
+    return st
+
+
 def usd(d: Decimal | None) -> float | None:
     return None if d is None else round(float(d), 2)
 
@@ -160,6 +170,7 @@ def on_client_event(ev: dict, opts: dict) -> None:
     if ev["type"] == "watermark":
         t = ev.get("block_time_ms")
         flow_map_state_of(mf).observe(mf.flow, t)
+        taker_flow_state_of(mf).observe(mf.flow, t)
         # The liquidation window moves with every block, executions or not: a quiet market's window empties and the
         # rule re-arms at its watermarks (a watermark adds no fills, so it never fires one).
         _liquidation_bursts(mf, ps, opts, t)
@@ -172,6 +183,9 @@ def on_client_event(ev: dict, opts: dict) -> None:
         fm = flow_map_state_of(mf)
         fm.observe(mf.flow, ev.get("block_time_ms"))
         fm.add(mf.flow, ev.get("execs") or [], ev.get("block_time_ms"))
+        tf = taker_flow_state_of(mf)                    # the same fills, per minute, for the chart's taker flow layer
+        tf.observe(mf.flow, ev.get("block_time_ms"))
+        tf.add(mf.flow, ev.get("execs") or [], ev.get("block_time_ms"))
         _liquidation_bursts(mf, ps, opts, ev.get("block_time_ms"))
 
 
@@ -1176,6 +1190,25 @@ def deck_buckets(client, market: str, start_ms: int, end_ms: int, now_wall_ms=No
                        "reason": "unclassified notional in this window: " + a["buying"]["reason"].split(": ", 1)[-1]}
     return meta | {"available": True, "stream": "node fills", "window": win, "coverage": cov,
                    **shift_fields(win, "", "the card's window"), **_jsonable_activity(a)}
+
+
+def taker_flow(client, market: str, interval: str, times, now_wall_ms=None, now_mono_ns=None) -> dict:
+    """The chart's Taker flow layer (hl_desk/node/taker_flow.py; Kevin's review of Nov 11: every interval, not only 15m):
+    net taker flow per candle at `interval` for the candle open times `times` (ms), from this partition's node fills,
+    with provenance and the flow family's freshness as judged now (the candles route) or at the snapshot's build
+    (chart.taker_flow, the 15 s candles). Withheld with the reason, like the tape and the flow map, while the family
+    isn't usable."""
+    base = {"stream": "node fills", "interval": interval, "bucket_s": TAKER_FLOW_INTERVAL_MS.get(interval, 0) // 1000}
+    mf = client.markets.get(market) if client else None
+    if mf is None:
+        return base | {"available": False, "reason": "no node data for this market from this source yet"} | (
+            flow_meta(client, market, now_wall_ms, now_mono_ns) if client else {})
+    ok, st = _flow_ok(client, market, now_wall_ms, now_mono_ns)
+    meta = base | {"provenance": provenance(client, market), "freshness": st}
+    if not ok:
+        return meta | {"available": False, "reason": f"node fills {st['state']}: {st.get('reason')}"}
+    return meta | build_taker_flow(getattr(mf, "taker_flow", None), mf.flow, interval, times) | {
+        "as_of_note": as_of_note("fills", st)}
 
 
 def wallet_buckets(client, market: str, users, start_ms: int, end_ms: int, now_wall_ms=None, now_mono_ns=None) -> dict:

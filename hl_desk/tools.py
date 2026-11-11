@@ -86,7 +86,9 @@ SCHEMAS = {
                         "own candle data: the most recent closed candles (open, high, low, close, base volume, trade count; the "
                         "venue keeps at most the last 5000 per interval) and the in-progress candle, which is unverified (its "
                         "updates carry no source time) and comes with its receipt age. The first call for a market and interval "
-                        "starts the fetch and answers state 'loading': call again a second later."),
+                        "starts the fetch and answers state 'loading': call again a second later. With a node feed, taker_flow "
+                        "carries net taker flow per candle from the node's fills (buy and sell notional, the taker side only, "
+                        "each fill once; each bar says how much of its span the fills covered), with its provenance and freshness."),
         "parameters": {"type": "object", "properties": {
             "market": _MARKET_PROP,
             "interval": {"type": "string", "enum": list(CANDLE_INTERVALS), "description": "Candle interval (default 1h)."},

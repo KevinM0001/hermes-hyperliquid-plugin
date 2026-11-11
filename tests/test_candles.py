@@ -344,9 +344,13 @@ def test_route_loading_then_loaded_then_bad_interval_and_market(route):
     r = http.get(URL, params={"market": "BTC", "interval": "1h", "limit": 2})
     body = r.json()
     assert r.status_code == 200 and body["ok"] is True
-    assert body == json.loads(json.dumps(store.view("BTC", "1h", 2)))     # the route serves the store's view, unchanged
+    # the route serves the store's view, unchanged, plus the chart's taker flow per candle (Kevin's review of Nov 11),
+    # which says why it has nothing when the collector has no node feed
+    assert {k: v for k, v in body.items() if k != "taker_flow"} == json.loads(json.dumps(store.view("BTC", "1h", 2)))
+    assert body["taker_flow"] == {"stream": "node fills", "interval": "1h", "available": False,
+                                  "reason": "needs node mode: no node feed configured (setting node_feed)"}
     assert [c["state"] for c in body["candles"]] == ["closed", "in_progress"] and body["in_progress"]["received_age_s"] == 1.5
-    assert set(body) == {"ok", "market", "interval", "candles", "history", "in_progress", "source", "provenance"}
+    assert set(body) == {"ok", "market", "interval", "candles", "history", "in_progress", "source", "provenance", "taker_flow"}
     r = http.get(URL, params={"market": "BTC", "interval": "2h"})
     assert r.status_code == 400 and r.json()["ok"] is False
     assert "'2h'" in r.json()["error"] and "1m, 5m, 15m, 30m, 1h, 4h, 1d" in r.json()["error"]

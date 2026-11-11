@@ -355,6 +355,7 @@ class MarketState:
             wallet_panels[f"{n}m"] = self._wallet_panel(n, r_tr)
             self._node_wallet_splits(wallet_panels[f"{n}m"], node_client, now)
         chart = self._chart(top, ctx_block, ladder)
+        chart["taker_flow"] = self._node_taker_flow(chart["candles"], node_client, now)
         unavailable = [{"field": v["field"], "status": v["status"], "reason": v["reason"]}
                        for v in fr.values() if v["status"] != "fresh"]
         return {"market": self.market, "meta": self.meta, "provenance": prov, "freshness": fr,
@@ -393,6 +394,16 @@ class MarketState:
         # The card's window is [start, end]; node fills are counted over the same block-time span.
         b = deck_buckets(client, self.market, card["window_start_ms"] - 1, card["window_end_ms"], *now)
         return _bucket_metrics(b, b.get("window_label") or "the card's 90 s window") | {"hook": base.get("hook")}
+
+    def _node_taker_flow(self, candles: list, client, now=(None, None)) -> dict:
+        """chart.taker_flow for the snapshot's own 15 s candles (Kevin's review of Nov 11): one bar per candle the node's
+        retained fills cover, from the live node feed only (hl_desk/node/panels.taker_flow), judged at this build like
+        every node result; the candles route serves the same block for the venue's intervals."""
+        if client is None:
+            return {"stream": "node fills", "interval": "15s", "bucket_s": CANDLE_MS // 1000, "available": False,
+                    "reason": "needs node mode: no node feed configured (setting node_feed)"}
+        from .node.panels import taker_flow
+        return taker_flow(client, self.market, "15s", [c["t"] for c in candles], *now)
 
     def _node_events(self, events: list, client, live_view: dict | None, now=(None, None)) -> list:
         """The Flow Deck's events. In node mode, bursts come only from node fills (the burst calibration's rule,

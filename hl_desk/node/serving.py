@@ -127,6 +127,22 @@ def aged_fill_result(res: dict | None, age_ms: float) -> dict | None:
     return out
 
 
+def aged_taker_flow(res: dict | None, age_ms: float) -> dict | None:
+    """chart.taker_flow (the 15 s bars under the snapshot's candles) re-judged at serving time, as the flow map is: a
+    late family labels (the bars stay, the freshness ages, the "as of" note is re-stated at the served delay); only a
+    family no longer usable withholds the bars with the reason, keeping where they came from."""
+    if not isinstance(res, dict) or not res.get("available") or not isinstance(res.get("freshness"), dict):
+        return res
+    st = aged_status(res["freshness"], age_ms)
+    if st is res["freshness"]:
+        return res
+    if usable(st):
+        return dict(res, freshness=st, as_of_note=as_of_note("fills", st))
+    why = f"node fills {st.get('state')}: {st.get('reason')}"
+    keep = {k: res[k] for k in ("stream", "interval", "bucket_s", "provenance", "coverage", "retention") if k in res}
+    return keep | {"available": False, "reason": why, "freshness": st}
+
+
 def age_snapshot_for_serving(snap: dict) -> dict:
     """The latest snapshot with every node result re-judged at serving time (historical snapshots unchanged)."""
     served = snap.get("served") or {}
@@ -157,6 +173,9 @@ def age_snapshot_for_serving(snap: dict) -> dict:
             m["wallets"] = {k: (dict(p, node_activity_split=aged_fill_result(p.get("node_activity_split"), age_ms))
                                 if isinstance(p, dict) and "node_activity_split" in p else p)
                             for k, p in wallets.items()}
+        chart = ms.get("chart")
+        if isinstance(chart, dict) and isinstance(chart.get("taker_flow"), dict):
+            m["chart"] = dict(chart, taker_flow=aged_taker_flow(chart["taker_flow"], age_ms))
         out["markets"][name] = m
     return out
 

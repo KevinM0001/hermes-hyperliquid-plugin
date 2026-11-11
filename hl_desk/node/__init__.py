@@ -8,6 +8,8 @@ independent client implementation of it:
 - book.py       the resting executable book: levels, level statistics, lifecycle-labelled changes
 - triggers.py   waiting stop / take-profit orders, stop bands with the size check
 - flow.py       node executions: activity buckets, wallet splits, liquidation bursts, the tape
+- flow_map.py   the order flow map: eight 15-minute buckets of taker flow by what each fill did to the position
+- taker_flow.py the chart's taker flow per candle: a ring of one-minute sums, any interval summed clock-aligned
 - client.py     the protocol state machine (sessions, sequences, snapshots, swaps, watermarks)
 - replay.py     recordings: a reader and a player on a replay clock
 - transport.py  local Unix socket and relay WebSocket connections

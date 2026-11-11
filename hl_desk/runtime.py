@@ -414,7 +414,33 @@ class Runtime:
         except (TypeError, ValueError):
             return {"ok": False, "error": f"limit must be a whole number, got {limit!r}"}
         c.candles.request(market, interval)
-        return c.candles.view(market, interval, limit)
+        view = c.candles.view(market, interval, limit)
+        if view.get("ok"):
+            # The chart's Taker flow layer rides with the candles (Kevin's review of Nov 11): net taker flow per candle from
+            # the node's fills, one bar per candle served that the node's fills cover, with the flow family's provenance
+            # and freshness as judged now. The candles never wait on it: without node mode it says so.
+            view["taker_flow"] = self._taker_flow(c, market, interval, [k["time"] for k in view["candles"]])
+        return view
+
+    @staticmethod
+    def _taker_flow(c, market, interval, times) -> dict:
+        """chart.taker_flow for the venue's intervals (hl_desk/node/panels.taker_flow), read on the collector's loop, the
+        thread that owns the node clients' state."""
+        node = getattr(c, "node", None)
+        base = {"stream": "node fills", "interval": interval}
+        if node is None or getattr(node, "live", None) is None:
+            return base | {"available": False, "reason": "needs node mode: no node feed configured (setting node_feed)"}
+        from .node.panels import taker_flow
+
+        def read():
+            if node.live_client() is None:
+                return base | {"available": False, "reason": "the configured node_feed serves a REPLAY, shown in the replay "
+                                                             "area and never as live data"}
+            return taker_flow(node.client_for(market), market, interval, times)
+        try:
+            return node.run_on_loop(read)
+        except Exception as exc:          # the loop is stopping or the call timed out: the candles stand, the layer says why
+            return base | {"available": False, "reason": f"node fills couldn't be read: {type(exc).__name__}: {exc}"}
 
 
 LATEST_MAX_AGE_S = 5.0

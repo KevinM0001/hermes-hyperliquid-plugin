@@ -222,6 +222,21 @@ class NodeManager:
         fut = asyncio.run_coroutine_threadsafe(_wrap(fn), self.loop)
         return fut.result(timeout)
 
+    def run_on_loop(self, fn, timeout: float = 10.0):
+        """fn() on the collector loop, wherever the caller is: directly when already on it (the owner service's handlers
+        run there, and call() would wait on the loop they hold) or when no loop runs (a stopped collector, tests), else
+        from another thread as call() does. The clients' state is only ever read on the loop that mutates it."""
+        loop = self.loop
+        if loop is None or not loop.is_running():
+            return fn()
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is loop:
+            return fn()
+        return self.call(fn, timeout)
+
     # --- views (on the collector loop) ---------------------------------------------
     def live_client(self):
         """The live client, only while its source really is live (a configured feed can turn out to be a replayer)."""
