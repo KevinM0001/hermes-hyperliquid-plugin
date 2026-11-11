@@ -509,11 +509,15 @@
 .hd-ivbar { margin-right: 4px; }
 .hd-ivbar .hd-btn-xs { font-family: var(--hd-mono); padding: 0 6px; }
 .hd-chart { height: 400px; width: 100%; border-radius: 4px; overflow: hidden; background: var(--hd-card); }
+/* The readout's backdrop sits on its cells, not on the box (Kevin, Nov 11): the box ran across the pane and showed as a
+   dark rectangle wherever it crossed the overlay's bands at the right; the cells touch, so a line reads as one bar
+   under its own text and nothing is painted past it. */
 .hd-chart-readout {
   position: absolute; top: 6px; left: 8px; z-index: 2; pointer-events: none; max-width: calc(100% - 80px);
-  display: flex; flex-wrap: wrap; gap: 2px 10px; padding: 3px 8px; border-radius: 4px;
-  background: rgba(18, 18, 18, 0.88); font: 500 11px/1.4 var(--hd-mono); color: var(--hd-muted);
+  display: flex; flex-wrap: wrap; gap: 0; font: 500 11px/1.4 var(--hd-mono); color: var(--hd-muted);
 }
+.hd-chart-readout > span { background: rgba(18, 18, 18, 0.88); padding: 2px 5px; }
+.hd-chart-readout > span:first-child { padding-left: 8px; }
 .hd-chart-readout b { font-weight: 600; color: var(--hd-text); }
 .hd-ro-t { color: var(--hd-text-2); }
 .hd-ro-v.hd-ro-up, .hd-chart-readout span.hd-ro-up { color: var(--hd-bid); }
@@ -535,6 +539,7 @@
 .hd-ll-asklvl .hd-ll-swatch { border-top: 2px dashed var(--hd-ask); }
 .hd-gapnote b { color: var(--hd-warn); }
 .hd-attribution { font-size: 10.5px; color: var(--hd-muted); border-top: 1px solid var(--hd-line); padding-top: 6px; }
+.hd-chart-legend { font-size: 10.5px; color: var(--hd-muted); padding-top: 4px; }
 
 /* inline "needs node mode" text on a value (public mode) */
 .hd-node-inline { font: 600 11px/1 var(--hd-mono); color: var(--hd-violet-text); }

@@ -879,6 +879,10 @@
   function intervalPollMs(iv) { const sec = intervalSeconds(iv); return sec <= 300 ? 2000 : (sec <= 3600 ? 5000 : 15000); }
   function coinOf(market) { const t = String(market || ""); const i = t.lastIndexOf(":"); return i >= 0 ? t.slice(i + 1) : t; }
 
+  // Seen beside the taker-flow bars (Kevin's question, Nov 11): a green candle over a red bar is not a bug. The readout's
+  // taker-flow cell carries it as its title, and the chart shows it as a legend line while the bars are on.
+  const FLOW_LEGEND = "taker flow bars: the bar's colour is taker direction (buys against sells by the aggressor), the candle's colour is price (close against open); two measures that often disagree, and the disagreement is the point";
+
   // The readout at the chart's top left: the candle under the crosshair, or the latest one when the pointer is away.
   // Every number is the snapshot's own (open, high, low, close, volume_usd, complete); the change is close minus open.
   function ChartReadout(props) {
@@ -901,7 +905,7 @@
         (chgPct !== null ? " (" + signOf(chgPct, true) + num(Math.abs(chgPct), 2, 2) + "%)" : "")) : null,
       h("span", { className: "hd-ro-cell" }, "Vol ", h("b", { className: "hd-ro-v" }, vol)),
       props.late ? h("span", { className: "hd-ro-cell hd-dim" }, props.late) : null,
-      props.flow ? h("span", { className: "hd-ro-cell", title: props.flow.reason || "" }, "Taker flow ",
+      props.flow ? h("span", { className: "hd-ro-cell", title: FLOW_LEGEND + (props.flow.reason ? "; " + props.flow.reason : "") }, "Taker flow ",
         h("b", { className: props.flow.net_usd >= 0 ? "hd-ro-v hd-ro-up" : "hd-ro-v hd-ro-down" }, usdSigned(props.flow.net_usd)),
         " (buy " + usd(props.flow.buy_usd) + " / sell " + usd(props.flow.sell_usd) + (props.flow.complete === false ? (props.flow.in_progress ? ", in progress" : ", partial") : "") + ")") : null);
   }
@@ -1089,10 +1093,11 @@
           rightPriceScale: { borderColor: C.border, scaleMargins: { top: 0.08, bottom: 0.24 } },
           timeScale: { borderColor: C.border, timeVisible: true, secondsVisible: true },
           crosshair: { mode: LWC.CrosshairMode.Normal },
-          // The wheel scrolls the page (the Nov 9 audit: a reader got stuck zooming); the interval buttons set the range,
-          // dragging still pans and pinching still zooms.
+          // The wheel zooms (Kevin, Nov 11: wanted as a universal chart feature; the Nov 9 audit's wheel-off setting is
+          // gone) and dragging pans; the wheel never pans. Pinch zooms too, the axes drag-scale, a double click on an
+          // axis resets, and the interval buttons still set the range.
           handleScroll: { mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false },
-          handleScale: { mouseWheel: false, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
+          handleScale: { mouseWheel: true, pinch: true, axisPressedMouseMove: true, axisDoubleClickReset: true },
           localization: { locale: "en-US", priceFormatter: function (v) { return axisPrice(v, api.current ? api.current.decimals : null); } }
         });
         const series = c.addSeries(LWC.CandlestickSeries, {
@@ -1281,6 +1286,8 @@
           : "No candles in this snapshot: no trades in the current coverage segment yet.") : null),
     // No footnotes under the chart since Nov 10 (Kevin): gaps are marked on the candles themselves and listed in the
     // snapshot; the candle history's count and fetch time live in the data, not on the card.
+    // The taker-flow legend (Kevin's question, Nov 11) sits over the attribution while the layer is on.
+    ov.flow && !ovWhy("flow") ? h("div", { className: "hd-chart-legend" }, FLOW_LEGEND) : null,
     h("div", { className: "hd-attribution" }, ATTRIBUTION,
       h("a", { href: TV_URL, target: "_blank", rel: "noopener noreferrer" }, TV_URL)));
   }
