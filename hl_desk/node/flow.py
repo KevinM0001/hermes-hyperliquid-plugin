@@ -375,8 +375,12 @@ def wallet_splits(execs: list[Execution], users: set) -> dict:
                 "usd": dict(b),
                 "pct": {"new_long": pct(b["new_long"], bought), "cover": pct(b["cover"], bought),
                         "new_short": pct(b["new_short"], sold), "exit": pct(b["exit"], sold)},
-                "pct_reason": {"buying": None if bought > 0 else f"no buying in {label}: percentage unavailable",
-                               "selling": None if sold > 0 else f"no selling in {label}: percentage unavailable"}}
+                # A side with nothing filled has no percentage to give: the reason says what that means, not
+                # "unavailable", since the tab shows it under the table and in the cells' tooltips (Kevin, Nov 11).
+                "pct_reason": {"buying": None if bought > 0 else
+                               f"no buying in {label}: nothing bought to split, so new long and cover have no percentage",
+                               "selling": None if sold > 0 else
+                               f"no selling in {label}: nothing sold to split, so new short and exit have no percentage"}}
 
     out = {}
     for u, a in acc.items():

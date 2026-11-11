@@ -19,6 +19,9 @@ from hl_desk.node.flow import NodeFlow, activity_buckets, liquidations, parse_ex
 
 from node_helpers import EXECS, client, read_recording, surfaces
 
+NO_AGGR_BUYING = "no buying in aggressive fills only (taker): nothing bought to split, so new long and cover have no percentage"
+NO_AGGR_SELLING = "no selling in aggressive fills only (taker): nothing sold to split, so new short and exit have no percentage"
+
 A = "0x" + "a" * 40
 B = "0x" + "b" * 40
 W = "0x" + "c" * 40
@@ -359,7 +362,8 @@ def test_wallet_with_only_maker_buys_through_the_plugins_wallet_panel(surfaces):
     _, (_, wal) = _plugin_run(surfaces, [{"execs": [maker_buy]}])
     s = wal["wallets"][W]
     assert Decimal(str(s["full"]["pct"]["new_long"])) == 100
-    assert s["aggressive"]["pct"]["new_long"] is None and "percentage unavailable" in s["aggressive"]["pct_reason"]["buying"]
+    assert s["aggressive"]["pct"]["new_long"] is None
+    assert s["aggressive"]["pct_reason"]["buying"] == NO_AGGR_BUYING
 
 
 @pytest.mark.parametrize("order", ["taker_first", "maker_first"])
@@ -428,7 +432,13 @@ def test_wallet_with_only_maker_buys_has_no_aggressive_percentage():
                                                       _p(B, "A", "taker", {"exit": "5", "new_short": "0"})])
     s = wallet_splits(_flow_with({"execs": [maker_buy]}).window(1_000_000, 1_000_010)[0], {W})[W]
     assert s["full"]["pct"]["new_long"] == 100
-    assert s["aggressive"]["pct"]["new_long"] is None and "percentage unavailable" in s["aggressive"]["pct_reason"]["buying"]
+    # The reason says what a zero side means (the tab shows it under its table); the served zero notionals are what
+    # the tab reads to say "no buys" / "no taker fills" instead of "unavailable" (Kevin, Nov 11).
+    assert s["aggressive"]["pct"]["new_long"] is None and s["aggressive"]["pct_reason"]["buying"] == NO_AGGR_BUYING
+    assert s["aggressive"]["bought_usd"] == 0 and s["aggressive"]["sold_usd"] == 0
+    assert s["aggressive"]["pct"]["new_short"] is None and s["aggressive"]["pct_reason"]["selling"] == NO_AGGR_SELLING
+    assert s["full"]["sold_usd"] == 0 and s["full"]["pct_reason"]["buying"] is None
+    assert s["full"]["pct_reason"]["selling"] == "no selling in all fills (maker and taker): nothing sold to split, so new short and exit have no percentage"
 
 
 def test_wallet_split_is_unavailable_while_an_execution_misses_a_record_or_address(surfaces):
