@@ -7,6 +7,8 @@ A live Hyperliquid market dashboard inside Hermes, on Hyperliquid's **public** d
 - **A commentary skill**, `hyperliquid-desk:hyperliquid-commentary`, that explains only what the tools returned, cites the snapshot and its freshness, and describes rather than recommends.
 - **A `/hl` command** for status and for starting, stopping and restarting the collector.
 
+Hyperliquid Desk is an independent, open-source plugin. It is not affiliated with, endorsed by or connected to Hyperliquid.
+
 It's read-only. There is no order code, no exchange endpoint, no signing and no trading or wallet key; the only credential is the optional node feed key described under Node mode. Markets: `BTC`, `ETH`, `SOL`, `HYPE`, `xyz:SP500`, `xyz:XYZ100`; each must pass a metadata check against Hyperliquid's info endpoint, and unknown markets are unsupported.
 
 Requires **Hermes >= 0.23.0** (tested on v0.23.0), Linux or macOS.

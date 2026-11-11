@@ -4,7 +4,7 @@ name: hyperliquid-desk
 repo: https://github.com/KevinM0001/hermes-hyperliquid-plugin
 sha: "<SHA>"
 subdir: ""
-description: Live Hyperliquid dashboard tab, Flow Deck alerts, wallets and market tools with a commentary skill on Hyperliquid's public data, plus node panels from the plugin author's hosted relay (on by default, can be turned off) or your own engine feed. Read-only; no orders, no trading keys.
+description: Live Hyperliquid dashboard tab, Flow Deck alerts, wallets and market tools with a commentary skill on Hyperliquid's public data, plus node panels from the plugin author's hosted relay (on by default, can be turned off) or your own engine feed. Read-only; no orders, no trading keys. Independent; not affiliated with Hyperliquid.
 maintainer: KevinM0001
 tier: community
 category: tools
