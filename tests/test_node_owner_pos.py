@@ -296,14 +296,14 @@ def test_the_producers_recording_gives_real_estimates_beside_the_stated_clusters
     assert top["fires_on"] == "fall" and top["k"] == 8 and top["lower_bound"] is True
     assert top["notional_usd"] == 4_197_893.01 and top["estimate"]["notional_usd"] == 796_120.01 and top["total_est_usd"] == 4_994_013.02
     assert top["walk"]["ratio_pct"] == 21.17 and top["walk"]["ratio_pct_est"] == 25.18
-    assert top["text"] == ("Sell-side triggers at 73.7885 to 73.4042 (-4.0% to -4.5%): at least $4.20M stated, about $4.99M with "
+    assert top["text"] == ("Sell-side triggers at 73.79 to 73.40 (-4.0% to -4.5%): at least $4.20M stated, about $4.99M with "
                            "whole-position orders at their owners' positions as of 20:48:26Z, across 94 orders from 88 accounts; the "
                            "bids at and below it total $19.83M, so this cluster is at least 21% of the liquidity it would walk, about "
                            "25% with the estimate; 33 of 94 (35%) whole-position, 33 estimated")
     assert [(x["fires_on"], x["k"]) for x in st["clusters"]] == [("fall", 8), ("fall", 1), ("rise", 13), ("rise", 11)]   # ranked by stated notional
     # the estimate's largest buy-side band differs from the stated cluster: one sentence says so
     assert [(x["fires_on"], x["k"]) for x in st["clusters_by_estimate"]] == [("rise", 14)]
-    assert st["clusters_by_estimate"][0]["text"].startswith("by the estimate, the largest buy-side trigger band is 82.2434 to 82.6277 (+7.0% to +7.5%), about $3.01M")
+    assert st["clusters_by_estimate"][0]["text"].startswith("by the estimate, the largest buy-side trigger band is 82.24 to 82.63 (+7.0% to +7.5%), about $3.01M")
     # over the bands: the estimate nearly doubles the in-band interest; the stated figures and the exclusions are untouched
     rows = [r for side in st["map"]["sides"].values() for r in side["bands"]]
     assert round(sum(r["notional_usd"] or 0 for r in rows)) == 14_863_567 and round(sum((r["estimate"] or {}).get("notional_usd") or 0 for r in rows)) == 14_433_865
@@ -483,7 +483,7 @@ def test_the_shadow_runners_live_recording_gives_estimates_on_live_data():
     assert e["unknown"] == {EST_SET_ASIDE: 23, EST_FLAT: 1}
     top = st["clusters"][0]
     assert (top["fires_on"], top["k"], top["notional_usd"], top["estimate"]["notional_usd"], top["total_est_usd"]) == ("fall", 4, 2_871_857.01, 117_523.74, 2_989_380.75)
-    assert top["text"] == ("Sell-side triggers at 70.7516 to 70.3906 (-2.0% to -2.5%): at least $2.87M stated, about $2.99M with whole-position "
+    assert top["text"] == ("Sell-side triggers at 70.75 to 70.39 (-2.0% to -2.5%): at least $2.87M stated, about $2.99M with whole-position "
                            "orders at their owners' positions as of 23:04:38Z, across 30 orders from 27 accounts; the bids at and below it "
                            "total $37.86M, so this cluster is at least 7.6% of the liquidity it would walk, about 7.9% with the estimate; "
                            "7 of 30 (23%) whole-position, 7 estimated")

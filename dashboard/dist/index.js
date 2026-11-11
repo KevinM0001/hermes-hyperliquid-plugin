@@ -18412,8 +18412,17 @@
     const d = i >= 0 && t.indexOf("e") < 0 ? Math.min(t.length - i - 1, 8) : 0;
     return signOf(n) + num(Math.abs(n), d, d);
   }
+  // The stop map's prices (review of Nov 11): whole dollars with separators from 1,000 (74,131), two decimals below
+  // it (31.42); the shared dpx keeps a served decimal's own precision everywhere else.
+  function pxCard(s) {
+    if (s === null || s === undefined || s === "") return null;
+    const n = Number(s);
+    if (!isFinite(n)) return String(s);
+    const a = Math.abs(n);
+    return signOf(n) + (a >= 1000 ? num(a, 0, 0) : num(a, 2, 2));
+  }
   function DPx(props) {
-    const t = dpx(props.v);
+    const t = (props.fmt || dpx)(props.v);
     return t === null ? missing() : h("span", { className: cx("hd-num", props.className) }, t);
   }
   // A size the snapshot computed (0 is a real zero here, dimmed); a missing one says so.
@@ -18954,11 +18963,11 @@
   }
   function bandTip(b, th) {
     const w = b.walk || {};
-    const lines = [qp(b.band.from_pct, 1) + " to " + qp(b.band.to_pct, 1) + "% " + (b.fires_on === "fall" ? "below" : "above") + " the reference: " + dpx(b.band.near_px) + " to " + dpx(b.band.far_px),
+    const lines = [qp(b.band.from_pct, 1) + " to " + qp(b.band.to_pct, 1) + "% " + (b.fires_on === "fall" ? "below" : "above") + " the reference: " + pxCard(b.band.near_px) + " to " + pxCard(b.band.far_px),
       "resting depth in the band " + (th && isNum(th.depth_usd) ? usd(th.depth_usd) : "?") + (th && isNum(th.cumulative_from_price_usd) ? ", from the price out to it " + usd(th.cumulative_from_price_usd) : ""),
       "triggers: " + intf(b.orders) + " orders from " + intf(b.accounts) + " accounts, " + intf(b.unknown_size_orders) + " with no stated size" + (isNum(b.notional_usd) ? "; stated notional " + (b.lower_bound ? "at least " : "") + usd(b.notional_usd) : "; " + (b.notional_reason || "no stated notional")),
       catText(b.by_category)];
-    if (b.largest_order && isNum(b.largest_order.notional_usd)) lines.push("largest order " + usd(b.largest_order.notional_usd) + " at " + dpx(b.largest_order.trigger_px) + (isNum(b.largest_order.share_pct) ? " (" + num(b.largest_order.share_pct, 1, 1) + "% of the band's stated notional)" : ""));
+    if (b.largest_order && isNum(b.largest_order.notional_usd)) lines.push("largest order " + usd(b.largest_order.notional_usd) + " at " + pxCard(b.largest_order.trigger_px) + (isNum(b.largest_order.share_pct) ? " (" + num(b.largest_order.share_pct, 1, 1) + "% of the band's stated notional)" : ""));
     lines.push(isNum(w.ratio_pct) ? "walk: " + (w.lower_bound ? "at least " : "") + walkPct(w.ratio_pct) + " of the " + usd(w.depth_at_and_beyond_usd) + " resting at and beyond the band" + (isNum(w.depth_between_usd) ? "; " + usd(w.depth_between_usd) + " rests between the price and the band" : "")
       : "walk: " + (w.ratio_reason || "not given"));
     return lines.join("\n");
@@ -18986,8 +18995,8 @@
             const tW = props.trigMax > 0 && isNum(b.notional_usd) ? Math.max(b.notional_usd > 0 ? 1 : 0, Math.round(b.notional_usd / props.trigMax * 100)) : 0;
             const w = b.walk || {};
             return h("tr", { key: b.k, className: cx(props.ranked[b.fires_on + ":" + b.k] && "hd-smap-cluster"), title: bandTip(b, th) },
-              h("td", null, qp(b.band.from_pct, 1) + "\u2013" + qp(b.band.to_pct, 1) + "%", props.ranked[b.fires_on + ":" + b.k] ? h("span", { className: "hd-smap-rank" }, " #" + props.ranked[b.fires_on + ":" + b.k]) : null),
-              h("td", { className: "hd-r hd-dim" }, h(DPx, { v: b.band.near_px })),
+              h("td", null, qp(b.band.from_pct, 1) + "\u2013" + qp(b.band.to_pct, 1) + "%", props.ranked[b.fires_on + ":" + b.k] ? h("span", { className: cx("hd-smap-rank", isFall ? "hd-ask" : "hd-bid") }, " #" + props.ranked[b.fires_on + ":" + b.k]) : null),
+              h("td", { className: "hd-r hd-dim" }, h(DPx, { v: b.band.near_px, fmt: pxCard })),
               h("td", { className: "hd-r hd-barcell" },
                 h("span", { className: cx("hd-bar", isFall ? "hd-bar-bid" : "hd-bar-ask"), style: { width: dW + "%" }, "aria-hidden": "true" }),
                 h("span", { className: "hd-barval" }, th && isNum(th.depth_usd) ? usd(th.depth_usd) : missing())),
@@ -19053,8 +19062,12 @@
         isNum(acc.waiting_triggers) ? h("span", { className: cx("hd-dim", acc.complete === false && "hd-tone-text-bad") }, " \u00b7 accounted " + intf(acc.waiting_triggers) + " waiting = " + intf(acc.in_bands) + " in the bands + " + intf(acc.excluded_here) + " left out" + (acc.complete === false ? " (they differ)" : "")) : null),
       ex.size_outlier && ex.size_outlier.rule ? h("div", { className: "hd-small hd-dim" }, "Size-outlier rule: " + ex.size_outlier.rule) : null);
   }
+  // One census count as two cells of the grid below (review of Nov 11): the label dim, the value a mono figure, so the
+  // counts line up in columns instead of running on as inline pairs (style.css .hd-smap-kvs).
   function censusKv(label, v, reason, title) {
-    return h(KV, { k: label }, v !== null && v !== undefined ? h("span", { title: title || undefined }, v) : h(Unavailable, { reason: reason || "not in snapshot", compact: true }));
+    return h(Fragment, null,
+      h("span", { className: "hd-smap-cen-k hd-dim" }, label),
+      h("b", { className: "hd-smap-cen-v hd-num" }, v !== null && v !== undefined ? h("span", { title: title || undefined }, v) : h(Unavailable, { reason: reason || "not in snapshot", compact: true })));
   }
   function Census(props) {
     const c = props.c;
@@ -19083,12 +19096,29 @@
     });
     return maxV;
   }
+  // The last accepted value, replaced at most every `ms` (review of Nov 11): the stop map's sentences and tables
+  // changed with every tick, too fast to read. The first value shows at once; a new `key` (another market, or the
+  // data going away or coming back) resets at once, so an outage or a recovery is never held back.
+  function useHeld(value, ms, key) {
+    const ref = useRef(null);
+    const now = Date.now();
+    const avail = value !== null && value !== undefined;
+    const cur = ref.current;
+    if (!cur || cur.key !== key || cur.avail !== avail || now - cur.at >= ms) ref.current = { value: value, at: now, key: key, avail: avail };
+    return ref.current.value;
+  }
   function StopMapPanel(props) {
     const v = props.v;
     const gate = nodeGate(v, "stops", false);
-    const st = gate ? null : v.stops;
+    // The body's figures (clusters, estimate, band tables, sharpest drops) are held for 10 s; the chips, badges and
+    // ages above them keep ticking from the live `v`. The map's and the thinning's availability are part of the key.
+    const live = gate ? null : { stops: v.stops, thinning: v.thinning };
+    const mpOk = !!(live && live.stops && live.stops.map && live.stops.map.available !== false);
+    const thOk = !!(live && live.thinning && live.thinning.available !== false);
+    const held = useHeld(live, 10000, (props.market || "") + (mpOk ? "|map" : "|nomap") + (thOk ? "+thin" : ""));
+    const st = held ? held.stops : null;
     const mp = st && st.map;
-    const th = v && v.thinning;
+    const th = held ? held.thinning : null;
     const ok = !gate && mp && mp.available !== false;
     let depthMax = 0, trigMax = 0;
     const ranked = {};
@@ -19107,25 +19137,28 @@
           "clusters, quoted as the plugin wrote them. Where orders report no size (whole-position stops and take-profits), every money figure and ratio is a lower bound and says so; " +
           "a band whose orders are all unsized shows no number, never a 0. This is a census of the engine's memory at the book time, not a history scan, and nothing here is a liquidation level."),
         ok ? h("p", { className: "hd-dim" }, [rules.band, rules.notional, rules.walk, rules.clusters, rules.accounts].filter(Boolean).join(" ")) : null),
-      sub: ok && mp.as_of ? h("span", { className: "hd-dim" }, (mp.as_of.note || "") + (isNum(mp.as_of.block) ? " Block " + mp.as_of.block + "." : "")) : null,
+      sub: h("span", { className: "hd-dim" }, (ok && mp.as_of ? (mp.as_of.note || "") + (isNum(mp.as_of.block) ? " Block " + mp.as_of.block + "." : "") + " \u00b7 " : "") + "the figures refresh every 10 s"),
       badges: h(NodeProv, { v: v, what: "triggers + L4 book" }),
       status: h(NodeStatus, { v: v, fams: ["triggers", "book", "bands"], extra: h(LateLine, { v: v, fam: "book" }) })
     },
     gate ? null : h(FamNotes, { fams: v && v.families, names: ["triggers", "book"] }),
     gate ? gate : h(Fragment, null,
       ok ? h("div", { className: "hd-small" },
-        h(KV, { k: "reference" }, h(DPx, { v: mp.ref_px }), h("span", { className: "hd-dim" }, " " + (mp.ref_px_rule || "node book mid"))),
+        h(KV, { k: "reference" }, h(DPx, { v: mp.ref_px, fmt: pxCard }), h("span", { className: "hd-dim" }, " " + (mp.ref_px_rule || "node book mid"))),
         h(KV, { k: "bands" }, (isNum(mp.band_pct) ? pct(mp.band_pct, 1) : "0.5%") + " out to " + (isNum(mp.out_to_pct) ? pct(mp.out_to_pct, 0) : "10%")),
         isNum(g(mp, "as_of", "book_time_ms")) ? h(KV, { k: "book time" }, hmsms(mp.as_of.book_time_ms) + " UTC") : null)
         : h(Unavailable, { reason: (mp && mp.reason) || "stop map not in this snapshot", block: true }),
       // The liquidity thinning's two sharpest-drop lines live here now (Kevin, Nov 10: one map instead of three tables);
       // its per-band tables are behind the fold further down.
       th && th.available !== false ? h("div", { className: "hd-thin-pair hd-smap-drops" },
-        h(ThinDrop, { d: g(th, "bids_below", "sharpest_drop"), side: "bid" }),
-        h(ThinDrop, { d: g(th, "asks_above", "sharpest_drop"), side: "ask" })) : null,
+        h(ThinDrop, { d: g(th, "bids_below", "sharpest_drop"), side: "bid", fmt: pxCard }),
+        h(ThinDrop, { d: g(th, "asks_above", "sharpest_drop"), side: "ask", fmt: pxCard })) : null,
       h("div", { className: "hd-subhead" }, "Clusters"),
-      st.clusters && st.clusters.length ? h("ol", { className: "hd-smap-clusters" }, st.clusters.map(function (c) {
-        return h("li", { key: c.fires_on + ":" + c.k, title: bandTip(c, null) }, h("span", { className: "hd-smap-rank" }, "#" + c.rank + " "), c.text);
+      // Each cluster on its own two-column row (review of Nov 11): the rank in a fixed column, coloured like its side's
+      // title, and the sentence wrapping under itself.
+      st.clusters && st.clusters.length ? h("ol", { className: "hd-smap-clusters hd-smap-ranked" }, st.clusters.map(function (c) {
+        return h("li", { key: c.fires_on + ":" + c.k, title: bandTip(c, null) },
+          h("span", { className: cx("hd-smap-rank", c.fires_on === "fall" ? "hd-ask" : "hd-bid") }, "#" + c.rank), h("span", null, c.text));
       })) : h("div", { className: "hd-small hd-dim" }, st.clusters_reason || (st.clusters ? "No band has a stated notional, so nothing ranks." : "clusters not in this snapshot")),
       // The whole-position estimate (Kevin, Nov 10): facts rank; when the estimate's largest band differs, the plugin's
       // one sentence per side is quoted; the basis line says what the estimate is as of, or why there is none.
@@ -19389,7 +19422,7 @@
     if (!d) return h("div", { className: "hd-thin-drop hd-dim" }, "No band is thinner than the one before it, out to the last band.");
     const dist = isNum(d.distance_pct) ? pct(d.distance_pct, 1) + (below ? " below" : " above") + " the current price" : "distance not in snapshot";
     return h("div", { className: "hd-thin-drop" },
-      h("b", null, "Sharpest drop"), " at ", h(DPx, { v: d.at_price }), ", " + dist + ": ",
+      h("b", null, "Sharpest drop"), " at ", h(DPx, { v: d.at_price, fmt: props.fmt }), ", " + dist + ": ",
       d.empty_band ? h("b", { className: "hd-thin-x" }, "empty band")
         : (isNum(d.times_thinner) ? h("b", { className: "hd-thin-x" }, num(d.times_thinner, 2, 2) + "\u00d7 thinner") : h(Unavailable, { reason: "ratio not in snapshot", compact: true })),
       d.empty_band ? " (the " + bandPct(d.to_band_pct) + " band has nothing resting, after " + bandPct(d.from_band_pct) + ")"
@@ -19401,6 +19434,17 @@
     const isBid = props.side === "bid";
     const bands = s.bands || [];
     const maxV = props.maxV;
+    // This table's own formats (review of Nov 11), not the tab's shared price and size formatters: a band edge with no
+    // decimals from 1,000 up and with cents below (a price under $1 keeps its own decimals); the largest order's size
+    // to two decimals, its notional and share as before.
+    function edgePx(s) {
+      const n = Number(s);
+      if (s === null || s === undefined || s === "" || !isFinite(n)) return dpx(s);
+      const a = Math.abs(n);
+      return a >= 1000 ? signOf(n) + num(a, 0, 0) : (a >= 1 ? signOf(n) + num(a, 2, 2) : dpx(s));
+    }
+    function edge(s) { const t = edgePx(s); return t === null ? missing() : h("span", { className: "hd-num" }, t); }
+    function lgSz(v) { return isNum(v) ? num(v, 2, 2) : "?"; }
     return h("div", { className: "hd-thin-side" },
       h("div", { className: "hd-wt-title" }, h("b", { className: isBid ? "hd-bid" : "hd-ask" }, isBid ? "Bids below" : "Asks above"),
         h("span", { className: "hd-dim" }, " the current price")),
@@ -19416,14 +19460,14 @@
             const w = maxV > 0 && isNum(b.usd_per_1_price) ? Math.max(b.usd_per_1_price > 0 ? 1 : 0, Math.round(b.usd_per_1_price / maxV * 100)) : 0;
             return h("tr", { key: b.from_pct, className: b.dominated ? "hd-dominated" : undefined },
               h("td", null, qp(b.from_pct, 1) + "\u2013" + qp(b.to_pct, 1) + "%"),
-              h("td", { className: "hd-r hd-dim" }, h(DPx, { v: b.lo }), "\u2013", h(DPx, { v: b.hi })),
+              h("td", { className: "hd-r hd-dim" }, edge(b.lo), "\u2013", edge(b.hi)),
               h("td", { className: "hd-r" }, isNum(b.depth_usd) ? usd(b.depth_usd) : missing()),
               h("td", { className: "hd-r hd-barcell", title: isNum(b.usd_per_1_price) ? usdFull(b.usd_per_1_price) + " per $1 of price" : undefined },
                 h("span", { className: cx("hd-bar", isBid ? "hd-bar-bid" : "hd-bar-ask"), style: { width: w + "%" }, "aria-hidden": "true" }),
                 h("span", { className: "hd-barval" }, isNum(b.usd_per_1_price) ? usd(b.usd_per_1_price) : missing())),
               h("td", { className: "hd-r" }, isNum(b.orders) ? intf(b.orders) : missing()),
               h("td", { className: b.dominated ? "hd-sizecheck" : "hd-dim", title: lg && lg.user ? lg.user : undefined },
-                lg ? h(Fragment, null, qz(lg.sz) + (isNum(lg.usd) ? " (" + usd(lg.usd) + ")" : ""),
+                lg ? h(Fragment, null, lgSz(lg.sz) + (isNum(lg.usd) ? " (" + usd(lg.usd) + ")" : ""),
                   isNum(lg.share_pct) ? (b.dominated ? h("b", null, " one order is " + pct(lg.share_pct, 0) + " of this band") : " " + pct(lg.share_pct, 0) + " of band") : null)
                   : (b.orders === 0 ? "none: nothing resting" : missing())));
           })))));
@@ -22322,7 +22366,7 @@
         h(SectionHead, { title: "Order flow", note: non ? "taker flow from the node's fills, by what each fill did to the taker's position" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-c" }, h(OrderFlowMapPanel, { v: nlive })) : null,
         h(SectionHead, { title: "Liquidity and stops", note: non ? "resting depth and waiting triggers per band, the sharpest thinning, the largest resting orders" : "needs node mode" }),
-        non ? h("div", { className: "hd-row hd-row-n3" }, h(StopMapPanel, { v: nlive })) : null,
+        non ? h("div", { className: "hd-row hd-row-n3" }, h(StopMapPanel, { v: nlive, market: m.market })) : null,
         non ? h("div", { className: "hd-row hd-row-n2" }, h(WallsPanel, { v: nlive })) : null,
         h(SectionHead, { title: "Book", note: non ? "the node's order-level book, ten levels a side" : "needs node mode" }),
         non ? h("div", { className: "hd-row hd-row-n" }, h(NodeLadderPanel, { v: nlive })) : null,

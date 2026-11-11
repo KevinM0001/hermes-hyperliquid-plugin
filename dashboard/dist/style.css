@@ -865,6 +865,11 @@
 .hd-smap-clusters { margin: 4px 0 10px; padding: 0 0 0 2px; list-style: none; display: flex; flex-direction: column; gap: 5px; }
 .hd-smap-clusters li { font-size: 12.5px; line-height: 1.45; color: var(--hd-text-2); }
 .hd-smap-rank { font: 600 10.5px/1 var(--hd-mono); color: var(--hd-violet); }
+/* the ranked clusters (review of Nov 11): the rank in its own column, coloured like the side's title; the sentence wraps under itself */
+.hd-smap-ranked { gap: 8px; }
+.hd-smap-ranked li { display: grid; grid-template-columns: 2.4em minmax(0, 1fr); column-gap: 4px; align-items: baseline; }
+.hd-smap-rank.hd-ask { color: var(--hd-ask); }
+.hd-smap-rank.hd-bid { color: var(--hd-bid); }
 .hd-smap td { font-size: 11px; padding: 3px 6px; white-space: nowrap; }
 .hd-smap-cluster td { background: rgba(179, 157, 255, .07); }
 .hd-bar-trig { background: var(--hd-violet); opacity: .3; }
@@ -876,7 +881,11 @@
 .hd-smap-excl { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
 .hd-smap-ex { white-space: nowrap; }
 .hd-smap-census { margin-top: 8px; }
-.hd-smap-kvs { display: flex; flex-wrap: wrap; gap: 4px 18px; }
+.hd-smap-kvs { display: grid; grid-template-columns: repeat(3, max-content minmax(0, 1fr)); gap: 3px 10px; align-items: baseline; }
+.hd-smap-cen-k { white-space: nowrap; }
+.hd-smap-cen-v { white-space: normal; min-width: 0; padding-right: 14px; color: var(--hd-text); }
+/* the three pairs need about 960px beside the sidebar; narrower windows get one pair per row */
+@media (max-width: 1260px) { .hd-smap-kvs { grid-template-columns: max-content minmax(0, 1fr); } .hd-smap-cen-v { padding-right: 0; } }
 .hd-smap-drops { margin: 2px 0 8px; }
 .hd-smap-folds { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .hd-smap-fold > .hd-why-body { max-width: none; }

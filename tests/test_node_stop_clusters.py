@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import types
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from hl_desk.node import panels, serving
 from hl_desk.node.book import NodeBook
@@ -100,6 +100,13 @@ def _band_of(g, mid):
 
 def _notional(members):
     return sum((g.sz * g.trigger_px for g in members if not g.position_tpsl), D(0))
+
+
+def _px(s):
+    """The band edges as the sentences print them (review of Nov 11): whole dollars with separators from 1,000, two decimals below it."""
+    x = Decimal(str(s))
+    q = Decimal("1") if abs(x) >= 1000 else Decimal("0.01")
+    return f"{x.quantize(q, rounding=ROUND_HALF_UP):,}"
 
 
 def _money(x):
@@ -248,7 +255,7 @@ def test_recorded_window_clusters_are_the_two_largest_bands_per_side_quoted_in_t
         b, w, u = cl["band"], cl["walk"], cl["unknown_size_orders"]
         least = "at least " if u else ""                    # a lower bound whenever any order has no size
         assert cl["lower_bound"] is bool(u) and w["lower_bound"] is bool(u) and w["unknown_size_orders"] == u
-        head = (f"{label} at {b['near_px']} to {b['far_px']} ({sign}{b['from_pct']:.1f}% to {sign}{b['to_pct']:.1f}%): "
+        head = (f"{label} at {_px(b['near_px'])} to {_px(b['far_px'])} ({sign}{b['from_pct']:.1f}% to {sign}{b['to_pct']:.1f}%): "
                 f"{least}{_money(cl['notional_usd'])} across {cl['orders']} orders from {cl['accounts']} accounts; "
                 f"the {walked} it total {_money(w['depth_at_and_beyond_usd'])}, so this cluster is {least}")
         assert cl["text"].startswith(head), cl["text"]
@@ -351,15 +358,15 @@ def test_hand_checked_ratios_null_forms_and_exclusions():
     assert rise[5]["band"]["near_px"] == "102.5" and rise[5]["band"]["far_px"] == "103"
     # clusters: the two largest stated notionals per side, in rank order, with the report's sentence
     assert [(x["fires_on"], x["k"], x["rank"]) for x in cl] == [("fall", 5, 1), ("fall", 2, 2), ("rise", 4, 1), ("rise", 2, 2)]
-    assert cl[0]["text"] == ("Sell-side triggers at 97.5 to 97 (-2.5% to -3.0%): $292 across 2 orders from 2 accounts; "
+    assert cl[0]["text"] == ("Sell-side triggers at 97.50 to 97.00 (-2.5% to -3.0%): $292 across 2 orders from 2 accounts; "
                              "the bids at and below it total $3K, so this cluster is 10% of the liquidity it would walk")
-    assert cl[1]["text"] == ("Sell-side triggers at 99 to 98.5 (-1.0% to -1.5%): at least $99 across 2 orders from 2 accounts; "
+    assert cl[1]["text"] == ("Sell-side triggers at 99.00 to 98.50 (-1.0% to -1.5%): at least $99 across 2 orders from 2 accounts; "
                              "the bids at and below it total $5K, so this cluster is at least 2.0% of the liquidity it would "
                              "walk; 1 of 2 (50%) size unknown")
     assert cl[1]["lower_bound"] is True and cl[1]["unknown_size_orders"] == 1 and cl[0]["lower_bound"] is False
-    assert cl[2]["text"] == ("Buy-side triggers at 102 to 102.5 (+2.0% to +2.5%): $5K across 1 order from 1 account; "
+    assert cl[2]["text"] == ("Buy-side triggers at 102.00 to 102.50 (+2.0% to +2.5%): $5K across 1 order from 1 account; "
                              "the asks at and above it total $5K, so this cluster is 98% of the liquidity it would walk")
-    assert cl[3]["text"] == ("Buy-side triggers at 101 to 101.5 (+1.0% to +1.5%): $101 across 1 order from 1 account; "
+    assert cl[3]["text"] == ("Buy-side triggers at 101.00 to 101.50 (+1.0% to +1.5%): $101 across 1 order from 1 account; "
                              "the asks at and above it total $5K, so this cluster is 2.0% of the liquidity it would walk")
     # exclusions, each counted once in the map's order, with their notional; the engine's trailing count beside them
     assert ex["trailing_stops"] == {"orders": 3, "notional_usd": None, "reason": ex["trailing_stops"]["reason"]}
@@ -497,7 +504,7 @@ def test_a_size_outlier_is_an_order_worth_more_than_the_depth_its_band_would_wal
     assert (ex["implausible_price"]["orders"], ex["implausible_price"]["notional_usd"]) == (1, 5000.0)
     assert ex["accounted"] == {"waiting_triggers": 13, "in_bands": 5, "excluded_here": 8, "complete": True}
     assert [(x["fires_on"], x["k"]) for x in out["clusters"]] == [("fall", 2), ("fall", 10), ("rise", 6)]
-    assert out["clusters"][1]["text"] == ("Sell-side triggers at 95 to 94.5 (-5.0% to -5.5%): $950 across 1 order from 1 account; "
+    assert out["clusters"][1]["text"] == ("Sell-side triggers at 95.00 to 94.50 (-5.0% to -5.5%): $950 across 1 order from 1 account; "
                                           "the bids at and below it total $950, so this cluster is 100% of the liquidity it would walk")
     assert not hasattr(panels, "MAP_OUTLIER_MULTIPLE")        # the median multiple is gone
 

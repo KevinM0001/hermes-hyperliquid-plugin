@@ -13,7 +13,7 @@ window.
 from __future__ import annotations
 
 from collections import deque
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 
 from .book import NodeBook
 from .flow import activity_buckets, liquidations, wallet_split, wallet_splits
@@ -616,7 +616,7 @@ def stop_map(mf, depth: dict | None, unavailable: str | None, est: dict | None =
                 top = max(with_est, key=lambda r: (r["total_est_usd"], -r["k"]))
                 if not ranked or top["k"] != ranked[0][1]:
                     meta, b = MAP_SIDES[d], top["band"]
-                    text = (f"by the estimate, the largest {meta['label'].lower()[:-1]} band is {b['near_px']} to {b['far_px']} "
+                    text = (f"by the estimate, the largest {meta['label'].lower()[:-1]} band is {_px(b['near_px'])} to {_px(b['far_px'])} "
                             f"({meta['sign']}{b['from_pct']:.1f}% to {meta['sign']}{b['to_pct']:.1f}%), about "
                             f"{_money(top['total_est_usd'])} if its whole-position orders fired at their owners' positions"
                             + (f" as of {iso_ms(est_meta['as_of_ms'])[11:19]}Z" if est_meta.get("as_of_ms") else ""))
@@ -756,6 +756,14 @@ def _money(x: float) -> str:
     return f"${x:,.0f}"
 
 
+def _px(s) -> str:
+    """A band edge in the sentences (review of Nov 11): whole dollars with separators from 1,000 (72,268), two
+    decimals below it (73.79); the served near_px and far_px keep their full precision."""
+    x = Decimal(str(s))
+    q = Decimal("1") if abs(x) >= 1000 else Decimal("0.01")
+    return f"{x.quantize(q, rounding=ROUND_HALF_UP):,}"
+
+
 def _sig(x: float, n: int = 4) -> float:
     return float(f"{x:.{n}g}")
 
@@ -775,7 +783,7 @@ def _cluster_text(row: dict) -> str:
     meta = MAP_SIDES[row["fires_on"]]
     band, walk, sign = row["band"], row["walk"], meta["sign"]
     n, unsized, acc = row["orders"], row["unknown_size_orders"], row["accounts"]
-    where = (f"{meta['label']} at {band['near_px']} to {band['far_px']} "
+    where = (f"{meta['label']} at {_px(band['near_px'])} to {_px(band['far_px'])} "
              f"({sign}{band['from_pct']:.1f}% to {sign}{band['to_pct']:.1f}%)")
     who = f"{n} order{'s' if n != 1 else ''} from {acc} account{'s' if acc != 1 else ''}"
     depth = _money(walk["depth_at_and_beyond_usd"]) if walk["depth_at_and_beyond_usd"] else None
@@ -866,7 +874,7 @@ def _census(mf, c: dict | None, why: str | None) -> dict:
     totals with their block. A count that isn't available is null with the reason, never 0."""
     tr, book = mf.triggers, mf.book
     total = len(tr.orders)
-    out = {"label": "resting trigger orders (stops and take-profits) the feed holds for this market, for sanity checks",
+    out = {"label": "resting trigger orders (stops and take-profits) the feed holds for this market",
            "triggers_total": total, "triggers_through_seq": tr.through_seq,
            "unsized_total": sum(1 for g in tr.orders.values() if g.position_tpsl),
            "excluded_by_engine": {"trailing_stops": tr.excluded.get("trailing"), "unclassified": tr.excluded.get("unclassified")},
