@@ -237,7 +237,7 @@ def _holes(segs: list[list], lo: int, hi: int) -> list[dict]:
             continue
         if s[0] > cur:
             out.append({"start_ms": cur, "end_ms": min(s[0], hi),
-                        "why": s[2] or "before the node fills were observed (connect, session or replay start)"})
+                        "why": s[2] or "before the node fills were observed"})
         cur = max(cur, s[1])
         if cur >= hi:
             break

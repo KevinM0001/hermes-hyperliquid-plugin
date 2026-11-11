@@ -243,7 +243,7 @@ def test_recorded_window_against_an_independent_count(market):
     assert w["end_ms"] == last_bt and w["start_ms"] == last_bt - last_bt % BUCKET_MS - 7 * BUCKET_MS
     assert w["coverage_s"] == round((last_bt - first_bt) / 1000, 1) == 119.9 and w["complete"] is False
     assert w["uncovered"] == [{"start_ms": w["start_ms"], "end_ms": first_bt,
-                               "why": "before the node fills were observed (connect, session or replay start)"}]
+                               "why": "before the node fills were observed"}]
     for b in fm["buckets"][:7]:
         assert b["fills"] == 0 and b["coverage_s"] == 0 and b["complete"] is False and b["accounts"] == 0
         assert b["buy_usd"] == b["sell_usd"] == 0 and b["top_account_share_pct"] is None
@@ -437,11 +437,11 @@ def test_partial_coverage_before_the_feed_and_a_sequence_gap_inside_a_bucket():
     assert w["start_ms"] == B1 - 7 * BUCKET_MS and w["end_ms"] == end and w["complete"] is False
     assert w["coverage_s"] == 600 + 400.0
     assert w["uncovered"] == [{"start_ms": w["start_ms"], "end_ms": B0 + 300_000,
-                               "why": "before the node fills were observed (connect, session or replay start)"},
+                               "why": "before the node fills were observed"},
                               {"start_ms": B1 + 100_000, "end_ms": B1 + 300_000, "why": gap_reason}]
     b0, b1 = fm["buckets"][6], fm["buckets"][7]
     assert b0["start_ms"] == B0 and b0["coverage_s"] == 600.0 and b0["complete"] is False and b0["in_progress"] is False
-    assert b0["reason"] == "300 s of it not covered by node fills: before the node fills were observed (connect, session or replay start)"
+    assert b0["reason"] == "300 s of it not covered by node fills: before the node fills were observed"
     assert b0["buy_usd"] == 1000.0 and b0["fills"] == 1
     assert b1["start_ms"] == B1 and b1["coverage_s"] == 400.0 and b1["complete"] is False and b1["in_progress"] is True
     assert b1["reason"] == f"in progress: 600 s of its 900 s have passed; 200 s of it not covered by node fills: {gap_reason}"
@@ -467,7 +467,7 @@ def test_fills_known_false_is_a_hole_with_its_own_reason():
     fm = _map(c, SP, T0 + 70_100)
     why = f"executions unknown at block {unknown['block']} (fills record not read)"
     assert fm["window"]["uncovered"] == [
-        {"start_ms": T0 - 7 * BUCKET_MS, "end_ms": T0, "why": "before the node fills were observed (connect, session or replay start)"},
+        {"start_ms": T0 - 7 * BUCKET_MS, "end_ms": T0, "why": "before the node fills were observed"},
         {"start_ms": T0 + 20_000, "end_ms": T0 + 50_000, "why": why}]
     last = fm["buckets"][-1]
     assert last["coverage_s"] == 40.0 and last["fills"] == 2 and why in last["reason"]
