@@ -1318,7 +1318,7 @@
     const at = isNum(f.watermark_block_time_ms) ? hms(f.watermark_block_time_ms) + "Z" : "its last block";
     const left = isNum(f.delay_ms) ? (f.delay_ms >= 60000 ? dur(f.delay_ms) : (f.delay_ms / 1000).toFixed(0) + " s") : null;
     // A feed replaying what it buffered (a fresh connection, a reconnect) is loading, not lagging (Kevin, Nov 11).
-    if (f.catching_up && left) return "catching up: the node's " + (what || "book") + " at " + at + ", " + left + " still to replay";
+    if (f.catching_up && left) return "catching up: the node's " + (what || "book") + " at " + at + ", " + left + " behind and falling";
     const behind = left ? left + " behind" : "behind";
     return "as of the node's " + (what || "book") + " at " + at + ", " + behind + (conn && conn !== "connected" ? " (feed " + conn + ")" : "");
   }

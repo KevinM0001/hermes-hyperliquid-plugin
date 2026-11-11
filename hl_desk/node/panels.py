@@ -49,8 +49,8 @@ def as_of_note(label: str, st: dict | None) -> str | None:
     has_d = isinstance(d, (int, float)) and not isinstance(d, bool)
     if st.get("catching_up") and has_d:
         # A feed replaying what it buffered (a fresh connection, a reconnect) is loading, not lagging (Kevin, Nov 11):
-        # the time is still named, the verb is "catching up" and the figure is what is left to replay.
-        return f"catching up: the node's {label}{when}, {d / 1000:.1f} s still to replay"
+        # the time is still named, the verb is "catching up" and the figure is the delay, which is falling.
+        return f"catching up: the node's {label}{when}, {d / 1000:.1f} s behind and falling"
     behind = f", {d / 1000:.1f} s behind" if has_d else f", {st['state']}: {st.get('reason')}"
     gone = "; the feed is disconnected" if str(st.get("reason") or "").startswith("disconnected:") else ""
     return f"as of the node's {label}{when}{behind}{gone}"

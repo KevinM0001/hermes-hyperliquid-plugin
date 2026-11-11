@@ -95,12 +95,23 @@ def mutate(msg: dict, **changes) -> dict:
 WITHHOLD = ("INVALID", "UNKNOWN")
 
 
+
+def _late_prefix_ok(note, label: str) -> bool:
+    """A late family's note names the family: "as of the node's <label> ..." or, while the feed replays what it
+    buffered (Nov 11), "catching up: the node's <label> ..."."""
+    return isinstance(note, str) and (note.startswith(f"as of the node's {label}") or note.startswith(f"catching up: the node's {label}"))
+
 def check_late(block: dict, st: dict, label: str) -> None:
     """A served block names its family's state; a late family's block says "as of the node's <label> at <block
     time>, <delay> behind" (Kevin, Nov 10), and a current one carries no such note."""
     assert block.get("freshness") == st["state"], (label, block.get("freshness"), st)
     note = block.get("as_of_note")
     if st["state"] in ("BEHIND", "STALE"):
+        if st.get("catching_up"):
+            # the feed is replaying what it buffered (Nov 11): the same time, the verb "catching up", the delay falling
+            assert note and note.startswith(f"catching up: the node's {label} at "), (label, note, st)
+            assert note.endswith(" s behind and falling") and f"{st['delay_ms'] / 1000:.1f} s" in note, (note, st)
+            return
         assert note and note.startswith(f"as of the node's {label}"), (label, note, st)
         if isinstance(st.get("delay_ms"), (int, float)):
             assert f"{st['delay_ms'] / 1000:.1f} s behind" in note and " at " in note, (note, st)
@@ -270,7 +281,7 @@ class Surfaces:
             elif view["families"]["book"]["state"] in ("BEHIND", "STALE"):   # served late, labelled (Kevin, Nov 10)
                 for k in ("ladder", "walls", "thinning"):
                     assert nb[k].get("available") is not False and nb[k]["freshness"] == view["families"]["book"]["state"], k
-                    assert nb[k]["as_of_note"].startswith("as of the node's book"), k
+                    assert _late_prefix_ok(nb[k]["as_of_note"], "book"), k
         if slot == "live":
             alerts = json.loads(tools.run_tool("hl_alerts", {"market": market, "snapshot_id": sid}, self.rt))
             assert alerts["ok"] and strip(alerts) == strip(self._get("tool/hl_alerts", market=market, snapshot_id=sid))

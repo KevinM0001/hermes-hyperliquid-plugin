@@ -12,7 +12,7 @@ import pytest
 
 from hl_desk.node import panels
 
-from node_helpers import (OPTS, RESTART, XYZ, by_market, check_view, client, feed, hello_from, jsonable,
+from node_helpers import (OPTS, RESTART, XYZ, by_market, check_view, client, feed, hello_from, jsonable, _late_prefix_ok,
                           read_recording, read_tap, surfaces)
 
 SP, XY = "xyz:SP500", "xyz:XYZ100"
@@ -548,9 +548,13 @@ def test_old_backlog_delivered_at_normal_speed_reads_behind(surfaces):
     assert st["state"] == "BEHIND" and st["source_age_ms"] > 5_000 and st["delay_ms"] > 5_000
     lad = plugin.last["node_book"]["ladder"]
     assert lad.get("available") is not False and lad["bids"] and lad["freshness"] == "BEHIND"
-    assert lad["as_of_note"] == f"as of the node's book at {iso_ms(st['watermark_block_time_ms'])}, {st['delay_ms'] / 1000:.1f} s behind"
+    # The fixture's first seconds replay the snapshot's backlog, so the family may still be catching up here (Nov 11):
+    # the same time and delay, the verb "catching up"; once the replay is over the note reads plainly behind.
+    at, d = iso_ms(st["watermark_block_time_ms"]), f"{st['delay_ms'] / 1000:.1f}"
+    assert lad["as_of_note"] == (f"catching up: the node's book at {at}, {d} s behind and falling" if st.get("catching_up")
+                                 else f"as of the node's book at {at}, {d} s behind")
     assert plugin.last["node_book"]["thinning"]["as_of_note"] == lad["as_of_note"]
-    assert plugin.last["node_stops"]["stops"]["as_of_note"].startswith("as of the node's waiting stops at ")
+    assert _late_prefix_ok(plugin.last["node_stops"]["stops"]["as_of_note"], "waiting stops")
 
 
 def _avg_delay(watermarks, t, window=5_000):

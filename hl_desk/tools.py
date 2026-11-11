@@ -645,7 +645,7 @@ def node_status(snap: dict, args: dict, rt=None) -> dict:
             "states": {"LIVE": "the node feed's delay (5 s average of the latest watermark's age) is within its limit",
                        "catching_up": "a flag beside a family's state: true while the feed replays what it buffered after a "
                                       "connection, so the node's time advances faster than the clock; the family is loading, "
-                                      "not lagging, and its note reads 'catching up: ... still to replay' instead of 'behind'",
+                                      "not lagging, and its note reads 'catching up: ... behind and falling' instead of 'as of ... behind'",
                        "BEHIND": "delayed: the node feed's 5 s average delay is above the delayed limit; the data is "
                                  "served with this label and its delay, as of its block time, never as current",
                        "STALE": "the node feed's 5 s average delay is above the stale limit (heartbeats don't count); "

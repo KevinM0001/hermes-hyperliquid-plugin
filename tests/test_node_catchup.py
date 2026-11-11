@@ -1,6 +1,6 @@
 """A feed replaying what it buffered after a connection is loading, not lagging (decision of Nov 11): the family carries
 catching_up while the node's block time advances at more than twice the clock's pace, its note says "catching up ...
-still to replay", and the flag ends once the replay is over, after which the ordinary delay rule applies."""
+behind and falling", and the flag ends once the replay is over, after which the ordinary delay rule applies."""
 from hl_desk.node import panels
 from hl_desk.node.client import catching_up
 from hl_desk.node.serving import aged_status
@@ -50,7 +50,7 @@ def test_the_live_recording_starts_by_catching_up_then_reads_behind():
             break
     el, st, note = seen_catching
     assert st["catching_up"] is True and st["state"] in ("BEHIND", "STALE"), (el, st)
-    assert note.startswith("catching up: the node's book at ") and note.endswith(" s still to replay"), note
+    assert note.startswith("catching up: the node's book at ") and note.endswith(" s behind and falling"), note
     assert "replaying what it buffered" in st["reason"]
     el, st, note = seen_behind
     assert st["catching_up"] is False and st["state"] in ("BEHIND", "STALE"), (el, st)
