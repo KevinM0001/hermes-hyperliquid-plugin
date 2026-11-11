@@ -337,7 +337,9 @@ def open_wallet(snap: dict, ms: dict, n: int, addr: str, rt) -> dict:
     return out
 
 
-ACCOUNT_SOURCE_MAX_AGE_S = 10.0
+# How long an opened wallet's account state is shown as current, from the answer's own time: 2 minutes (Kevin,
+# Nov 11; 10 s before). The schema's freshness.fields.clearinghouseState.source_max_age_s states the same number.
+ACCOUNT_SOURCE_MAX_AGE_S = 120.0
 
 
 def _num(d: dict, key: str, unit: str, reason: str | None):

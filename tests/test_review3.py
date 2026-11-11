@@ -88,7 +88,9 @@ def test_record_naming_another_coin_is_invalid_for_the_subscription():
 def test_slow_account_requests_count_as_age(monkeypatch):
     clock = {"ms": T0}
     monkeypatch.setattr(info_client.time, "time", lambda: clock["ms"] / 1000)
-    state = {"time": T0 - 5000, "marginSummary": {"accountValue": "700", "totalNtlPos": "700", "totalMarginUsed": "70"},
+    # the answer is 105 s old at the request: within the 120 s limit when the state answer lands (114 s), past it
+    # once both answers are in hand (123 s), which is when the age is judged
+    state = {"time": T0 - 105_000, "marginSummary": {"accountValue": "700", "totalNtlPos": "700", "totalMarginUsed": "70"},
              "assetPositions": []}
 
     def slow_post(url, body):
@@ -99,7 +101,8 @@ def test_slow_account_requests_count_as_age(monkeypatch):
     cur = info_client.fetch_wallet_current("http://info.invalid", A, "")
     assert cur["requested_ms"] == T0 and cur["state_received_ms"] == T0 + 9000 and cur["returned_ms"] == T0 + 18000
     acc = tools.current_account(cur, "", (0.05, "fixed for tests"))["account"]
-    assert acc["freshness"]["source_age_s"] == 23.0 and acc["freshness"]["status"] == "delayed"
+    assert acc["freshness"]["source_age_s"] == 123.0 and acc["freshness"]["status"] == "delayed"
+    assert acc["freshness"]["source_max_age_s"] == 120.0 and "limit 120.0 s" in acc["freshness"]["reason"]
     assert acc["margin_summary"]["account_value_usd"]["value"] is None
 
 

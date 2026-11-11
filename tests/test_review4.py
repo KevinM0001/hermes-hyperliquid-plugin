@@ -30,11 +30,12 @@ def _live_account_state_js() -> str:
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the tab's pure function")
 def test_open_wallet_account_expires_after_its_limit():
-    fresh = {"status": "fresh", "source_age_s": 0.465, "source_max_age_s": 10.0, "clock_bound_s": 0.05}
+    fresh = {"status": "fresh", "source_age_s": 0.465, "source_max_age_s": 120.0, "clock_bound_s": 0.05}
     cases = {
         "at_open": [fresh, 1000.0, 1000.0],
         "after_9s": [fresh, 1000.0, 10000.0],
-        "after_15s": [fresh, 1000.0, 16019.0],           # Codex's run: 15.019 s after the request
+        "after_90s": [fresh, 1000.0, 91000.0],           # still shown: the limit is 2 minutes (Kevin, Nov 11)
+        "after_125s": [fresh, 1000.0, 126019.0],         # 125.019 s after the request
         "no_receipt_time": [fresh, None, 5000.0],
         "delayed_stays_delayed": [{"status": "delayed", "reason": "old", "source_age_s": 40}, 1000.0, 1000.0],
     }
@@ -45,8 +46,9 @@ def test_open_wallet_account_expires_after_its_limit():
     out = json.loads(r.stdout)
     assert out["at_open"]["status"] == "fresh" and out["at_open"]["expired"] is False
     assert out["after_9s"]["status"] == "fresh" and abs(out["after_9s"]["age"] - 9.465) < 1e-9
-    assert out["after_15s"]["expired"] is True and out["after_15s"]["status"] == "expired"
-    assert "15.5 s old" in out["after_15s"]["reason"] and "no longer shown as current" in out["after_15s"]["reason"]
+    assert out["after_90s"]["status"] == "fresh" and abs(out["after_90s"]["age"] - 90.465) < 1e-9
+    assert out["after_125s"]["expired"] is True and out["after_125s"]["status"] == "expired"
+    assert "125.5 s old (limit 120 s)" in out["after_125s"]["reason"] and "no longer shown as current" in out["after_125s"]["reason"]
     assert out["no_receipt_time"]["expired"] is True
     assert out["delayed_stays_delayed"] == {"status": "delayed", "reason": "old", "age": 40, "expired": False}
 

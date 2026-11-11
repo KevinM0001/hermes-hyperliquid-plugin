@@ -167,7 +167,8 @@ def test_schema_describes_exact_approximate_cvd_slice_and_account_metrics():
     for k in ("wallet.current_account_value", "wallet.current_total_position_notional", "wallet.current_margin_used",
               "wallet.current_position", "wallet.current_open_orders"):
         assert k in m, k
-    assert s["freshness"]["fields"]["clearinghouseState"]["source_max_age_s"] == 10.0
+    # the account state is shown as current for 2 minutes (Kevin, Nov 11); the schema states the plugin's constant
+    assert s["freshness"]["fields"]["clearinghouseState"]["source_max_age_s"] == tools.ACCOUNT_SOURCE_MAX_AGE_S == 120.0
     assert s["freshness"]["fields"]["frontendOpenOrders"]["never_fresh"] is True
     assert "first bucket shown" not in json.dumps(m["flow.cvd_bucket"]).replace("not from the first bucket shown", "")
 

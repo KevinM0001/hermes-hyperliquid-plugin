@@ -32,11 +32,11 @@ def _run_live_account_state(cases: dict) -> dict:
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the tab's pure function")
 def test_answer_delayed_in_delivery_is_expired_on_arrival():
-    fresh = {"status": "fresh", "source_age_s": 0.485, "source_max_age_s": 10.0, "clock_bound_s": 0.749}
-    # Codex's run: requested at t=1000 ms, held 12.011 s in delivery, rendered on arrival.
-    out = _run_live_account_state({"held": [fresh, 1000.0, 13011.0], "prompt": [fresh, 1000.0, 1300.0]})
+    fresh = {"status": "fresh", "source_age_s": 0.485, "source_max_age_s": 120.0, "clock_bound_s": 0.749}
+    # requested at t=1000 ms, held 122.011 s in delivery (past the 2-minute limit), rendered on arrival
+    out = _run_live_account_state({"held": [fresh, 1000.0, 123011.0], "prompt": [fresh, 1000.0, 1300.0]})
     assert out["held"]["expired"] is True and out["held"]["status"] == "expired"
-    assert abs(out["held"]["age"] - 12.496) < 1e-9
+    assert abs(out["held"]["age"] - 122.496) < 1e-9
     assert out["prompt"]["status"] == "fresh"
 
 
